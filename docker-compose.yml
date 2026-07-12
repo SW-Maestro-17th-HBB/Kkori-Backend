@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: kkori-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: kkori
+      POSTGRES_USER: kkori
+      POSTGRES_PASSWORD: kkori
+    volumes:
+      - kkori-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kkori -d kkori"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: kkori-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  kkori-postgres-data:
