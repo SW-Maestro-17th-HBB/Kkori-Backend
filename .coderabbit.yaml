@@ -20,7 +20,6 @@ reviews:
   # 리뷰의 전반적인 스타일을 설정합니다. 'chill'은 비교적 덜 엄격하고 부드러운 톤을 의미합니다.
   profile: chill
   # CodeRabbit의 코멘트를 모두 `resolve`하면, 자동으로 Approve를 하는 기능입니다.
-  # PR은 2명의 리뷰어의 Approve 후 가능하다는 팀 컨벤션이 있기 때문에 false로 설정했습니다.
   request_changes_workflow: false
   # PR의 전체적인 변경 사항에 대한 고수준의 요약(summary)을 생성할지 여부입니다.
   high_level_summary: true
@@ -45,7 +44,6 @@ reviews:
   # 추천된 리뷰어를 자동으로 할당할지 여부입니다.
   auto_assign_reviewers: false
   # 리뷰 요약에 위트 있는 시(poem)를 포함할지 여부입니다.
-  # 몇몇 팀원들의 반대가 있었지만, CodeRabbit이 써주는 시가 귀여워서 개인 취향으로 강력 주장해서 활성화시켰습니다.
   poem: true
   # 특정 파일 경로에 따라 다른 리뷰 지침을 적용합니다.
   path_instructions:
