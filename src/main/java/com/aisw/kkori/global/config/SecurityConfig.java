@@ -1,4 +1,4 @@
-package com.aisw.kkori.config;
+package com.aisw.kkori.global.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

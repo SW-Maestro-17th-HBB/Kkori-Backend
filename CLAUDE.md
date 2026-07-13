@@ -27,6 +27,14 @@ docker compose up -d         # 로컬 PostgreSQL(5432) + Redis(6379) + MinIO(900
 - **환경 설정은 프로파일 분리 + 비밀값만 placeholder** — `application.yaml`(공통) + `application-{local,dev,prod}.yaml`. 기본 프로파일은 local(`spring.profiles.default`)이라 `bootRun`이 바로 동작. local 파일엔 로컬 컨테이너용 더미 값을 하드코딩(비밀 아님), dev/prod 파일은 비밀값을 기본값 없는 `${DB_URL}` 형태로 주입받음(미주입 시 기동 실패로 즉시 발견). dev/prod 파일도 커밋해 리뷰 대상으로 유지. `spring-boot-docker-compose` 자동 주입은 설정 경로가 갈라지는 문제로 계속 사용하지 않음
 - **S3는 Spring Cloud AWS(starter-s3)** — 로컬은 docker compose의 MinIO(endpoint `localhost:9000`, path-style), dev/prod는 endpoint·credentials를 설정하지 않아 SDK 기본 동작(실제 S3 + IAM Role). 코드 경로는 전 환경 동일
 - **SecurityConfig는 개발 초기 임시 permitAll** — 인증 도메인 개발 시 실제 인가 규칙으로 교체 예정. OAuth2 클라이언트가 클래스패스에 있어 Spring Security 기본 유저(generated password)는 생성되지 않음
+- **공통 응답은 고정 엔벨로프** — 모든 API는 `ApiResponse<T>`로 감싼다. 성공 `{ success: true, data: ... }`(무내용이면 `data: null`), 실패 `{ success: false, data: null, error: { code, message, fieldErrors } }`. **HTTP 상태코드는 바디에 넣지 않음**(중복은 안티패턴 — HTTP 상태줄이 유일 원천, 세밀한 구분은 비즈니스 `code`가 담당). 에러는 `ErrorCode` enum(도메인 접두사 + 3자리, 예: 공통 `C001`) + `BusinessException`으로 던지면 `GlobalExceptionHandler`가 변환
+
+## 패키지 구조
+
+- **도메인 기준(package-by-feature)** — `com.aisw.kkori` 아래 `global/`(공통)과 도메인 패키지(예: `resume`, `interview`, `user`)를 두고, 각 도메인 안에 계층별 하위 패키지를 둔다. 계층형(controller/service가 최상위)이 아님
+- 각 도메인의 하위 패키지: `controller`(@RestController) / `service` / `repository`(JPA) / `api`(**Swagger 문서화 인터페이스** — `@Tag`/`@Operation` 담긴 interface, controller가 `implements`) / `dto`(요청·응답) / `domain`(@Entity, `global.entity.BaseEntity` 상속)
+- 문서화 애너테이션은 컨트롤러에 직접 달지 말고 `api` 인터페이스로 분리해 컨트롤러를 얇게 유지
+- 공통 계층 `global/`: `response`(ApiResponse/ErrorResponse), `exception`(ErrorCode/BusinessException/GlobalExceptionHandler), `entity`(BaseEntity), `config`(JpaConfig/SecurityConfig/SwaggerConfig)
 
 ## 브랜치 / PR 규칙
 
