@@ -7,7 +7,7 @@ Kkori — AI 면접 준비 서비스의 백엔드 (SW마에스트로 팀 HBB). S
 ## 명령어
 
 ```bash
-docker compose up -d         # 로컬 PostgreSQL(5432) + Redis(6379) 기동 (개발 전 1회)
+docker compose up -d         # 로컬 PostgreSQL(5432) + Redis(6379) + MinIO(9000, 콘솔 9001) 기동 (개발 전 1회)
 ./gradlew bootRun            # 앱 실행 (8080)
 ./gradlew build              # 컴파일 + 전체 테스트 + 패키징 (CI와 동일 명령)
 ./gradlew test --tests "com.aisw.kkori.SomeTests"           # 테스트 클래스 단위 실행
@@ -24,7 +24,8 @@ docker compose up -d         # 로컬 PostgreSQL(5432) + Redis(6379) 기동 (개
 ## 기술적 결정사항
 
 - **Spring Boot 3.5.x** (4.x 아님) — 스타터 이름이 3.x 체계 (`spring-boot-starter-web` 등)
-- **접속 설정은 yaml의 환경변수 placeholder 방식만 사용** (`${DB_URL:jdbc:postgresql://localhost:5432/kkori}` 형태). `spring-boot-docker-compose` 자동 주입은 개발/배포(AWS)의 설정 경로가 갈라져 prod 설정이 배포 시점까지 미검증되는 문제로 **사용하지 않기로 결정**. 새 접속 설정 추가 시 같은 패턴을 따를 것 (AWS에선 환경변수 주입: `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`)
+- **환경 설정은 프로파일 분리 + 비밀값만 placeholder** — `application.yaml`(공통) + `application-{local,dev,prod}.yaml`. 기본 프로파일은 local(`spring.profiles.default`)이라 `bootRun`이 바로 동작. local 파일엔 로컬 컨테이너용 더미 값을 하드코딩(비밀 아님), dev/prod 파일은 비밀값을 기본값 없는 `${DB_URL}` 형태로 주입받음(미주입 시 기동 실패로 즉시 발견). dev/prod 파일도 커밋해 리뷰 대상으로 유지. `spring-boot-docker-compose` 자동 주입은 설정 경로가 갈라지는 문제로 계속 사용하지 않음
+- **S3는 Spring Cloud AWS(starter-s3)** — 로컬은 docker compose의 MinIO(endpoint `localhost:9000`, path-style), dev/prod는 endpoint·credentials를 설정하지 않아 SDK 기본 동작(실제 S3 + IAM Role). 코드 경로는 전 환경 동일
 - **SecurityConfig는 개발 초기 임시 permitAll** — 인증 도메인 개발 시 실제 인가 규칙으로 교체 예정. OAuth2 클라이언트가 클래스패스에 있어 Spring Security 기본 유저(generated password)는 생성되지 않음
 
 ## 브랜치 / PR 규칙
