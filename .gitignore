@@ -38,3 +38,6 @@ out/
 
 ### Claude Code ###
 .claude/
+
+### 확정 전 개인 초안 ###
+docs/drafts/
