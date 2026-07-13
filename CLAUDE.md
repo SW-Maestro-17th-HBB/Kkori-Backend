@@ -26,6 +26,14 @@ docker compose up -d         # 로컬 PostgreSQL(5432) + Redis(6379) 기동 (개
 - **Spring Boot 3.5.x** (4.x 아님) — 스타터 이름이 3.x 체계 (`spring-boot-starter-web` 등)
 - **접속 설정은 yaml의 환경변수 placeholder 방식만 사용** (`${DB_URL:jdbc:postgresql://localhost:5432/kkori}` 형태). `spring-boot-docker-compose` 자동 주입은 개발/배포(AWS)의 설정 경로가 갈라져 prod 설정이 배포 시점까지 미검증되는 문제로 **사용하지 않기로 결정**. 새 접속 설정 추가 시 같은 패턴을 따를 것 (AWS에선 환경변수 주입: `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`)
 - **SecurityConfig는 개발 초기 임시 permitAll** — 인증 도메인 개발 시 실제 인가 규칙으로 교체 예정. OAuth2 클라이언트가 클래스패스에 있어 Spring Security 기본 유저(generated password)는 생성되지 않음
+- **공통 응답은 고정 엔벨로프** — 모든 API는 `ApiResponse<T>`로 감싼다. 성공 `{ success: true, data: ... }`(무내용이면 `data: null`), 실패 `{ success: false, data: null, error: { code, message, fieldErrors } }`. **HTTP 상태코드는 바디에 넣지 않음**(중복은 안티패턴 — HTTP 상태줄이 유일 원천, 세밀한 구분은 비즈니스 `code`가 담당). 에러는 `ErrorCode` enum(도메인 접두사 + 3자리, 예: 공통 `C001`) + `BusinessException`으로 던지면 `GlobalExceptionHandler`가 변환
+
+## 패키지 구조
+
+- **도메인 기준(package-by-feature)** — `com.aisw.kkori` 아래 `global/`(공통)과 도메인 패키지(예: `resume`, `interview`, `user`)를 두고, 각 도메인 안에 계층별 하위 패키지를 둔다. 계층형(controller/service가 최상위)이 아님
+- 각 도메인의 하위 패키지: `controller`(@RestController) / `service` / `repository`(JPA) / `api`(**Swagger 문서화 인터페이스** — `@Tag`/`@Operation` 담긴 interface, controller가 `implements`) / `dto`(요청·응답) / `domain`(@Entity, `global.entity.BaseEntity` 상속)
+- 문서화 애너테이션은 컨트롤러에 직접 달지 말고 `api` 인터페이스로 분리해 컨트롤러를 얇게 유지
+- 공통 계층 `global/`: `response`(ApiResponse/ErrorResponse), `exception`(ErrorCode/BusinessException/GlobalExceptionHandler), `entity`(BaseEntity), `config`(JpaConfig/SecurityConfig/SwaggerConfig)
 
 ## 브랜치 / PR 규칙
 
