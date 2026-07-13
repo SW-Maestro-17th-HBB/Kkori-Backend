@@ -29,7 +29,7 @@
 사용자가 카카오 로그인 페이지에서 인증을 완료하면 프론트가 인가 코드(code)를 받아 `POST /api/v1/auth/kakao`로 전달한다. 서버는 code를 카카오 access token으로 교환하고 사용자 정보(회원번호·이메일)를 조회한 뒤, `provider_id` 조회 결과와 `deleted_at`으로 유저를 판정해야 한다.
 
 - **기존 유저** (`provider_id` 존재 + `deleted_at IS NULL`): 즉시 JWT를 발급하여 로그인을 완료해야 한다.
-- **신규 유저** (조회 결과 없음): 계정을 만들지 않고 **signup token**(10분 유효, 서버 미저장)만 발급해야 한다. signup token은 JWT로, claim은 `provider_id`·`email`(null 가능)·`token_type=signup`·만료로 구성하며 AT와 별도의 서명 키를 사용한다. 검증 시 `token_type`을 확인해 AT로의 오용을 차단해야 한다.
+- **신규 유저** (조회 결과 없음): 계정을 만들지 않고 **signup token**(10분 유효, 서버 미저장)만 발급해야 한다. signup token은 JWT로, claim은 `provider_id`·`email`(null 가능)·`nickname`(null 가능, 카카오 프로필 닉네임 — 가입 시 `users.name`의 출처)·`token_type=signup`·만료로 구성하며 AT와 별도의 서명 키를 사용한다. 검증 시 `token_type`을 확인해 AT로의 오용을 차단해야 한다.
 - **복구 대상** (`provider_id` 존재 + `deleted_at` 기록, 탈퇴 유예 기간 내): 계정을 복구한 뒤 JWT를 발급하고, 응답에 `isRestored: true`를 포함해 프론트가 복구 안내를 띄울 수 있게 해야 한다. 복구의 내부 처리(`deleted_at` 해제, 삭제 로그·동의 기록 갱신)는 계정 관리 스토리(HBB1-10)의 요구사항을 따른다.
 - 신규 유저는 프론트가 동의 화면으로 라우팅하고, 동의 완료 시 `POST /api/v1/auth/signup`으로 signup token과 동의 내역을 전달한다. 서버는 서명 검증 후 필수 동의 항목이 전부 동의됐는지 확인하고, `users` 생성과 동의 기록 저장을 한 트랜잭션으로 처리한 뒤 JWT를 발급해야 한다.
 - 중복 가입은 `provider_id`의 UNIQUE 제약으로 차단해야 한다(위반 시 409 ALREADY_REGISTERED).
