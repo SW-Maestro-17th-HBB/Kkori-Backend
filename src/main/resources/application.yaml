@@ -13,3 +13,22 @@ spring:
     hibernate:
       ddl-auto: update
     open-in-view: false
+  http:
+    client:
+      connect-timeout: 3s
+      read-timeout: 5s
+
+# JWT 기본값은 로컬 개발 전용.
+jwt:
+  secret: ${JWT_SECRET:kkori-local-dev-jwt-secret-key-must-be-32bytes}
+  signup-secret: ${JWT_SIGNUP_SECRET:kkori-local-dev-signup-secret-key-32bytes!}
+  access-token-ttl: ${JWT_ACCESS_TTL:30m}
+  refresh-token-ttl: ${JWT_REFRESH_TTL:14d}
+  signup-token-ttl: ${JWT_SIGNUP_TTL:10m}
+
+kakao:
+  client-id: ${KAKAO_CLIENT_ID:local-dev-client-id}
+  client-secret: ${KAKAO_CLIENT_SECRET:local-dev-client-secret}
+  redirect-uri: ${KAKAO_REDIRECT_URI:http://localhost:3000/auth/kakao/callback}
+  token-uri: https://kauth.kakao.com/oauth/token
+  user-info-uri: https://kapi.kakao.com/v2/user/me
