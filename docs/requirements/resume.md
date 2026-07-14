@@ -40,9 +40,14 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 사용자가 `POST /api/v1/resumes`로 PDF를 업로드하면(multipart, `file` 필수 / `title` 선택 — 없으면 원본 파일명 사용), 서버는 파일을 검증한 뒤 S3에 원본을 저장하고 이력서·분석 상태(UPLOADED) 레코드를 생성한 후, Redis Stream에 분석 요청 이벤트를 발행하고 즉시 응답한다.
 
 - 검증 순서: 파일 존재 → 확장자·MIME(`application/pdf`) → 크기(10MB) → PDF 열기(유효성·페이지 수 확인). Spring이 업로드 시점에 PDF를 열어 손상 여부와 페이지 수를 동기 검증하므로, 업로드 응답의 `pageCount`는 항상 채워진다. 깊은 파싱(텍스트 추출)은 Worker 담당.
+- **중복 업로드 처리 (2층 구조)**:
+  - **스토리지 층** — 파일 바이너리의 SHA-256을 `file_hash`로 저장하고, S3 objectKey를 해시 기반(`resumes/{fileHash}.pdf`)으로 생성한다. 같은 바이너리는 S3에 1부만 존재하며, "S3 저장 후 DB 저장 전 서버 사망"으로 남은 고아 객체도 재업로드 시 자연스럽게 재사용된다.
+  - **사용자 흐름 층** — 같은 `file_hash`의 활성 이력서가 이미 있으면 **새로 만들지 않고, 아무 상태도 바꾸지 않고**, 기존 이력서 정보에 `duplicated: true`를 붙여 200으로 반환한다(분석 상태 무관 동일 규칙 — 업로드 API는 중복 시 부수효과가 없다). 프론트는 상태에 따라 안내한다: 진행 중이면 SSE 재연결, EMBEDDED면 기존 이력서로 이동, FAILED면 재분석 버튼(§4) 제공.
+  - 중복 판단 범위는 (userId + file_hash)이어야 한다 — 인증 도입 전까지는 전역 dedup으로 동작 (**TODO**).
+- **FAILED 복구는 §4 재분석 API로만** 한다 — 같은 파일을 재업로드해도 위 규칙대로 `duplicated` 정보만 반환되며, 분석 재시작은 사용자의 명시적 재분석 요청으로만 일어난다.
 - Worker 파이프라인: S3에서 PDF 다운로드 → PyMuPDF 텍스트 추출 → LLM으로 구조화(`structuredData`: profile/skills/projects/experiences) → 의미 단위 청킹 + 청크별 metadata 생성 → 임베딩 생성 → `resume_chunks` 저장(content, metadata, embedding) → 상태 EMBEDDED. 각 단계 진입 시 상태를 갱신하고 상태 이벤트를 발행한다.
 - 추출 원문(raw text)은 **저장하지 않는다**. 재분석 등으로 원문이 필요하면 S3 원본에서 다시 파싱한다.
-- 분석 실패(FAILED) 시 해당 이력서의 복구 수단은 없다 — 사용자는 재업로드로 새 이력서를 만든다(기존 FAILED 이력서 삭제는 선택).
+- 분석 실패(FAILED) 시 복구는 §4 재분석(전체 재분석 모드)으로 한다. 같은 파일을 재업로드해도 새 이력서가 생기지 않는다(위 중복 규칙).
 - 구조화 완료 후 별도의 품질 확인 이벤트는 보내지 않는다. 분석 완료 후 프론트가 항상 사용자에게 파싱 결과 확인을 유도한다(§4).
 
 ### 실행 조건
@@ -60,6 +65,9 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 - 정상 업로드 시 201 응답에 resumeId, pageCount, analysisStatus=UPLOADED가 포함되는지 확인
 - 업로드 성공 후 분석 요청 이벤트가 Redis Stream에 발행되는지 확인
 - title 미지정 시 원본 파일명이 title로 사용되는지 확인
+- 동일 파일 재업로드 시(파일명이 달라도) 새 레코드·새 분석 없이 기존 이력서 정보 + `duplicated: true`가 200으로 반환되는지 확인
+- 중복 응답이 기존 이력서의 상태를 어떤 경우에도 변경하지 않는지 확인
+- S3에 객체만 있고 활성 레코드가 없는 상태(고아)에서 같은 파일 업로드 시, 재저장 없이 기존 객체를 가리키는 새 레코드가 생성되는지 확인
 - 분석 파이프라인 완료 후 상태가 EMBEDDED가 되고 resume_chunks가 생성되는지 확인
 - raw text가 DB에 저장되지 않는지 확인
 
@@ -78,7 +86,6 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 - 파일 형식: PDF만 지원 (MIME `application/pdf`)
 - 최대 크기: 10MB, 최대 페이지 수: 10페이지
 - 회원당 이력서 보관 개수 제한: **미정**
-- 동일 파일 중복 업로드 방지: **미정** (팀 논의 필요)
 
 ### 기타 요구사항
 
@@ -136,7 +143,7 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 분석 진행 상태를 두 채널로 제공한다.
 
 - REST 조회(`GET /api/v1/resumes/{resumeId}/status`): 현재 상태, 실패 정보(errorMessage), 시각 정보를 반환한다. SSE 유실·재연결 시 상태 동기화용.
-- SSE 구독(`GET /api/v1/resumes/events`): **사용자 단위 단일 연결**로 해당 사용자의 모든 이력서 상태 변경을 push한다. 이력서 단위 연결은 사용하지 않는다(브라우저 동시 연결 한도·연결 수명 관리 문제).
+- SSE 구독(`GET /sse/v1/resumes`): **사용자 단위 단일 연결**로 해당 사용자의 모든 이력서 상태 변경을 push한다. 이력서 단위 연결은 사용하지 않는다(브라우저 동시 연결 한도·연결 수명 관리 문제). SSE는 일반 REST(`/api/**`)와 분리된 `/sse/**` 네임스페이스를 사용한다.
 
 SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 
@@ -174,7 +181,7 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 
 ### 인터페이스 요구사항
 
-- `GET /api/v1/resumes/{resumeId}/status` / `GET /api/v1/resumes/events` (Content-Type: text/event-stream)
+- `GET /api/v1/resumes/{resumeId}/status` / `GET /sse/v1/resumes` (Content-Type: text/event-stream)
 - SSE keepalive: 프록시·ALB의 유휴 연결 종료를 막기 위해 15~30초 간격으로 SSE 주석 라인(`: ping`)을 전송한다
 
 ### 제약사항
@@ -195,20 +202,25 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 
 - 조회(`GET /api/v1/resumes/{resumeId}/parsed`): structuredData(profile/skills/projects/experiences)를 반환한다. **rawText는 응답에 포함하지 않는다.**
 - 수정(`PATCH /api/v1/resumes/{resumeId}/parsed`): 사용자가 수정한 structuredData를 저장한다. 수정만으로는 재분석되지 않는다.
-- 재분석(`POST /api/v1/resumes/{resumeId}/reanalyze`): 수정된 structuredData 기준으로 청킹·임베딩·색인을 다시 수행한다. 구조화(텍스트 추출~STRUCTURING)는 수정본을 사용하므로 재수행하지 않으며, 상태는 EMBEDDING → EMBEDDED로 진행한다.
+- 재분석(`POST /api/v1/resumes/{resumeId}/reanalyze`): **엔드포인트는 하나, 현재 상태가 모드를 결정한다** (사용자가 모드를 고르지 않음). Worker에 보내는 분석 요청 이벤트에 `mode` 필드로 전달한다.
+  - **EMBEDDED → 재색인 모드(REINDEX)**: 수정된 structuredData를 진실로 삼아 청킹·임베딩·색인만 재수행. 구조화(텍스트 추출~STRUCTURING)를 재수행하면 LLM이 사용자 수정을 덮어쓰므로 건너뛴다. 상태는 EMBEDDING → EMBEDDED로 진행.
+  - **FAILED → 전체 재분석 모드(FULL)**: S3 원본 PDF를 진실로 삼아 텍스트 추출부터 전부 재수행. FAILED의 유일한 복구 수단이다(§1). 상태는 UPLOADED부터 재시작.
 
-파싱 결과의 조회·수정·재분석은 모두 **분석이 완전히 완료된 상태(EMBEDDED)에서만 가능하다.** 진행 중(UPLOADED~EMBEDDING) 상태에서는 완료를 기다려야 하고, FAILED 이력서는 조회·수정·재분석 대상이 아니다(§1 — 재업로드로만 복구).
+파싱 결과의 조회·수정은 **분석이 완전히 완료된 상태(EMBEDDED)에서만 가능하다.** 진행 중(UPLOADED~EMBEDDING)에는 완료를 기다려야 하고, FAILED 이력서는 조회·수정 대상이 아니다(파싱 산출물이 없으므로).
 
 ### 실행 조건
 
 - 사용자가 인증된 상태여야 하며, 본인 이력서만 접근할 수 있다.
-- 조회·수정·재분석 모두 분석 상태가 EMBEDDED여야 한다. 진행 중이면 409(RESUME_ANALYSIS_IN_PROGRESS), FAILED면 409(RESUME_ANALYSIS_FAILED)로 거부한다.
+- 조회·수정은 분석 상태가 EMBEDDED여야 한다. 진행 중이면 409(RESUME_ANALYSIS_IN_PROGRESS), FAILED면 409(RESUME_ANALYSIS_FAILED)로 거부한다.
+- 재분석은 EMBEDDED 또는 FAILED에서 가능하다. 진행 중이면 409(RESUME_ANALYSIS_IN_PROGRESS)로 거부한다.
 - 진행 중인 면접에서 사용 중인 이력서는 수정·재분석할 수 없다(409 RESUME_IN_USE) — 면접이 검색하는 청크가 도중에 갈리는 것을 방지 (§5 삭제와 동일한 보호).
 
 ### 검증 기준
 
 - 분석 진행 중(EMBEDDED 이전) 조회·수정·재분석 요청 시 409(RESUME_ANALYSIS_IN_PROGRESS)가 반환되는지 확인
-- FAILED 이력서에 조회·수정·재분석 요청 시 409(RESUME_ANALYSIS_FAILED)가 반환되는지 확인
+- FAILED 이력서에 조회·수정 요청 시 409(RESUME_ANALYSIS_FAILED)가 반환되는지 확인
+- FAILED 이력서에 재분석 요청 시 mode=FULL로 분석 요청 이벤트가 발행되고 상태가 재시작되는지 확인
+- EMBEDDED 이력서에 재분석 요청 시 mode=REINDEX로 발행되고 수정된 structuredData가 보존되는지 확인
 - 형식이 잘못된 structuredData 수정 요청 시 400(INVALID_STRUCTURED_DATA)이 반환되는지 확인
 - 수정 후 재분석을 요청해야만 청크·임베딩이 갱신되는지 확인 (수정만으로는 기존 색인 유지)
 - 진행 중인 면접에서 사용 중인 이력서에 수정·재분석 요청 시 409(RESUME_IN_USE)가 반환되는지 확인
@@ -249,6 +261,7 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 - 삭제된 이력서가 목록·상세 조회에서 더 이상 노출되지 않는지 확인
 - 진행 중인 면접에서 사용 중인 이력서 삭제 시 409(RESUME_IN_USE)가 반환되는지 확인
 - 물리 삭제 시 S3 원본, structuredData, resume_chunks(임베딩 포함)가 모두 제거되는지 확인
+- **같은 objectKey를 참조하는 다른 활성 이력서가 있으면 S3 객체는 삭제하지 않는지 확인** (해시 기반 키는 여러 레코드가 한 객체를 공유하므로 참조 확인 필수)
 - FAILED 상태 이력서도 삭제 가능한지 확인
 
 ### 성능 요구사항
