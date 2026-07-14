@@ -11,6 +11,7 @@ import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.util.List;
 
@@ -61,6 +62,14 @@ public class GlobalExceptionHandler {
         log.warn("Malformed request body: {}", e.getMessage());
         return ResponseEntity.status(ErrorCode.INVALID_INPUT_VALUE.getStatus())
                 .body(ApiResponse.error(ErrorResponse.of(ErrorCode.INVALID_INPUT_VALUE)));
+    }
+
+    /** 멀티파트 업로드 한도 초과 — 컨테이너(Tomcat) 레벨에서 발생해도 동일 엔벨로프로 변환한다. */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException e) {
+        log.warn("Upload size exceeded: {}", e.getMessage());
+        return ResponseEntity.status(ErrorCode.FILE_TOO_LARGE.getStatus())
+                .body(ApiResponse.error(ErrorResponse.of(ErrorCode.FILE_TOO_LARGE)));
     }
 
     /** 지원하지 않는 HTTP 메서드. */
