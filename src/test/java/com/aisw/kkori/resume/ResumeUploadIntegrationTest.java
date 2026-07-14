@@ -145,6 +145,37 @@ class ResumeUploadIntegrationTest {
     }
 
     @Test
+    @DisplayName("활성 이력서의 file_hash에는 부분 유니크 인덱스가 걸린다 — soft delete된 해시는 재사용 가능")
+    void fileHash_partialUniqueIndex_allowsReuseAfterSoftDelete() {
+        Resume first = resumeRepository.saveAndFlush(resumeWithHash("samehash"));
+
+        // 같은 해시의 활성 레코드 중복 → 인덱스가 차단 (동시 업로드 레이스의 최종 방어선)
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> resumeRepository.saveAndFlush(resumeWithHash("samehash")))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+
+        // soft delete 후에는 같은 해시로 새 레코드 생성 가능 (부분 조건 WHERE deleted_at IS NULL)
+        first.softDelete();
+        resumeRepository.saveAndFlush(first);
+        org.assertj.core.api.Assertions.assertThatCode(
+                        () -> resumeRepository.saveAndFlush(resumeWithHash("samehash")))
+                .doesNotThrowAnyException();
+    }
+
+    private Resume resumeWithHash(String fileHash) {
+        return Resume.builder()
+                .title("t")
+                .fileHash(fileHash)
+                .originalFileBucket(TestcontainersConfiguration.TEST_BUCKET)
+                .originalFileKey("resumes/" + fileHash + ".pdf")
+                .originalFileName("t.pdf")
+                .fileSize(1L)
+                .mimeType("application/pdf")
+                .pageCount(1)
+                .build();
+    }
+
+    @Test
     @DisplayName("파일 없이 요청하면 400 FILE_REQUIRED")
     void upload_withoutFile_returns400() throws Exception {
         mockMvc.perform(multipart("/api/v1/resumes"))

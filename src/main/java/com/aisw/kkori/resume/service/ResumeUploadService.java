@@ -14,6 +14,7 @@ import io.awspring.cloud.s3.ObjectMetadata;
 import io.awspring.cloud.s3.S3Template;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
@@ -59,10 +60,7 @@ public class ResumeUploadService {
         var existing = resumeRepository.findFirstByFileHash(fileHash);
         if (existing.isPresent()) {
             Resume duplicate = existing.get();
-            AnalysisStatus currentStatus = statusRepository.findByResumeId(duplicate.getId())
-                    .map(ResumeAnalysisStatus::getParseStatus)
-                    .orElse(AnalysisStatus.UPLOADED);
-            return ResumeUploadResponse.duplicated(duplicate, currentStatus);
+            return ResumeUploadResponse.duplicated(duplicate, currentStatusOf(duplicate));
         }
 
         String objectKey = "resumes/" + fileHash + ".pdf";
@@ -72,25 +70,39 @@ public class ResumeUploadService {
         // TODO: 인증 도메인 완성 시 SecurityContext에서 userId를 가져온다
         Long userId = null;
 
-        return transactionTemplate.execute(tx -> {
-            Resume resume = resumeRepository.save(Resume.builder()
-                    .userId(userId)
-                    .title(resolvedTitle)
-                    .fileHash(fileHash)
-                    .originalFileBucket(s3Properties.bucket())
-                    .originalFileKey(objectKey)
-                    .originalFileName(file.getOriginalFilename())
-                    .fileSize(file.getSize())
-                    .mimeType(file.getContentType())
-                    .pageCount(pageCount)
-                    .build());
-            ResumeAnalysisStatus status = statusRepository.save(ResumeAnalysisStatus.init(resume));
+        try {
+            return transactionTemplate.execute(tx -> {
+                Resume resume = resumeRepository.save(Resume.builder()
+                        .userId(userId)
+                        .title(resolvedTitle)
+                        .fileHash(fileHash)
+                        .originalFileBucket(s3Properties.bucket())
+                        .originalFileKey(objectKey)
+                        .originalFileName(file.getOriginalFilename())
+                        .fileSize(file.getSize())
+                        .mimeType(file.getContentType())
+                        .pageCount(pageCount)
+                        .build());
+                ResumeAnalysisStatus status = statusRepository.save(ResumeAnalysisStatus.init(resume));
 
-            analysisRequestPublisher.publish(new ResumeParseRequestedMessage(
-                    resume.getId(), userId, s3Properties.bucket(), objectKey));
+                analysisRequestPublisher.publish(new ResumeParseRequestedMessage(
+                        resume.getId(), userId, s3Properties.bucket(), objectKey));
 
-            return ResumeUploadResponse.created(resume, status.getParseStatus());
-        });
+                return ResumeUploadResponse.created(resume, status.getParseStatus());
+            });
+        } catch (DataIntegrityViolationException e) {
+            // 동시 중복 업로드 레이스: 중복 조회는 둘 다 통과했지만 부분 유니크 인덱스
+            // (ux_resumes_active_file_hash)가 최종 심판 — 진 쪽은 먼저 들어간 레코드를 반환한다.
+            return resumeRepository.findFirstByFileHash(fileHash)
+                    .map(winner -> ResumeUploadResponse.duplicated(winner, currentStatusOf(winner)))
+                    .orElseThrow(() -> e);   // 해시 충돌이 아닌 다른 무결성 위반이면 그대로 전파
+        }
+    }
+
+    private AnalysisStatus currentStatusOf(Resume resume) {
+        return statusRepository.findByResumeId(resume.getId())
+                .map(ResumeAnalysisStatus::getParseStatus)
+                .orElse(AnalysisStatus.UPLOADED);
     }
 
     /**
