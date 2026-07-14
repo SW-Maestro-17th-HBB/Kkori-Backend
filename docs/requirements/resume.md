@@ -79,7 +79,7 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 
 - `POST /api/v1/resumes` — multipart/form-data (`file`: PDF, `title`: string 선택)
 - 응답은 공통 엔벨로프 `ApiResponse<T>`를 따른다 (이하 모든 REST API 동일)
-- Redis Stream: 분석 요청 스트림(발행), 상태 이벤트 스트림(소비) — 이벤트 페이로드에 resumeId, userId 포함
+- Redis Stream: 분석 요청 스트림(발행), 상태 이벤트 스트림(소비). **스트림별 메시지 스키마의 정의 원천은 계약 record** — `ResumeParseRequestedMessage`(요청: resumeId, userId, bucket, objectKey), `ResumeStatusChangedMessage`(상태: resumeId, status, message). Python Worker는 이 두 파일을 계약 문서로 참조
 
 ### 제약사항
 
@@ -90,7 +90,7 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 ### 기타 요구사항
 
 - Worker 장애 시 재처리·멱등성·DLQ 정책: **미정** (Redis Stream Consumer Group 기반 재처리 방향만 합의됨)
-- 분석 요청 발행 실패(RESUME_ANALYSIS_REQUEST_FAILED) 시 이미 저장된 S3 원본·DB 레코드의 정리 방식: **미정** (Outbox 등 장애 복구 정책과 함께 결정)
+- **Outbox 패턴은 MVP에서 도입하지 않기로 결정** (2026-07-14). 발행은 DB 트랜잭션 안에서 수행 — 발행 실패 시 롤백되어 사용자에게 실패가 보이는(시끄러운 실패) 쪽을 선택. 남는 구멍(발행 성공 후 커밋 실패 → 유령 이벤트)은 확률이 낮고, 사용자 재시도를 dedup이 흡수 + Worker의 "레코드 없으면 스킵" 계약으로 무해화됨. **도입 재검토 신호**: "성공했는데 분석이 시작 안 됨" 문의 발생, 요청 유실 제로 SLA 요구, 발행 지점이 여러 도메인으로 확대. 그 전 중간 단계로 "오래된 UPLOADED 재발행 배치"도 선택지.
 
 ---
 
