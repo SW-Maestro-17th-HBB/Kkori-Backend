@@ -8,7 +8,7 @@
 
 본 기능은 사용자가 카카오 소셜 계정으로 서비스에 가입하거나 로그인하고, 이후 JWT 기반 인증으로 서비스를 이용하는 흐름을 정의한다. 카카오 인가 코드 처리와 유저 판정은 Spring API Server가 담당하며, 프론트(React)가 카카오 콜백으로 받은 인가 코드를 백엔드에 전달하는 프론트 콜백 방식을 사용한다. 유저 정보와 Refresh Token은 PostgreSQL에 저장된다.
 
-인증 흐름은 소셜 로그인(카카오 code 교환 → 신규/기존/복구 판정 → 신규 유저는 동의 후 계정 생성) → 토큰 발급(JWT Access/Refresh Token) → 토큰 재발급(RTR + Grace Period)의 세 기능으로 구성된다. 계정은 필수 동의 완료 시점에 생성되며, "동의 전 계정" 상태는 존재하지 않는다.
+인증 흐름은 소셜 로그인(카카오 code 교환 → 신규/기존/복구 판정 → 신규·복구 유저는 동의 후 계정 생성·복구) → 토큰 발급(JWT Access/Refresh Token) → 토큰 재발급(RTR + Grace Period)의 세 기능으로 구성된다. 계정은 필수 동의 완료 시점에 생성되며, "동의 전 계정" 상태는 존재하지 않는다. 탈퇴 계정의 복구도 동일하게 재동의 완료 시점에 성립한다.
 
 본 문서는 인증 흐름의 계약(요청·판정·응답)까지만 정의한다. 동의 항목의 정의와 저장 정책은 수집 동의 스토리(HBB1-12), 탈퇴·복구·파기의 내부 처리는 계정 관리 스토리(HBB1-10) 및 영구 삭제 스토리의 PRD에서 다룬다.
 
@@ -16,7 +16,7 @@
 
 | No. | Function | Description |
 | --- | --- | --- |
-| 1 | 소셜 로그인 | 카카오 인가 코드로 유저를 신규/기존/복구 대상으로 판정하고, 신규 유저는 signup token 발급 후 필수 동의를 거쳐 계정을 생성해야 한다. |
+| 1 | 소셜 로그인 | 카카오 인가 코드로 유저를 신규/기존/복구 대상으로 판정하고, 신규·복구 유저는 signup token 발급 후 필수 동의를 거쳐 계정을 생성·복구해야 한다. |
 | 2 | 토큰 발급 | 로그인·가입이 완료된 유저에게 Access Token(30분)과 Refresh Token(14일)을 발급하고, RT는 해시로 DB에 저장해야 한다. |
 | 3 | 토큰 재발급 | Refresh Token으로 새 토큰 쌍을 발급하되 RTR을 적용하고, Grace Period(60초)로 정상 재시도와 탈취를 구분해야 한다. |
 
@@ -30,9 +30,9 @@
 
 - **기존 유저** (`provider_id` 존재 + `deleted_at IS NULL`): 즉시 JWT를 발급하여 로그인을 완료해야 한다.
 - **신규 유저** (조회 결과 없음): 계정을 만들지 않고 **signup token**(10분 유효, 서버 미저장)만 발급해야 한다. signup token은 JWT로, claim은 `provider_id`·`email`(null 가능)·`nickname`(null 가능, 카카오 프로필 닉네임 — 가입 시 `users.name`의 출처)·`token_type=signup`·만료로 구성하며 AT와 별도의 서명 키를 사용한다. 검증 시 `token_type`을 확인해 AT로의 오용을 차단해야 한다.
-- **복구 대상** (`provider_id` 존재 + `deleted_at` 기록, 탈퇴 유예 기간 내): 계정을 복구한 뒤 JWT를 발급하고, 응답에 `isRestored: true`를 포함해 프론트가 복구 안내를 띄울 수 있게 해야 한다. 복구의 내부 처리(`deleted_at` 해제, 삭제 로그·동의 기록 갱신)는 계정 관리 스토리(HBB1-10)의 요구사항을 따른다.
-- 신규 유저는 프론트가 동의 화면으로 라우팅하고, 동의 완료 시 `POST /api/v1/auth/signup`으로 signup token과 동의 내역을 전달한다. 서버는 서명 검증 후 필수 동의 항목이 전부 동의됐는지 확인하고, `users` 생성과 동의 기록 저장을 한 트랜잭션으로 처리한 뒤 JWT를 발급해야 한다.
-- 중복 가입은 `provider_id`의 UNIQUE 제약으로 차단해야 한다(위반 시 409 ALREADY_REGISTERED).
+- **복구 대상** (`provider_id` 존재 + `deleted_at` 기록, 탈퇴 유예 기간 내): 즉시 복구하지 않고 **복구용 signup token**을 발급하며, `isNewUser: false`·`isRestored: true`로 응답해 프론트가 복구 안내와 함께 동의 화면으로 라우팅할 수 있게 해야 한다. 복구용 토큰은 신규 가입용과 동일한 claim 구성에 **`deletion_log_id`(해당 탈퇴 요청 식별자) claim을 추가**해 특정 탈퇴 건에 바인딩한다(복구 후 재탈퇴한 계정을 옛 토큰으로 되돌리는 재사용 차단 — 상세는 HBB1-10). 탈퇴로 동의가 철회된 상태이므로 재동의 제출(`/auth/signup`) 시점에 복구가 성립한다. 복구의 내부 처리(`deleted_at` 해제, 삭제 로그·동의 기록 갱신, 유예 재판정)는 계정 관리 스토리(HBB1-10)의 요구사항을 따른다.
+- 신규·복구 유저는 프론트가 동의 화면으로 라우팅하고, 동의 완료 시 `POST /api/v1/auth/signup`으로 signup token과 동의 내역을 전달한다. 서버는 서명 검증 후 필수 동의 항목이 전부 동의됐는지 확인하고, **토큰의 `deletion_log_id` 유무**에 따라 신규 가입용 토큰은 `users` 생성을, 복구용 토큰은 해당 탈퇴 건의 계정 복구를 동의 기록 저장과 한 트랜잭션으로 처리한 뒤 JWT를 발급해야 한다. 용도가 어긋난 토큰(신규 가입용 토큰인데 `provider_id`가 탈퇴 상태 계정, 복구용 토큰인데 대상 탈퇴 건이 이미 처리됨)은 `401 INVALID_SIGNUP_TOKEN`으로 거부해 재로그인을 유도한다.
+- 중복 가입은 `provider_id`의 UNIQUE 제약으로 차단해야 한다(활성 유저의 `provider_id`로 signup 시 409 ALREADY_REGISTERED). 유예 내 탈퇴 상태의 `provider_id`는 중복이 아니라 복구로 처리한다.
 - 카카오가 이메일을 제공하지 않는 유저(이메일 제공 미동의)도 가입을 허용해야 한다. `users.email`은 nullable로 저장하며, signup token의 email claim도 null일 수 있다.
 
 ### 실행 조건
@@ -47,12 +47,14 @@
 - 신규 유저의 code 전달 시 `isNewUser: true`와 signupToken만 반환되고, `users` 테이블에 계정이 생성되지 않았는지 확인
 - 필수 동의 항목이 하나라도 누락된 signup 요청이 `400 MISSING_REQUIRED_CONSENT`로 거부되는지 확인
 - 만료되거나 위변조된 signup token으로 signup 요청 시 `401 INVALID_SIGNUP_TOKEN`이 반환되는지 확인
+- 용도가 어긋난 signup token(신규 가입용으로 탈퇴 계정 복구 시도, 이미 사용된 복구용 토큰 재사용)이 `401 INVALID_SIGNUP_TOKEN`으로 거부되는지 확인
 - 가입 완료 시 `users`와 동의 기록이 함께 생성되고, 트랜잭션 중단 시 둘 다 롤백되는지 확인
 - 동일 `provider_id`로 중복 가입 시도 시 `409 ALREADY_REGISTERED`가 반환되는지 확인
 - 만료·재사용된 카카오 code에 대해 `401 KAKAO_AUTH_FAILED`, code 누락·형식 오류에 대해 `400 INVALID_CODE`, 카카오 서버 통신 오류에 대해 `500 KAKAO_SERVER_ERROR`가 반환되는지 확인
 - 이메일 제공에 동의하지 않은 카카오 계정도 가입이 완료되고 email이 NULL로 저장되는지 확인
 - signup token을 `Authorization` 헤더의 AT로 사용하면 거부되는지(`token_type` 검증) 확인
-- 탈퇴 유예 기간 내 유저가 로그인하면 `isRestored: true`와 함께 토큰이 반환되는지 확인 (복구 내부 처리의 검증은 HBB1-10 범위)
+- 탈퇴 유예 기간 내 유저가 로그인하면 `isNewUser: false`·`isRestored: true`와 signupToken만 반환되고 accessToken·refreshToken은 반환되지 않는지 확인
+- 복구 대상의 signup 제출 시 계정이 복구되고 토큰이 반환되는지 확인 (복구 내부 처리의 상세 검증은 HBB1-10 범위)
 
 ### 성능 요구사항
 
@@ -74,7 +76,7 @@
 
 요청은 `code` 하나만 받으며, redirect_uri는 서버 설정값을 사용한다.
 
-`POST /api/v1/auth/kakao` 응답 예시 (기존/복구 유저):
+`POST /api/v1/auth/kakao` 응답 예시 (기존 유저):
 
 ```json
 {
@@ -88,7 +90,7 @@
 }
 ```
 
-복구된 경우 `isRestored: true`로 반환한다. `accessToken`·`refreshToken`·`isRestored`는 기존/복구 유저에게만, `signupToken`은 신규 유저에게만 내려간다.
+`accessToken`·`refreshToken`은 기존 유저에게만, `signupToken`은 신규·복구 대상 유저에게 내려간다. 복구 대상은 `isRestored: true`로 구분한다.
 
 `POST /api/v1/auth/kakao` 응답 예시 (신규 유저):
 
@@ -97,6 +99,19 @@
   "success": true,
   "data": {
     "isNewUser": true,
+    "signupToken": "eyJhbG..."
+  }
+}
+```
+
+`POST /api/v1/auth/kakao` 응답 예시 (복구 대상 유저):
+
+```json
+{
+  "success": true,
+  "data": {
+    "isNewUser": false,
+    "isRestored": true,
     "signupToken": "eyJhbG..."
   }
 }
@@ -119,7 +134,7 @@
 ### 제약사항
 
 - 소셜 프로바이더는 카카오 단일만 지원한다(비밀번호 로그인 없음). 멀티 프로바이더는 확장 범위.
-- signup token 유효기간은 10분이며, 서버에 저장하지 않으므로 개별 무효화는 지원하지 않는다.
+- signup token 유효기간은 10분이며, 서버에 저장하지 않으므로 개별 무효화는 지원하지 않는다. 단 복구용 토큰은 `deletion_log_id` 바인딩에 의해 해당 탈퇴 건이 처리되는 순간 사실상 무효가 된다(재사용 시 401).
 - signup 시 필수 동의 항목은 `privacy`·`audio_usage`·`resume_usage` 3종이다. 동의 항목의 정의·변경 및 저장 정책(append-only)은 수집 동의 스토리(HBB1-12)를 따른다.
 - 카카오 인가 코드는 백엔드가 아닌 프론트 콜백으로만 수신한다.
 
@@ -144,7 +159,7 @@
 
 ### 실행 조건
 
-- 소셜 로그인 판정(기존/복구) 또는 회원가입 완료가 선행되어야 한다.
+- 소셜 로그인 판정(기존) 또는 가입·복구 완료가 선행되어야 한다.
 - JWT 서명 키가 서버에 설정되어 있어야 한다.
 - `refresh_token` 테이블과 `token_hash` UNIQUE 인덱스(`ux_refresh_token_token_hash`)가 존재해야 한다.
 
@@ -165,7 +180,7 @@
 
 ### 인터페이스 요구사항
 
-- 토큰 반환: `/auth/kakao`(기존·복구), `/auth/signup`(신규), `/auth/reissue`(재발급) 응답의 `data` 필드
+- 토큰 반환: `/auth/kakao`(기존), `/auth/signup`(신규·복구), `/auth/reissue`(재발급) 응답의 `data` 필드
 - 인증 헤더: `Authorization: Bearer {accessToken}`
 - 로그아웃: `POST /api/v1/auth/logout` (Bearer AT 필요, body에 refreshToken 포함)
 - 환경 변수: JWT 서명 키, AT/RT 만료 시간 설정
