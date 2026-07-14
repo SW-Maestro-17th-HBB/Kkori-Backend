@@ -14,7 +14,12 @@ public record KakaoUserInfoResponse(
 ) {
 
     public String email() {
-        return kakaoAccount == null ? null : kakaoAccount.email();
+        if (kakaoAccount == null
+                || !Boolean.TRUE.equals(kakaoAccount.isEmailValid())
+                || !Boolean.TRUE.equals(kakaoAccount.isEmailVerified())) {
+            return null;
+        }
+        return kakaoAccount.email();
     }
 
     public String nickname() {
@@ -23,7 +28,12 @@ public record KakaoUserInfoResponse(
                 : kakaoAccount.profile().nickname();
     }
 
-    public record KakaoAccount(String email, Profile profile) {
+    public record KakaoAccount(
+            String email,
+            @JsonProperty("is_email_valid") Boolean isEmailValid,
+            @JsonProperty("is_email_verified") Boolean isEmailVerified,
+            Profile profile
+    ) {
     }
 
     public record Profile(String nickname) {

@@ -53,7 +53,8 @@ class KakaoOAuthClientTest {
                 .andExpect(method(HttpMethod.GET))
                 .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer kakao-at"))
                 .andRespond(withSuccess("""
-                        {"id": 123456789, "kakao_account": {"email": "user@example.com", "profile": {"nickname": "홍길동"}}}
+                        {"id": 123456789, "kakao_account": {"email": "user@example.com",
+                         "is_email_valid": true, "is_email_verified": true, "profile": {"nickname": "홍길동"}}}
                         """, MediaType.APPLICATION_JSON));
 
         KakaoUserInfo info = kakaoOAuthClient.authenticate("valid-code");
@@ -76,6 +77,23 @@ class KakaoOAuthClientTest {
         assertThat(info.providerId()).isEqualTo("99");
         assertThat(info.email()).isNull();
         assertThat(info.nickname()).isNull();
+    }
+
+    @Test
+    @DisplayName("무효(마스킹)·미인증 이메일은 저장하지 않도록 null로 취급한다")
+    void invalidOrUnverifiedEmailIsTreatedAsNull() {
+        server.expect(requestTo(properties.tokenUri()))
+                .andRespond(withSuccess("{\"access_token\":\"kakao-at\"}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(properties.userInfoUri()))
+                .andRespond(withSuccess("""
+                        {"id": 77, "kakao_account": {"email": "ka***@kakao.com",
+                         "is_email_valid": false, "is_email_verified": true}}
+                        """, MediaType.APPLICATION_JSON));
+
+        KakaoUserInfo info = kakaoOAuthClient.authenticate("valid-code");
+
+        assertThat(info.providerId()).isEqualTo("77");
+        assertThat(info.email()).isNull();
     }
 
     @Test
