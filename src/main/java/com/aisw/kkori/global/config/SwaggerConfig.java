@@ -18,6 +18,7 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class SwaggerConfig {
 
+    /** API 기본 정보와 bearerAuth 보안 스킴을 등록한다. */
     @Bean
     public OpenAPI kkoriOpenAPI() {
         return new OpenAPI()

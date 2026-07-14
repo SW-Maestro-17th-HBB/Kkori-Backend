@@ -59,6 +59,7 @@ public class KakaoOAuthClient {
         }
     }
 
+    /** 인가 코드를 카카오 access token으로 교환한다 (client secret 필수). */
     private KakaoTokenResponse exchangeToken(String code) {
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("grant_type", "authorization_code");
@@ -75,6 +76,7 @@ public class KakaoOAuthClient {
                 .body(KakaoTokenResponse.class);
     }
 
+    /** 카카오 access token으로 회원번호·이메일·닉네임을 조회한다. */
     private KakaoUserInfoResponse fetchUserInfo(String kakaoAccessToken) {
         return restClient.get()
                 .uri(properties.userInfoUri())

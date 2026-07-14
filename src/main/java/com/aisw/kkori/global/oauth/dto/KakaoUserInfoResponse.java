@@ -22,6 +22,7 @@ public record KakaoUserInfoResponse(
         return kakaoAccount.email();
     }
 
+    /** 프로필 제공 미동의 시 null. */
     public String nickname() {
         return kakaoAccount == null || kakaoAccount.profile() == null
                 ? null

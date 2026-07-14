@@ -41,6 +41,7 @@ public class User extends BaseEntity {
         this.name = name;
     }
 
+    /** 가입 시 계정 생성. email·name은 카카오가 제공하지 않으면 null일 수 있다. */
     public static User create(String providerId, String email, String name) {
         return new User(providerId, email, name);
     }

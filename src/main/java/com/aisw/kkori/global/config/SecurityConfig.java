@@ -33,6 +33,7 @@ public class SecurityConfig {
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
 
+    /** 무상태(STATELESS) 체인 — 세션·폼로그인 없이 JWT 필터가 인증을 전담한다. */
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         return http

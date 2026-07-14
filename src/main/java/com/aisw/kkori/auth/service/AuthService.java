@@ -66,10 +66,12 @@ public class AuthService {
         return tokenService.issueTokenPair(user.getId());
     }
 
+    /** 토큰 재발급 — 검증·회전·재사용 감지는 {@link TokenService#reissue}가 담당한다. */
     public TokenResponse reissue(String refreshToken) {
         return tokenService.reissue(refreshToken);
     }
 
+    /** 로그아웃 — AT 유저 소유의 RT만 폐기한다. */
     public void logout(Long userId, String refreshToken) {
         tokenService.logout(userId, refreshToken);
     }

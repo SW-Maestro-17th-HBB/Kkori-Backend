@@ -22,6 +22,7 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
     @Query("select rt from RefreshToken rt where rt.tokenHash = :tokenHash")
     Optional<RefreshToken> findWithLockByTokenHash(@Param("tokenHash") String tokenHash);
 
+    /** 잠금 없는 해시 조회 — 로그아웃과 Grace Period의 대체 토큰 조회에 사용한다. */
     Optional<RefreshToken> findByTokenHash(String tokenHash);
 
     /** 재사용 탈취 감지·탈퇴 시 해당 유저의 유효 RT 전부를 폐기한다. */
