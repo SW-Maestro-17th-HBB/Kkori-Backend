@@ -6,6 +6,7 @@ import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.resume.domain.AnalysisStatus;
 import com.aisw.kkori.resume.domain.Resume;
 import com.aisw.kkori.resume.domain.ResumeAnalysisStatus;
+import com.aisw.kkori.resume.dto.ResumeParseRequestedMessage;
 import com.aisw.kkori.resume.dto.ResumeUploadResponse;
 import com.aisw.kkori.resume.repository.ResumeAnalysisStatusRepository;
 import com.aisw.kkori.resume.repository.ResumeRepository;
@@ -85,7 +86,8 @@ public class ResumeUploadService {
                     .build());
             ResumeAnalysisStatus status = statusRepository.save(ResumeAnalysisStatus.init(resume));
 
-            analysisRequestPublisher.publish(resume.getId(), userId, s3Properties.bucket(), objectKey);
+            analysisRequestPublisher.publish(new ResumeParseRequestedMessage(
+                    resume.getId(), userId, s3Properties.bucket(), objectKey));
 
             return ResumeUploadResponse.created(resume, status.getParseStatus());
         });

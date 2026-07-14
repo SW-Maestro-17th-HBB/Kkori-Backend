@@ -5,7 +5,7 @@ import com.aisw.kkori.resume.domain.AnalysisStatus;
 import com.aisw.kkori.resume.domain.Resume;
 import com.aisw.kkori.resume.repository.ResumeAnalysisStatusRepository;
 import com.aisw.kkori.resume.repository.ResumeRepository;
-import com.aisw.kkori.resume.service.ResumeAnalysisRequestPublisher;
+import com.aisw.kkori.resume.dto.ResumeParseRequestedMessage;
 import io.awspring.cloud.s3.S3Template;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -45,7 +45,7 @@ class ResumeUploadIntegrationTest {
         }
         statusRepository.deleteAll();
         resumeRepository.deleteAll();
-        redisTemplate.delete(ResumeAnalysisRequestPublisher.STREAM_KEY);
+        redisTemplate.delete(ResumeParseRequestedMessage.STREAM_KEY);
     }
 
     private MockMultipartFile pdfFile(String name, byte[] content) {
@@ -78,7 +78,7 @@ class ResumeUploadIntegrationTest {
 
         // 분석 요청 이벤트 1건 발행
         List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream()
-                .range(ResumeAnalysisRequestPublisher.STREAM_KEY, Range.unbounded());
+                .range(ResumeParseRequestedMessage.STREAM_KEY, Range.unbounded());
         assertThat(records).hasSize(1);
         assertThat(records.get(0).getValue())
                 .containsEntry("resumeId", String.valueOf(resume.getId()))
@@ -114,7 +114,7 @@ class ResumeUploadIntegrationTest {
         // 레코드·분석 요청 모두 1개 — 중복 업로드는 아무것도 만들지 않는다
         assertThat(resumeRepository.findAll()).hasSize(1);
         List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream()
-                .range(ResumeAnalysisRequestPublisher.STREAM_KEY, Range.unbounded());
+                .range(ResumeParseRequestedMessage.STREAM_KEY, Range.unbounded());
         assertThat(records).hasSize(1);
     }
 
@@ -199,7 +199,7 @@ class ResumeUploadIntegrationTest {
         assertThat(resumeRepository.findAll()).isEmpty();
         assertThat(statusRepository.findAll()).isEmpty();
         List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream()
-                .range(ResumeAnalysisRequestPublisher.STREAM_KEY, Range.unbounded());
+                .range(ResumeParseRequestedMessage.STREAM_KEY, Range.unbounded());
         assertThat(records).isEmpty();
     }
 }

@@ -1,5 +1,6 @@
 package com.aisw.kkori.resume.config;
 
+import com.aisw.kkori.resume.dto.ResumeStatusChangedMessage;
 import com.aisw.kkori.resume.service.ResumeStatusEventListener;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -48,7 +49,7 @@ public class ResumeStatusStreamConfig {
 
         container.receiveAutoAck(
                 Consumer.from(CONSUMER_GROUP, "sse-" + UUID.randomUUID()),
-                StreamOffset.create(ResumeStatusEventListener.STATUS_STREAM_KEY, ReadOffset.lastConsumed()),
+                StreamOffset.create(ResumeStatusChangedMessage.STREAM_KEY, ReadOffset.lastConsumed()),
                 listener
         );
         container.start();
@@ -60,7 +61,7 @@ public class ResumeStatusStreamConfig {
         try {
             redisTemplate.execute((org.springframework.data.redis.core.RedisCallback<Object>) connection -> {
                 connection.streamCommands().xGroupCreate(
-                        ResumeStatusEventListener.STATUS_STREAM_KEY.getBytes(),
+                        ResumeStatusChangedMessage.STREAM_KEY.getBytes(),
                         CONSUMER_GROUP,
                         ReadOffset.latest(),
                         true

@@ -1,7 +1,7 @@
 package com.aisw.kkori.resume;
 
 import com.aisw.kkori.TestcontainersConfiguration;
-import com.aisw.kkori.resume.service.ResumeStatusEventListener;
+import com.aisw.kkori.resume.dto.ResumeStatusChangedMessage;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -72,9 +72,9 @@ class ResumeSseIntegrationTest {
             // SSE 연결과 스트림 리스너 폴링이 자리잡을 시간
             Thread.sleep(1500);
 
-            publishStatus("12", "TEXT_EXTRACTING", "");
-            publishStatus("12", "EMBEDDED", "");
-            publishStatus("34", "FAILED", "PDF 텍스트 추출 실패");
+            publishStatus(12, "TEXT_EXTRACTING", "");
+            publishStatus(12, "EMBEDDED", "");
+            publishStatus(34, "FAILED", "PDF 텍스트 추출 실패");
 
             await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
                 String received = String.join("\n", lines);
@@ -90,9 +90,10 @@ class ResumeSseIntegrationTest {
         }
     }
 
-    private void publishStatus(String resumeId, String status, String message) {
+    /** Worker가 할 발행을 계약 record 그대로 수행한다 — toMap()이 실제 직렬화 규칙. */
+    private void publishStatus(long resumeId, String status, String message) {
         redisTemplate.opsForStream().add(StreamRecords
-                .mapBacked(Map.of("resumeId", resumeId, "status", status, "message", message))
-                .withStreamKey(ResumeStatusEventListener.STATUS_STREAM_KEY));
+                .mapBacked(new ResumeStatusChangedMessage(resumeId, status, message).toMap())
+                .withStreamKey(ResumeStatusChangedMessage.STREAM_KEY));
     }
 }
