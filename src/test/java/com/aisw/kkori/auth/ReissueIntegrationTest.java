@@ -122,22 +122,52 @@ class ReissueIntegrationTest extends AuthIntegrationTestSupport {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error.code").value("A009"));
 
+        // 전체 무효화로 폐기된 RT는 회전 이력이 없으므로(replaced_by NULL) A007로 거부된다
         postJson(REISSUE_URI, reissueBody(deviceB.refreshToken()))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.error.code").value("A009"));
+                .andExpect(jsonPath("$.error.code").value("A007"));
     }
 
     @Test
-    @DisplayName("로그아웃으로 폐기된 RT(replaced_by NULL)는 60초 이내라도 재발급이 거부된다")
-    void logoutRevokedTokenGetsNoGracePeriod() throws Exception {
+    @DisplayName("로그아웃으로 폐기된 RT(replaced_by NULL)는 60초 이내라도 거부되되, 다른 기기 RT는 폐기되지 않는다")
+    void logoutRevokedTokenGetsNoGracePeriodAndNoRevokeAll() throws Exception {
         User user = saveUser("kakao-8006");
-        TokenResponse issued = tokenService.issueTokenPair(user.getId());
-        tokenService.logout(user.getId(), issued.refreshToken());
+        TokenResponse loggedOutDevice = tokenService.issueTokenPair(user.getId());
+        TokenResponse otherDevice = tokenService.issueTokenPair(user.getId());
+        tokenService.logout(user.getId(), loggedOutDevice.refreshToken());
 
-        // 방금 폐기됐지만(60초 내) 회전 폐기가 아니므로 Grace Period가 적용되지 않는다
+        // 방금 폐기됐지만(60초 내) 회전 폐기가 아니므로 Grace Period 없이 거부된다
+        postJson(REISSUE_URI, reissueBody(loggedOutDevice.refreshToken()))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("A007"));
+
+        // 전체 무효화는 일어나지 않는다 — 다른 기기는 계속 재발급 가능
+        RefreshToken otherToken = refreshTokenRepository
+                .findByTokenHash(TokenHasher.sha256Hex(otherDevice.refreshToken())).orElseThrow();
+        assertThat(otherToken.getRevokedAt()).isNull();
+        postJson(REISSUE_URI, reissueBody(otherDevice.refreshToken())).andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("Grace Period 내라도 대체 토큰이 이미 폐기됐으면 401만 반환하고 전체 무효화하지 않는다")
+    void deadReplacementWithinGraceIsRejectedWithoutRevokeAll() throws Exception {
+        User user = saveUser("kakao-8007");
+        TokenResponse issued = tokenService.issueTokenPair(user.getId());
+        TokenResponse otherDevice = tokenService.issueTokenPair(user.getId());
+
+        // 회전 직후 새 RT로 로그아웃 → 대체 토큰이 죽음
+        ResultActions rotation = postJson(REISSUE_URI, reissueBody(issued.refreshToken()))
+                .andExpect(status().isOk());
+        String rotatedRefreshToken = responseData(rotation).path("refreshToken").asText();
+        tokenService.logout(user.getId(), rotatedRefreshToken);
+
+        // 옛 RT로 재시도(60초 내) — 대체가 죽었으니 grace 반환 불가, 401만
         postJson(REISSUE_URI, reissueBody(issued.refreshToken()))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.error.code").value("A009"));
+                .andExpect(jsonPath("$.error.code").value("A007"));
+
+        // 다른 기기 RT는 영향 없음
+        postJson(REISSUE_URI, reissueBody(otherDevice.refreshToken())).andExpect(status().isOk());
     }
 
     private void rewindRevokedAt(String refreshToken, Duration rewind) {

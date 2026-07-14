@@ -102,19 +102,13 @@ public class TokenService {
         return tokens;
     }
 
-    /**
-     * 폐기된 RT 처리 — 폐기 후 경과 시간으로 정상 재시도와 탈취를 구분한다.
-     *
-     * <p>Grace Period(60초) 내 + 회전으로 폐기(replaced_by 존재) + 대체 토큰이 살아있으면
-     * 응답 유실 후 재시도로 간주하고, 새로 발급하지 않고 원래 발급했던 RT를 재생성해 반환한다
-     *
-     * <p>그 외(60초 초과, 로그아웃 폐기 replaced_by NULL, 대체 토큰 사망)는 모두 탈취로 간주해
-     * 해당 유저의 모든 RT를 폐기하고 401을 반환한다(fail-secure).
-     */
     private TokenResponse handleRevokedToken(RefreshToken current, Instant now) {
-        boolean withinGrace = Duration.between(current.getRevokedAt(), now).compareTo(GRACE_PERIOD) <= 0;
+        if (current.getReplacedByTokenHash() == null) {
+            throw new BusinessException(ErrorCode.RT_NOT_FOUND);
+        }
 
-        if (withinGrace && current.getReplacedByTokenHash() != null) {
+        boolean withinGrace = Duration.between(current.getRevokedAt(), now).compareTo(GRACE_PERIOD) <= 0;
+        if (withinGrace) {
             RefreshToken replacement = refreshTokenRepository
                     .findByTokenHash(current.getReplacedByTokenHash())
                     .filter(rt -> !rt.isRevoked() && !rt.isExpired(now))
@@ -124,6 +118,7 @@ public class TokenService {
                         jwtTokenProvider.createAccessToken(replacement.getUserId()),
                         regenerate(replacement));
             }
+            throw new BusinessException(ErrorCode.RT_NOT_FOUND);
         }
 
         refreshTokenRepository.revokeAllByUserId(current.getUserId(), now);
