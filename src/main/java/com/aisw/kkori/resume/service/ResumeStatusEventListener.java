@@ -31,7 +31,8 @@ public class ResumeStatusEventListener implements StreamListener<String, MapReco
             ResumeStatusChangedMessage message = ResumeStatusChangedMessage.from(record.getValue());
             ResumeStatusEvent event = new ResumeStatusEvent(
                     message.resumeId(), message.status(), message.message());
-            emitters.broadcast(eventNameFor(message.status()), event);
+            // 소유자에게만 전송 — userId는 Worker가 분석 요청 메시지에서 에코한 값 (계약)
+            emitters.sendTo(message.userId(), eventNameFor(message.status()), event);
         } catch (RuntimeException e) {
             // 잘못된 이벤트 하나가 리스너를 죽이지 않도록 삼킨다
             log.warn("상태 이벤트 처리 실패: {}", record.getValue(), e);

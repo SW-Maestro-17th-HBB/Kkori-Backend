@@ -8,8 +8,8 @@ import java.util.Optional;
 public interface ResumeRepository extends JpaRepository<Resume, Long> {
 
     /**
-     * 같은 파일 해시의 활성 이력서 조회 (@SQLRestriction으로 soft delete 자동 제외).
-     * TODO: 인증 도입 시 (userId + fileHash)로 범위를 좁힐 것 — 현재는 전역 dedup.
+     * 같은 사용자의 같은 파일 해시 활성 이력서 조회 (@SQLRestriction으로 soft delete 자동 제외).
+     * 반드시 userId 스코프로 조회 — 해시만으로 조회하면 타 사용자의 이력서가 반환되는 정보 누출.
      */
-    Optional<Resume> findFirstByFileHash(String fileHash);
+    Optional<Resume> findFirstByUserIdAndFileHash(Long userId, String fileHash);
 }

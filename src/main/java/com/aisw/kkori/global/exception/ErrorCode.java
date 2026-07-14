@@ -30,6 +30,17 @@ public enum ErrorCode {
     PAGE_LIMIT_EXCEEDED(HttpStatus.BAD_REQUEST, "R005", "PDF는 최대 10페이지까지 업로드할 수 있습니다."),
     FILE_UPLOAD_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "R006", "파일 저장에 실패했습니다."),
     RESUME_ANALYSIS_REQUEST_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "R007", "이력서 분석 요청에 실패했습니다."),
+
+    // 인증 (A)
+    INVALID_CODE(HttpStatus.BAD_REQUEST, "A001", "카카오 인가 코드가 누락되었거나 형식이 올바르지 않습니다."),
+    KAKAO_AUTH_FAILED(HttpStatus.UNAUTHORIZED, "A002", "카카오 인증에 실패했습니다. 다시 로그인해 주세요."),
+    KAKAO_SERVER_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "A003", "카카오 서버와의 통신에 실패했습니다."),
+    MISSING_REQUIRED_CONSENT(HttpStatus.BAD_REQUEST, "A004", "필수 동의 항목에 모두 동의해야 가입할 수 있습니다."),
+    INVALID_SIGNUP_TOKEN(HttpStatus.UNAUTHORIZED, "A005", "가입 토큰이 유효하지 않습니다. 다시 로그인해 주세요."),
+    ALREADY_REGISTERED(HttpStatus.CONFLICT, "A006", "이미 가입된 계정입니다."),
+    RT_NOT_FOUND(HttpStatus.UNAUTHORIZED, "A007", "유효하지 않은 토큰입니다. 다시 로그인해 주세요."),
+    RT_EXPIRED(HttpStatus.UNAUTHORIZED, "A008", "토큰이 만료되었습니다. 다시 로그인해 주세요."),
+    RT_REUSE_DETECTED(HttpStatus.UNAUTHORIZED, "A009", "다른 기기에서 토큰 재사용이 감지되었습니다. 다시 로그인해 주세요."),
     ;
 
     private final HttpStatus status;

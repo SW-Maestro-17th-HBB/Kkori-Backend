@@ -30,8 +30,8 @@ public class Resume extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** 소유자. TODO: 인증 도메인 완성 시 SecurityContext에서 채우고 nullable 해제. */
-    @Column(name = "user_id")
+    /** 소유자 (users.id). 도메인 간 결합을 낮추기 위해 연관관계 대신 id만 보관한다. */
+    @Column(name = "user_id", nullable = false)
     private Long userId;
 
     /** 표시 이름. 업로드 시 미지정이면 원본 파일명을 사용한다. */

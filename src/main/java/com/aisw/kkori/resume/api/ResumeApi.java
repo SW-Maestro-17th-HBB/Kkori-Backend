@@ -28,6 +28,7 @@ public interface ResumeApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "S3 저장 실패(R006)·분석 요청 실패(R007)"),
     })
     ResponseEntity<ApiResponse<ResumeUploadResponse>> upload(
+            @Parameter(hidden = true) Long userId,
             @Parameter(description = "업로드할 PDF 파일", required = true) MultipartFile file,
             @Parameter(description = "이력서 표시 이름. 없으면 원본 파일명 사용") String title
     );

@@ -41,9 +41,9 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 
 - 검증 순서: 파일 존재 → 확장자·MIME(`application/pdf`) → 크기(10MB) → PDF 열기(유효성·페이지 수 확인). Spring이 업로드 시점에 PDF를 열어 손상 여부와 페이지 수를 동기 검증하므로, 업로드 응답의 `pageCount`는 항상 채워진다. 깊은 파싱(텍스트 추출)은 Worker 담당.
 - **중복 업로드 처리 (2층 구조)**:
-  - **스토리지 층** — 파일 바이너리의 SHA-256을 `file_hash`로 저장하고, S3 objectKey를 해시 기반(`resumes/{fileHash}.pdf`)으로 생성한다. 같은 바이너리는 S3에 1부만 존재하며, "S3 저장 후 DB 저장 전 서버 사망"으로 남은 고아 객체도 재업로드 시 자연스럽게 재사용된다.
+  - **스토리지 층** — 파일 바이너리의 SHA-256을 `file_hash`로 저장하고, S3 objectKey를 사용자별 해시 기반(`resumes/{userId}/{fileHash}.pdf`)으로 생성한다. 같은 사용자의 같은 바이너리는 S3에 1부만 존재하며(소유권 경계가 키에 드러나 삭제 시 참조 확인도 사용자 내로 한정), "S3 저장 후 DB 저장 전 서버 사망"으로 남은 고아 객체도 재업로드 시 자연스럽게 재사용된다.
   - **사용자 흐름 층** — 같은 `file_hash`의 활성 이력서가 이미 있으면 **새로 만들지 않고, 아무 상태도 바꾸지 않고**, 기존 이력서 정보에 `duplicated: true`를 붙여 200으로 반환한다(분석 상태 무관 동일 규칙 — 업로드 API는 중복 시 부수효과가 없다). 프론트는 상태에 따라 안내한다: 진행 중이면 SSE 재연결, EMBEDDED면 기존 이력서로 이동, FAILED면 재분석 버튼(§4) 제공.
-  - 중복 판단 범위는 (userId + file_hash)이어야 한다 — 인증 도입 전까지는 전역 dedup으로 동작 (**TODO**).
+  - 중복 판단 범위는 **(userId + file_hash)** — 타 사용자의 같은 파일은 중복 판정 대상이 아니며(해시만으로 조회하면 타인의 resumeId가 노출되는 정보 누출), 동시 업로드 레이스는 부분 유니크 인덱스 `(user_id, file_hash) WHERE deleted_at IS NULL`이 방어한다.
 - **FAILED 복구는 §4 재분석 API로만** 한다 — 같은 파일을 재업로드해도 위 규칙대로 `duplicated` 정보만 반환되며, 분석 재시작은 사용자의 명시적 재분석 요청으로만 일어난다.
 - Worker 파이프라인: S3에서 PDF 다운로드 → PyMuPDF 텍스트 추출 → LLM으로 구조화(`structuredData`: profile/skills/projects/experiences) → 의미 단위 청킹 + 청크별 metadata 생성 → 임베딩 생성 → `resume_chunks` 저장(content, metadata, embedding) → 상태 EMBEDDED. 각 단계 진입 시 상태를 갱신하고 상태 이벤트를 발행한다.
 - 추출 원문(raw text)은 **저장하지 않는다**. 재분석 등으로 원문이 필요하면 S3 원본에서 다시 파싱한다.
@@ -80,7 +80,7 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 
 - `POST /api/v1/resumes` — multipart/form-data (`file`: PDF, `title`: string 선택)
 - 응답은 공통 엔벨로프 `ApiResponse<T>`를 따른다 (이하 모든 REST API 동일)
-- Redis Stream: 분석 요청 스트림(발행), 상태 이벤트 스트림(소비). **스트림별 메시지 스키마의 정의 원천은 계약 record** — `ResumeParseRequestedMessage`(요청: resumeId, userId, bucket, objectKey), `ResumeStatusChangedMessage`(상태: resumeId, status, message). Python Worker는 이 두 파일을 계약 문서로 참조
+- Redis Stream: 분석 요청 스트림(발행), 상태 이벤트 스트림(소비). **스트림별 메시지 스키마의 정의 원천은 계약 record** — `ResumeParseRequestedMessage`(요청: resumeId, userId, bucket, objectKey), `ResumeStatusChangedMessage`(상태: resumeId, **userId**, status, message — userId는 SSE 사용자별 라우팅 근거로, Worker가 요청 메시지의 userId를 에코). Python Worker는 이 두 파일을 계약 문서로 참조
 
 ### 제약사항
 
@@ -144,7 +144,8 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 분석 진행 상태를 두 채널로 제공한다.
 
 - REST 조회(`GET /api/v1/resumes/{resumeId}/status`): 현재 상태, 실패 정보(errorMessage), 시각 정보를 반환한다. SSE 유실·재연결 시 상태 동기화용.
-- SSE 구독(`GET /sse/v1/resumes`): **사용자 단위 단일 연결**로 해당 사용자의 모든 이력서 상태 변경을 push한다. 이력서 단위 연결은 사용하지 않는다(브라우저 동시 연결 한도·연결 수명 관리 문제). SSE는 일반 REST(`/api/**`)와 분리된 `/sse/**` 네임스페이스를 사용한다.
+- SSE 구독(`GET /sse/v1/resumes`): **사용자 단위 단일 연결**로 인증된 사용자 **본인 이력서의** 상태 변경만 push한다(userId 키 라우팅 — 타 사용자 이벤트 미수신). 이력서 단위 연결은 사용하지 않는다(브라우저 동시 연결 한도·연결 수명 관리 문제). SSE는 일반 REST(`/api/**`)와 분리된 `/sse/**` 네임스페이스를 사용한다.
+- **클라이언트 주의**: 브라우저 표준 `EventSource`는 Authorization 헤더를 지원하지 않으므로, 프론트는 fetch 기반 SSE 클라이언트(예: `@microsoft/fetch-event-source`)로 Bearer 토큰을 실어 연결한다.
 
 SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 

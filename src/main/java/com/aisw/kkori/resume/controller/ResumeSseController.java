@@ -4,6 +4,7 @@ import com.aisw.kkori.resume.api.ResumeSseApi;
 import com.aisw.kkori.resume.service.ResumeSseEmitters;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -21,7 +22,7 @@ public class ResumeSseController implements ResumeSseApi {
     private final ResumeSseEmitters emitters;
 
     @GetMapping(produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter subscribe() {
-        return emitters.add();
+    public SseEmitter subscribe(@AuthenticationPrincipal Long userId) {
+        return emitters.add(userId);
     }
 }
