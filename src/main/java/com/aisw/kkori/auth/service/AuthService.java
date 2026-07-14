@@ -85,13 +85,20 @@ public class AuthService {
         }
     }
 
-    /** 필수 항목(privacy·audio_usage·resume_usage)이 모두 동의됐는지 확인한다. */
+    /**
+     * 필수 항목(privacy·audio_usage·resume_usage)이 모두 동의됐는지 확인한다.
+     * null 원소·null type은 의미 없는 입력이므로 무시하지 않고 400으로 거부한다
+     * (잘못된 클라이언트 입력이 NPE→500으로 분류되는 것 방지).
+     */
     private Map<ConsentType, Boolean> validateConsents(SignupRequest request) {
         Map<ConsentType, Boolean> byType = new LinkedHashMap<>();
         if (request.consents() != null) {
-            request.consents().stream()
-                    .filter(item -> item.type() != null)
-                    .forEach(item -> byType.put(item.type(), item.agreed()));
+            for (SignupRequest.ConsentItem item : request.consents()) {
+                if (item == null || item.type() == null) {
+                    throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
+                }
+                byType.put(item.type(), item.agreed());
+            }
         }
         for (ConsentType type : ConsentType.values()) {
             if (type.isRequired() && !byType.getOrDefault(type, false)) {

@@ -74,6 +74,44 @@ class SignupIntegrationTest extends AuthIntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("동의 배열에 null 항목이 있으면 400 INVALID_INPUT_VALUE(C002)로 거부되고 계정이 생성되지 않는다")
+    void nullConsentItemIsRejected() throws Exception {
+        String signupToken = jwtTokenProvider.createSignupToken("kakao-5008", null, null);
+        String withNullItem = """
+                [
+                  null,
+                  {"type": "privacy", "agreed": true},
+                  {"type": "audio_usage", "agreed": true},
+                  {"type": "resume_usage", "agreed": true}
+                ]""";
+
+        postJson(SIGNUP_URI, signupBody(signupToken, withNullItem))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("C002"));
+
+        assertThat(userRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("동의 항목의 type이 null이면 400 INVALID_INPUT_VALUE(C002)로 거부된다")
+    void nullConsentTypeIsRejected() throws Exception {
+        String signupToken = jwtTokenProvider.createSignupToken("kakao-5009", null, null);
+        String withNullType = """
+                [
+                  {"type": null, "agreed": true},
+                  {"type": "privacy", "agreed": true},
+                  {"type": "audio_usage", "agreed": true},
+                  {"type": "resume_usage", "agreed": true}
+                ]""";
+
+        postJson(SIGNUP_URI, signupBody(signupToken, withNullType))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("C002"));
+
+        assertThat(userRepository.count()).isZero();
+    }
+
+    @Test
     @DisplayName("위변조된 signup token은 401 INVALID_SIGNUP_TOKEN(A005)로 거부된다")
     void tamperedSignupTokenIsRejected() throws Exception {
         String tampered = jwtTokenProvider.createSignupToken("kakao-5003", null, null) + "x";
