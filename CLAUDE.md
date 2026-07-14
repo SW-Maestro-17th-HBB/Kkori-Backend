@@ -52,10 +52,10 @@ docker compose up -d         # 로컬 PostgreSQL(5432) + Redis(6379) + MinIO(900
 
 | 필요한 정보 | 참조 문서 |
 |---|---|
-| 도메인 기능 요구사항, 정책, 검증 기준 | `docs/requirements/<도메인>.md` (SRS 템플릿 형식) |
+| 도메인 기능 요구사항, 정책, 검증 기준 | `docs/requirements/<도메인>/` 디렉토리 (도메인당 디렉토리, 문서 여러 개 가능, SRS 템플릿 형식) |
 | 전체 아키텍처, 기술 스택 구성 | `docs/architecture.md` |
 | DB 스키마, 엔티티 관계 | `docs/erd.md` (Mermaid) |
 
 - `docs/drafts/` — 확정 전 개인 초안 (gitignore, 커밋 금지, 참조 대상 아님)
-- 이슈/PR에서 PRD 참조 시 섹션 번호까지 명시 (예: `docs/requirements/resume.md §2.1`)
+- 이슈/PR에서 PRD 참조 시 섹션 번호까지 명시 (예: `docs/requirements/resume/resume.md §2.1`)
 - PRD는 CodeRabbit도 리뷰 컨텍스트로 참조하므로 요구사항 변경 시 반드시 문서를 먼저 갱신할 것

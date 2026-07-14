@@ -26,7 +26,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
 /**
- * 이력서 업로드 오케스트레이션 (docs/requirements/resume.md §1).
+ * 이력서 업로드 오케스트레이션 (docs/requirements/resume/resume.md §1).
  *
  * <p>검증 → 해시 계산 → 중복 조회(있으면 무부수효과 조기 반환) → S3 저장(없을 때만)
  * → DB 저장(Resume + 분석 상태) + 분석 요청 발행 → 응답.

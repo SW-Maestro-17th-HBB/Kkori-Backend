@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
  * 이력서 업로드 응답 (API 명세 4.1).
  *
  * <p>{@code duplicated}: 같은 파일의 활성 이력서가 이미 있어 새로 만들지 않고
- * 기존 정보를 반환했음을 나타낸다 (docs/requirements/resume.md §1 중복 규칙).
+ * 기존 정보를 반환했음을 나타낸다 (docs/requirements/resume/resume.md §1 중복 규칙).
  */
 public record ResumeUploadResponse(
         Long resumeId,

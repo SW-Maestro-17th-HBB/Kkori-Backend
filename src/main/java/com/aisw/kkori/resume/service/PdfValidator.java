@@ -12,7 +12,7 @@ import java.io.IOException;
 import java.util.Locale;
 
 /**
- * 업로드 PDF 검증 (docs/requirements/resume.md §1 검증 순서).
+ * 업로드 PDF 검증 (docs/requirements/resume/resume.md §1 검증 순서).
  *
  * <p>확장자·Content-Type은 클라이언트가 조작할 수 있으므로,
  * 최종 검증은 PDFBox로 실제 파일을 열어보는 것으로 한다 (페이지 수 확인 겸용).
