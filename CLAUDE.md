@@ -42,6 +42,7 @@ docker compose up -d         # 로컬 PostgreSQL(5432) + Redis(6379) + MinIO(900
 - 작업은 `feature/HBB1-<지라번호>-<영문 요약>` 브랜치 → develop PR
 - 브랜치 접두사는 축약형이 아닌 전체 단어 사용 (`feat/` ❌ → `feature/` ✅)
 - **PR은 항상 draft로 생성**, 준비되면 ready 전환
+- PR 제목은 `[HBB1-<지라번호>] <타입>: <요약>` 형식 (예: `[HBB1-14] feat: 이력서 PDF 업로드 API 구현`) — 지라 키가 제목에 있으면 GitHub for Atlassian이 티켓에 자동 연결
 - PR 본문은 템플릿(관련 이슈 / PRD 경로 / 완료 조건) 준수 — 완료 조건은 PRD에서 발췌한 검증 가능한 문장으로 작성하고, 체크는 검증된 후에만
 - CodeRabbit이 develop 대상 PR을 자동 리뷰 (draft는 제외 — ready 전환 시점에 리뷰 시작, 이후 커밋은 증분 리뷰). 재리뷰가 필요하면 `@coderabbitai review` 코멘트
 - CI(GitHub Actions)는 main/develop 대상 push·PR에서 `./gradlew build` 실행
