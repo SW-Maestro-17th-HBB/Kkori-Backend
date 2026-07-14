@@ -8,6 +8,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -76,6 +78,17 @@ class TokenAuthIntegrationTest extends AuthIntegrationTestSupport {
         postJsonWithBearer(LOGOUT_URI, logoutBody("any-rt"), signupToken)
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error.code").value("C005"));
+    }
+
+    @Test
+    @DisplayName("허용된 오리진의 CORS preflight 요청이 통과한다")
+    void corsPreflightIsAllowed() throws Exception {
+        mockMvc.perform(options("/api/v1/auth/kakao")
+                        .header("Origin", "http://localhost:3000")
+                        .header("Access-Control-Request-Method", "POST")
+                        .header("Access-Control-Request-Headers", "Authorization, Content-Type"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:3000"));
     }
 
     private String logoutBody(String refreshToken) {
