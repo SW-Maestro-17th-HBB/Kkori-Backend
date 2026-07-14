@@ -16,4 +16,19 @@ public record KakaoOAuthProperties(
         String tokenUri,
         String userInfoUri
 ) {
+
+    /** 빈 설정값은 카카오 호출 시점이 아니라 부팅 시점에 실패시킨다(fail-fast). */
+    public KakaoOAuthProperties {
+        requireText(clientId, "kakao.client-id");
+        requireText(clientSecret, "kakao.client-secret");
+        requireText(redirectUri, "kakao.redirect-uri");
+        requireText(tokenUri, "kakao.token-uri");
+        requireText(userInfoUri, "kakao.user-info-uri");
+    }
+
+    private static void requireText(String value, String name) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("%s이(가) 설정되지 않았습니다".formatted(name));
+        }
+    }
 }

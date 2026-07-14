@@ -61,7 +61,7 @@ public class AuthService {
 
         User user = createUser(claims);
         consents.forEach((type, agreed) ->
-                userConsentRepository.save(UserConsent.record(user.getId(), type, agreed, CONSENT_VERSION)));
+                userConsentRepository.save(UserConsent.create(user.getId(), type, agreed, CONSENT_VERSION)));
 
         return tokenService.issueTokenPair(user.getId());
     }

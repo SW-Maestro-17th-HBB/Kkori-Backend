@@ -8,6 +8,7 @@ import com.aisw.kkori.auth.dto.SignupRequest;
 import com.aisw.kkori.auth.dto.TokenResponse;
 import com.aisw.kkori.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
@@ -37,5 +38,5 @@ public interface AuthApi {
     @Operation(summary = "로그아웃",
             description = "전달한 RT가 본인 소유일 때만 폐기한다. 멱등 연산으로 항상 200을 반환한다.",
             security = @SecurityRequirement(name = "bearerAuth"))
-    ApiResponse<Void> logout(Long userId, LogoutRequest request);
+    ApiResponse<Void> logout(@Parameter(hidden = true) Long userId, LogoutRequest request);
 }

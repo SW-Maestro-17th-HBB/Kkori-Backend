@@ -58,7 +58,7 @@ public class UserConsent {
     }
 
     /** 동의 이력 한 건을 기록한다 — agreed 여부에 따라 AGREED/WITHDRAWN 행이 append된다. */
-    public static UserConsent record(Long userId, ConsentType consentType, boolean agreed, int version) {
+    public static UserConsent create(Long userId, ConsentType consentType, boolean agreed, int version) {
         return new UserConsent(userId, consentType, agreed ? ConsentAction.AGREED : ConsentAction.WITHDRAWN, version);
     }
 }
