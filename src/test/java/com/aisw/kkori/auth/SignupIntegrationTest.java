@@ -1,8 +1,9 @@
 package com.aisw.kkori.auth;
 
-import com.aisw.kkori.global.jwt.JwtProperties;
-import com.aisw.kkori.global.jwt.JwtTokenProvider;
+import com.aisw.kkori.global.jwt.TokenType;
 import com.aisw.kkori.user.domain.ConsentAction;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
 import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.domain.UserConsent;
 import com.aisw.kkori.user.repository.UserConsentRepository;
@@ -10,7 +11,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
-import java.time.Duration;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.Date;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -124,10 +127,15 @@ class SignupIntegrationTest extends AuthIntegrationTestSupport {
     @Test
     @DisplayName("만료된 signup token은 401 INVALID_SIGNUP_TOKEN(A005)로 거부된다")
     void expiredSignupTokenIsRejected() throws Exception {
-        JwtTokenProvider expiredProvider = new JwtTokenProvider(new JwtProperties(
-                jwtProperties.secret(), jwtProperties.signupSecret(),
-                jwtProperties.accessTokenTtl(), jwtProperties.refreshTokenTtl(), Duration.ofSeconds(-10)));
-        String expired = expiredProvider.createSignupToken("kakao-5004", null, null);
+        // 정상 키로 서명됐지만 이미 만료된 signup token을 직접 만든다
+        String expired = Jwts.builder()
+                .issuedAt(Date.from(Instant.now().minusSeconds(1200)))
+                .expiration(Date.from(Instant.now().minusSeconds(600)))
+                .claim("provider_id", "kakao-5004")
+                .claim(TokenType.CLAIM_NAME, TokenType.SIGNUP.getValue())
+                .signWith(Keys.hmacShaKeyFor(jwtProperties.signupSecret().getBytes(StandardCharsets.UTF_8)),
+                        Jwts.SIG.HS256)
+                .compact();
 
         postJson(SIGNUP_URI, signupBody(expired, ALL_CONSENTS))
                 .andExpect(status().isUnauthorized())

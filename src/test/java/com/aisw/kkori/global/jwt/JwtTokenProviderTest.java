@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Date;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -84,12 +85,44 @@ class JwtTokenProviderTest {
     @Test
     @DisplayName("만료된 AT는 거부된다")
     void expiredTokenIsRejected() {
-        JwtTokenProvider expiredProvider = new JwtTokenProvider(new JwtProperties(
-                SECRET, SIGNUP_SECRET, Duration.ofSeconds(-10), Duration.ofDays(14), Duration.ofMinutes(10)));
-        String expired = expiredProvider.createAccessToken(1L);
+        String expired = Jwts.builder()
+                .subject("1")
+                .issuedAt(Date.from(Instant.now().minusSeconds(120)))
+                .expiration(Date.from(Instant.now().minusSeconds(60)))
+                .claim(TokenType.CLAIM_NAME, TokenType.ACCESS.getValue())
+                .signWith(Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8)), Jwts.SIG.HS256)
+                .compact();
 
         assertThatThrownBy(() -> provider.parseAccessToken(expired))
                 .isInstanceOf(JwtException.class);
+    }
+
+    @Test
+    @DisplayName("32바이트 미만 서명 키는 부팅 시점(설정 바인딩)에 거부된다")
+    void shortSecretIsRejectedAtStartup() {
+        assertThatThrownBy(() -> new JwtProperties(
+                "too-short", SIGNUP_SECRET, Duration.ofMinutes(30), Duration.ofDays(14), Duration.ofMinutes(10)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("jwt.secret");
+    }
+
+    @Test
+    @DisplayName("0 이하의 TTL은 부팅 시점(설정 바인딩)에 거부된다")
+    void nonPositiveTtlIsRejectedAtStartup() {
+        assertThatThrownBy(() -> new JwtProperties(
+                SECRET, SIGNUP_SECRET, Duration.ZERO, Duration.ofDays(14), Duration.ofMinutes(10)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("jwt.access-token-ttl");
+
+        assertThatThrownBy(() -> new JwtProperties(
+                SECRET, SIGNUP_SECRET, Duration.ofMinutes(30), Duration.ofSeconds(-1), Duration.ofMinutes(10)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("jwt.refresh-token-ttl");
+
+        assertThatThrownBy(() -> new JwtProperties(
+                SECRET, SIGNUP_SECRET, Duration.ofMinutes(30), Duration.ofDays(14), null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("jwt.signup-token-ttl");
     }
 
     @Test
