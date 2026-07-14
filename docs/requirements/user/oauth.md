@@ -198,7 +198,7 @@ AT 만료 시 프론트가 RT를 실어 `POST /api/v1/auth/reissue`를 호출하
 ### 실행 조건
 
 - 유저에게 발급된 RT가 `refresh_token` 테이블에 존재해야 한다.
-- `refresh_token` 테이블에 `revoked_at`·`replaced_by`(자기참조 FK) 컬럼이 존재해야 한다.
+- `refresh_token` 테이블에 `revoked_at`·`replaced_by`(대체 RT의 `token_hash` 참조 — FK 제약 없이 애플리케이션이 무결성을 처리하며, 참조 대상이 삭제된 경우 재발급 거부로 fail-safe) 컬럼이 존재해야 한다.
 
 ### 검증 기준
 
