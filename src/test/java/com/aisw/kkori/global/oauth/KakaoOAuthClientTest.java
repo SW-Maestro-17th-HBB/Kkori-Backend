@@ -97,6 +97,30 @@ class KakaoOAuthClientTest {
     }
 
     @Test
+    @DisplayName("토큰 교환이 2xx라도 access_token이 없으면 KAKAO_SERVER_ERROR로 거부된다")
+    void missingAccessTokenInSuccessResponseIsRejected() {
+        server.expect(requestTo(properties.tokenUri()))
+                .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> kakaoOAuthClient.authenticate("valid-code"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.KAKAO_SERVER_ERROR));
+    }
+
+    @Test
+    @DisplayName("사용자 정보가 2xx라도 id(회원번호)가 없으면 KAKAO_SERVER_ERROR로 거부된다")
+    void missingUserIdInSuccessResponseIsRejected() {
+        server.expect(requestTo(properties.tokenUri()))
+                .andRespond(withSuccess("{\"access_token\":\"kakao-at\"}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(properties.userInfoUri()))
+                .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> kakaoOAuthClient.authenticate("valid-code"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.KAKAO_SERVER_ERROR));
+    }
+
+    @Test
     @DisplayName("카카오 400(invalid_grant)은 우리 계약대로 KAKAO_AUTH_FAILED(401)로 매핑된다")
     void kakao4xxIsMappedToAuthFailed() {
         server.expect(requestTo(properties.tokenUri()))

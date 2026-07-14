@@ -40,7 +40,13 @@ public class KakaoOAuthClient {
     public KakaoUserInfo authenticate(String code) {
         try {
             KakaoTokenResponse token = exchangeToken(code);
+            if (token == null || token.accessToken() == null || token.accessToken().isBlank()) {
+                throw new BusinessException(ErrorCode.KAKAO_SERVER_ERROR);
+            }
             KakaoUserInfoResponse userInfo = fetchUserInfo(token.accessToken());
+            if (userInfo == null || userInfo.id() == null) {
+                throw new BusinessException(ErrorCode.KAKAO_SERVER_ERROR);
+            }
             return new KakaoUserInfo(String.valueOf(userInfo.id()), userInfo.email(), userInfo.nickname());
         } catch (RestClientResponseException e) {
             if (e.getStatusCode().is5xxServerError()) {
