@@ -121,6 +121,17 @@ class KakaoOAuthClientTest {
     }
 
     @Test
+    @DisplayName("2xx라도 JSON이 아닌 응답(점검 페이지 등)은 KAKAO_SERVER_ERROR로 매핑된다")
+    void nonJsonSuccessResponseIsMappedToServerError() {
+        server.expect(requestTo(properties.tokenUri()))
+                .andRespond(withSuccess("<html>server maintenance</html>", MediaType.TEXT_HTML));
+
+        assertThatThrownBy(() -> kakaoOAuthClient.authenticate("valid-code"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.getErrorCode()).isEqualTo(ErrorCode.KAKAO_SERVER_ERROR));
+    }
+
+    @Test
     @DisplayName("카카오 400(invalid_grant)은 우리 계약대로 KAKAO_AUTH_FAILED(401)로 매핑된다")
     void kakao4xxIsMappedToAuthFailed() {
         server.expect(requestTo(properties.tokenUri()))

@@ -9,8 +9,8 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
-import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 /**
@@ -53,7 +53,8 @@ public class KakaoOAuthClient {
                 throw new BusinessException(ErrorCode.KAKAO_SERVER_ERROR);
             }
             throw new BusinessException(ErrorCode.KAKAO_AUTH_FAILED);
-        } catch (ResourceAccessException e) {
+        } catch (RestClientException e) {
+            // I/O 오류·컨텐츠 타입 불일치·역직렬화 실패 등 나머지 전부 — 카카오 쪽 문제로 분류
             throw new BusinessException(ErrorCode.KAKAO_SERVER_ERROR);
         }
     }
