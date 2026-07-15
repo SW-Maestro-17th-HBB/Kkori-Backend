@@ -1,5 +1,7 @@
 package com.aisw.kkori.resume.dto;
 
+import com.aisw.kkori.resume.domain.AnalysisMode;
+
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -15,17 +17,23 @@ public record ResumeParseRequestedMessage(
         Long resumeId,
         Long userId,
         String bucket,
-        String objectKey
+        String objectKey,
+        AnalysisMode mode
 ) {
 
     public static final String STREAM_KEY = "resume.parse.requested";
 
-    /** 계약의 유일한 스키마 정의이므로 잘못된 메시지가 스트림에 실리기 전에 차단한다. */
+    /**
+     * 계약의 유일한 스키마 정의이므로 잘못된 메시지가 스트림에 실리기 전에 차단한다.
+     * 5개 필드는 mode와 무관하게 전부 필수 — REINDEX에서 bucket/objectKey는 Worker가 무시한다
+     * (mode에 따라 스키마가 달라지는 조건부 계약을 피하기 위함).
+     */
     public ResumeParseRequestedMessage {
         Objects.requireNonNull(resumeId, "resumeId");
         Objects.requireNonNull(userId, "userId");
         Objects.requireNonNull(bucket, "bucket");
         Objects.requireNonNull(objectKey, "objectKey");
+        Objects.requireNonNull(mode, "mode");
     }
 
     public Map<String, String> toMap() {
@@ -34,6 +42,7 @@ public record ResumeParseRequestedMessage(
         map.put("userId", String.valueOf(userId));
         map.put("bucket", bucket);
         map.put("objectKey", objectKey);
+        map.put("mode", mode.name());
         return map;
     }
 }
