@@ -22,9 +22,9 @@ import java.util.List;
 /**
  * JWT 기반 무상태 인증 설정.
  *
- * <p>인증 불필요 경로는 소셜 로그인 진입 3종(kakao·signup·reissue)과 Swagger 문서뿐이며,
- * 나머지는 전부 Bearer AT가 필요하다. logout은 AT 유저의 RT 소유 확인이 필요하므로
- * permitAll이 아니다(PRD).
+ * <p>인증 불필요 경로는 소셜 로그인 진입 3종(kakao·signup·reissue), 카카오 연결 해제
+ * 웹훅(어드민 키로 자체 검증), Swagger 문서뿐이며, 나머지는 전부 Bearer AT가 필요하다.
+ * logout은 AT 유저의 RT 소유 확인이 필요하므로 permitAll이 아니다(PRD).
  */
 @Configuration
 @RequiredArgsConstructor
@@ -45,6 +45,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/v1/auth/kakao", "/api/v1/auth/signup", "/api/v1/auth/reissue")
                         .permitAll()
+                        // 와일드카드가 아닌 정확 경로만 — 자체 검증 없는 다른 웹훅이 딸려 열리는 사고 방지
+                        .requestMatchers("/api/v1/webhook/kakao/unlink").permitAll()
                         .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**")
                         .permitAll()
                         .anyRequest().authenticated())
