@@ -32,6 +32,9 @@ public enum ErrorCode {
     RT_NOT_FOUND(HttpStatus.UNAUTHORIZED, "A007", "유효하지 않은 토큰입니다. 다시 로그인해 주세요."),
     RT_EXPIRED(HttpStatus.UNAUTHORIZED, "A008", "토큰이 만료되었습니다. 다시 로그인해 주세요."),
     RT_REUSE_DETECTED(HttpStatus.UNAUTHORIZED, "A009", "다른 기기에서 토큰 재사용이 감지되었습니다. 다시 로그인해 주세요."),
+
+    // 사용자 (U)
+    INVALID_NAME(HttpStatus.BAD_REQUEST, "U001", "이름은 공백을 제외한 1~100자여야 합니다."),
     ;
 
     private final HttpStatus status;
