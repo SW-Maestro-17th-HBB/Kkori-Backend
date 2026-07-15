@@ -20,6 +20,13 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByProviderId(String providerId);
 
     /**
+     * 카카오 회원번호로 id만 스칼라 조회한다 — 로그인이 user 행 잠금 전에 대상을 알아내는 용도.
+     * 엔티티 조회를 쓰면 이후 잠금 조회가 낡은 관리 인스턴스를 반환할 수 있다.
+     */
+    @Query("select u.id from User u where u.providerId = :providerId")
+    Optional<Long> findIdByProviderId(@Param("providerId") String providerId);
+
+    /**
      * user 행 잠금 조회 — 유저 상태를 쓰는 경로(수정·토큰 재발급)의 직렬화 지점.
      * 잠금 없이 조회 후 flush하면 그 사이 커밋된 탈퇴의 {@code deleted_at}을
      * 조회 시점 값으로 되덮는 lost update가 발생할 수 있다(PRD 기능 2).

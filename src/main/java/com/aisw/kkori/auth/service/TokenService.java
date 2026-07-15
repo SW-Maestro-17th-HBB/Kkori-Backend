@@ -41,14 +41,22 @@ public class TokenService {
     private final JwtProperties jwtProperties;
     private final Clock clock;
 
-    /** 카카오 신원으로 신규/기존/복구를 판정한다. 복구와 토큰 발급은 이 한 트랜잭션으로 묶인다. */
+    /**
+     * 카카오 신원으로 신규/기존/복구를 판정한다. 복구와 토큰 발급은 이 한 트랜잭션으로 묶인다.
+     *
+     * <p>판정·토큰 발급은 user 행 잠금 하에 수행한다(잠금 순서 user → RT) — 잠금 없이
+     * 조회 후 RT를 INSERT하면 탈퇴의 RT 전량 폐기와 경합해 탈퇴 후 활성 RT가 남을 수 있고,
+     * 복구 경로는 {@code deleted_at}을 변경하므로 잠금 없는 flush가 탈퇴를 되덮을 수 있다.
+     * id는 스칼라로 조회한다 — 엔티티 조회는 잠금 조회가 낡은 관리 인스턴스를 반환하게 만든다.
+     */
     @Transactional
     public KakaoLoginResponse processKakaoLogin(KakaoUserInfo info) {
-        return userRepository.findByProviderId(info.providerId())
+        return userRepository.findIdByProviderId(info.providerId())
+                .flatMap(userRepository::findWithLockById)
                 .map(user -> {
                     boolean restored = user.isDeleted();
                     if (restored) {
-                        // TODO(HBB1-10): deletion_log CANCELLED 전환·동의 AGREED 재기록·유예 기간 검증
+                        // TODO(HBB1-245): deletion_log CANCELLED 전환·재동의 요구·유예 기간 검증으로 교체
                         user.restore();
                     }
                     return KakaoLoginResponse.loggedIn(restored, issueTokenPair(user.getId()));
@@ -92,8 +100,8 @@ public class TokenService {
             throw new BusinessException(ErrorCode.RT_NOT_FOUND);
         }
         String tokenHash = TokenHasher.sha256Hex(refreshToken);
-        Long userId = refreshTokenRepository.findByTokenHash(tokenHash)
-                .map(RefreshToken::getUserId)
+        // 스칼라 조회 — 엔티티로 읽으면 아래 잠금 조회가 낡은 관리 인스턴스를 반환할 수 있다
+        Long userId = refreshTokenRepository.findUserIdByTokenHash(tokenHash)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RT_NOT_FOUND));
         boolean active = userRepository.findWithLockById(userId)
                 .filter(user -> !user.isDeleted())
