@@ -121,11 +121,13 @@ public class UserService {
                 .filter(log -> Objects.equals(log.getProviderId(), tokenProviderId))
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
 
-        // 잠금 순서 user → deletion_log → RT (기능 2 직렬화 계약)
+        // 잠금 순서 user → deletion_log → RT (기능 2 직렬화 계약). 로그 행 잠금이
+        // 판정과 후속 상태 변경(마스킹·CANCELLED 전환) 사이의 배치 PURGING 선점을 차단한다.
         User user = userRepository.findWithLockById(deletionLog.getUserId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
+        deletionLogRepository.findWithLockById(deletionLogId);
 
-        // 스칼라 재확인 — 토큰 발급 후 10분 사이 배치가 선점했을 수 있고, 선조회 엔티티는 stale
+        // 잠금 획득 후 스칼라 재확인 — 토큰 발급 후 10분 사이 배치가 선점했을 수 있고, 선조회 엔티티는 stale
         DeletionStatus current = deletionLogRepository.findStatusById(deletionLogId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
         switch (current) {

@@ -71,12 +71,21 @@ public class TokenService {
      * 탈퇴 계정의 상태별 판정 — user 행 잠금 보유 상태에서 호출된다.
      * 복구는 여기서 수행하지 않는다: 복구용 signup token만 발급하고,
      * 실제 복구는 재동의 제출({@code /auth/signup}) 시점에 성립한다.
+     *
+     * <p>판정 대상 로그 행도 잠근다(잠금 순서 user → deletion_log) — 잠금 없이 읽으면
+     * 판정 직후 배치가 {@code PURGING}으로 선점해도 마스킹·신규 발급이 계속 진행되어
+     * 409 계약이 깨진다. 상태는 잠금 획득 후 스칼라로 재조회한다(1차 캐시 우회).
      */
     private KakaoLoginResponse judgeDeletedUser(User user, KakaoUserInfo info) {
-        DeletionLog latest = deletionLogRepository
+        Long latestLogId = deletionLogRepository
                 .findFirstByUserIdOrderByRequestedAtDescIdDesc(user.getId())
+                .map(DeletionLog::getId)
                 .orElse(null);
-        DeletionStatus status = latest == null ? null : latest.getStatus();
+        DeletionStatus status = null;
+        if (latestLogId != null) {
+            deletionLogRepository.findWithLockById(latestLogId);
+            status = deletionLogRepository.findStatusById(latestLogId).orElse(null);
+        }
 
         if (status == DeletionStatus.PURGING || status == DeletionStatus.FAILED) {
             // 배치가 unlink 소유권을 쥔 상태 — 신규 가입을 허용하면 새 카카오 연결이 끊기는 경합
@@ -86,7 +95,7 @@ public class TokenService {
                 && clock.instant().isBefore(user.getDeletedAt().plus(accountPolicyProperties.withdrawalGracePeriod()));
         if (withinGrace) {
             return KakaoLoginResponse.restoreRequired(jwtTokenProvider.createSignupToken(
-                    info.providerId(), info.email(), info.nickname(), latest.getId()));
+                    info.providerId(), info.email(), info.nickname(), latestLogId));
         }
         if (status != DeletionStatus.PENDING_PURGE) {
             log.error("탈퇴 계정의 deletion_log가 활성 상태가 아닙니다 — 데이터 모순, 신규 전환으로 흡수. userId={}, status={}",

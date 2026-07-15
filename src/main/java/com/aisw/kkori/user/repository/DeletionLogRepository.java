@@ -2,7 +2,9 @@ package com.aisw.kkori.user.repository;
 
 import com.aisw.kkori.user.domain.DeletionLog;
 import com.aisw.kkori.user.domain.DeletionStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -19,7 +21,17 @@ public interface DeletionLogRepository extends JpaRepository<DeletionLog, Long> 
     Optional<DeletionLog> findFirstByUserIdOrderByRequestedAtDescIdDesc(Long userId);
 
     /**
-     * 현재 status만 스칼라로 재조회한다 — 복구 제출이 user 잠금 획득 후 배치 선점 여부를
+     * deletion_log 행 잠금 — 상태 판정과 후속 상태 변경(식별정보 파기·복구) 사이에
+     * 파기 배치의 {@code PURGING} 선점이 끼어드는 것을 차단한다(잠금 순서 user → deletion_log).
+     * <p>주의: 반환 엔티티는 이미 1차 캐시에 있으면 낡은 인스턴스다 — 잠금 획득 용도로만 쓰고,
+     * 상태는 반드시 {@link #findStatusById}로 재조회할 것.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select d from DeletionLog d where d.id = :id")
+    Optional<DeletionLog> findWithLockById(@Param("id") Long id);
+
+    /**
+     * 현재 status만 스칼라로 재조회한다 — 판정 지점이 user·로그 행 잠금 획득 후 배치 선점 여부를
      * 재확인하는 용도. 선조회한 엔티티는 1차 캐시에 남아 그 사이의 상태 전이가 보이지 않고,
      * {@code findById} 재호출도 캐시를 반환하므로 재확인이 되지 않는다.
      * Optional이라 레코드 소실도 empty로 자연 처리된다.

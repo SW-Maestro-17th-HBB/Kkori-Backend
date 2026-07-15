@@ -22,6 +22,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.Timestamp;
 import java.time.Duration;
@@ -64,6 +66,9 @@ class RestoreIntegrationTest extends AuthIntegrationTestSupport {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @MockitoSpyBean
     private UserConsentRepository userConsentRepositorySpy;
@@ -273,7 +278,83 @@ class RestoreIntegrationTest extends AuthIntegrationTestSupport {
         assertThat(userConsentRepository.findByUserId(user.getId())).hasSize(4); // 동의 1세트만 append
     }
 
+    @Test
+    @DisplayName("유예 만료 로그인과 배치의 PURGING 선점이 경합해도 선점이 커밋되면 409로 차단되고 마스킹되지 않는다")
+    void expiredLoginBlockedByConcurrentPurgeClaim() throws Exception {
+        User user = withdrawnUser("kakao-6010");
+        backdateWithdrawal(user, Duration.ofDays(4));
+
+        BusinessException thrown = runWhileLogClaimed(user, () ->
+                tokenService.processKakaoLogin(new KakaoUserInfo("kakao-6010", user.getEmail(), user.getName())));
+
+        assertThat(thrown.getErrorCode()).isEqualTo(ErrorCode.PURGE_IN_PROGRESS);
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getProviderId())
+                .isEqualTo("kakao-6010"); // 식별정보 파기가 진행되지 않는다
+    }
+
+    @Test
+    @DisplayName("유예 만료 복구 제출과 배치의 PURGING 선점이 경합해도 선점이 커밋되면 409로 차단되고 신규 계정이 생기지 않는다")
+    void expiredSubmitBlockedByConcurrentPurgeClaim() throws Exception {
+        User user = withdrawnUser("kakao-6011");
+        SignupRequest request = new SignupRequest(restoreToken(user), List.of(
+                new SignupRequest.ConsentItem(ConsentType.PRIVACY, true),
+                new SignupRequest.ConsentItem(ConsentType.AUDIO_USAGE, true),
+                new SignupRequest.ConsentItem(ConsentType.RESUME_USAGE, true)));
+        backdateWithdrawal(user, Duration.ofDays(4));
+
+        BusinessException thrown = runWhileLogClaimed(user, () -> authService.signup(request));
+
+        assertThat(thrown.getErrorCode()).isEqualTo(ErrorCode.PURGE_IN_PROGRESS);
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getProviderId())
+                .isEqualTo("kakao-6011");
+        assertThat(userRepository.count()).isEqualTo(1); // 신규 계정 미생성
+    }
+
     // ── 헬퍼 ────────────────────────────────────────────────────
+
+    /**
+     * 배치의 PURGING 선점을 미커밋 트랜잭션으로 쥔 채 action을 실행한다 —
+     * action은 deletion_log 행 잠금에서 대기하다, 선점 커밋 후 잠금 하 재확인으로
+     * PURGING을 보고 실패해야 한다. 던져진 BusinessException을 반환한다.
+     */
+    private BusinessException runWhileLogClaimed(User user, Runnable action) throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            CountDownLatch claimed = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            Future<?> claimer = pool.submit(() -> {
+                new TransactionTemplate(transactionManager).executeWithoutResult(tx -> {
+                    jdbcTemplate.update(
+                            "update deletion_log set status = 'PURGING' where user_id = ? and status = 'PENDING_PURGE'",
+                            user.getId());
+                    claimed.countDown();
+                    try {
+                        release.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+                return null;
+            });
+            claimed.await();
+            Future<BusinessException> actionResult = pool.submit(() -> {
+                try {
+                    action.run();
+                    return null;
+                } catch (BusinessException e) {
+                    return e;
+                }
+            });
+            Thread.sleep(300); // action이 로그 행 잠금 대기에 진입할 시간
+            release.countDown();
+            claimer.get();
+            BusinessException thrown = actionResult.get();
+            assertThat(thrown).as("선점된 로그에 대한 판정은 실패해야 한다").isNotNull();
+            return thrown;
+        } finally {
+            pool.shutdownNow();
+        }
+    }
 
     /** 탈퇴 상태의 유저를 실제 흐름(withdraw)으로 준비한다 — deletion_log·RT 폐기 포함. */
     private User withdrawnUser(String providerId) {
