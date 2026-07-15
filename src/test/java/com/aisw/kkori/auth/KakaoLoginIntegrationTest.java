@@ -8,8 +8,12 @@ import com.aisw.kkori.user.domain.DeletionStatus;
 import com.aisw.kkori.user.domain.User;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -20,6 +24,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class KakaoLoginIntegrationTest extends AuthIntegrationTestSupport {
 
     private static final String LOGIN_URI = "/api/v1/auth/kakao";
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Test
     @DisplayName("기존 유저는 isNewUser=false와 함께 토큰 쌍을 받는다")
@@ -79,6 +86,77 @@ class KakaoLoginIntegrationTest extends AuthIntegrationTestSupport {
         assertThat(unchanged.isDeleted()).isTrue();
         assertThat(deletionLogRepository.findFirstByUserIdOrderByRequestedAtDescIdDesc(user.getId())
                 .orElseThrow().getStatus()).isEqualTo(DeletionStatus.PENDING_PURGE);
+    }
+
+    @Test
+    @DisplayName("유예 초과 탈퇴 유저는 식별정보가 파기되고 신규 유저로 전환된다")
+    void graceExpiredUserIsMaskedAndTreatedAsNew() throws Exception {
+        User user = saveUser("kakao-3004");
+        Instant past = Instant.now().minus(Duration.ofDays(4));
+        user.softDelete(past);
+        userRepository.save(user);
+        deletionLogRepository.save(DeletionLog.pending(user.getId(), "kakao-3004", past));
+        given(kakaoOAuthClient.authenticate(anyString()))
+                .willReturn(new KakaoUserInfo("kakao-3004", user.getEmail(), user.getName()));
+
+        postJson(LOGIN_URI, "{\"code\":\"valid-code\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isNewUser").value(true))
+                .andExpect(jsonPath("$.data.signupToken").isNotEmpty())
+                .andExpect(jsonPath("$.data.isRestored").doesNotExist());
+
+        // 식별정보 선행 파기 — email·name NULL, provider_id 마스킹. 잔여 파기는 배치 몫(로그·스냅샷 유지)
+        User purged = userRepository.findById(user.getId()).orElseThrow();
+        assertThat(purged.getProviderId()).isEqualTo("PURGED_" + user.getId());
+        assertThat(purged.getEmail()).isNull();
+        assertThat(purged.getName()).isNull();
+        assertThat(purged.isDeleted()).isTrue();
+        DeletionLog log = deletionLogRepository.findFirstByUserIdOrderByRequestedAtDescIdDesc(user.getId())
+                .orElseThrow();
+        assertThat(log.getStatus()).isEqualTo(DeletionStatus.PENDING_PURGE);
+        assertThat(log.getProviderId()).isEqualTo("kakao-3004");
+    }
+
+    @Test
+    @DisplayName("파기가 진행·재시도 중(PURGING·FAILED)인 계정의 로그인은 409 PURGE_IN_PROGRESS로 차단된다")
+    void purgingOrFailedAccountLoginIsBlocked() throws Exception {
+        for (String status : List.of("PURGING", "FAILED")) {
+            String providerId = "kakao-3005-" + status;
+            User user = saveUser(providerId);
+            Instant now = Instant.now();
+            user.softDelete(now);
+            userRepository.save(user);
+            deletionLogRepository.save(DeletionLog.pending(user.getId(), providerId, now));
+            jdbcTemplate.update("update deletion_log set status = ? where user_id = ?", status, user.getId());
+            given(kakaoOAuthClient.authenticate(anyString()))
+                    .willReturn(new KakaoUserInfo(providerId, user.getEmail(), user.getName()));
+
+            postJson(LOGIN_URI, "{\"code\":\"valid-code\"}")
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.error.code").value("U002"));
+
+            // 차단만 하고 아무것도 바꾸지 않는다 — 신규 가입을 허용하면 배치의 unlink와 경합
+            assertThat(userRepository.findById(user.getId()).orElseThrow().getProviderId())
+                    .isEqualTo(providerId);
+        }
+    }
+
+    @Test
+    @DisplayName("탈퇴 상태인데 deletion_log가 없는 모순 계정은 신규 전환으로 흡수된다")
+    void deletedUserWithoutLogIsAbsorbedAsNew() throws Exception {
+        User user = saveUser("kakao-3006");
+        user.softDelete(Instant.now());
+        userRepository.save(user);
+        given(kakaoOAuthClient.authenticate(anyString()))
+                .willReturn(new KakaoUserInfo("kakao-3006", user.getEmail(), user.getName()));
+
+        postJson(LOGIN_URI, "{\"code\":\"valid-code\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isNewUser").value(true))
+                .andExpect(jsonPath("$.data.signupToken").isNotEmpty());
+
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getProviderId())
+                .isEqualTo("PURGED_" + user.getId());
     }
 
     @Test
