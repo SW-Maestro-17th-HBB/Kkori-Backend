@@ -113,7 +113,8 @@ public class UserService {
     @Transactional
     public RestoreResult restore(String tokenProviderId, Long deletionLogId,
                                  Map<ConsentType, Boolean> consents, int consentVersion) {
-        Instant now = clock.instant();
+        // 마이크로초 절삭 — withdraw와 동일한 이유(DB timestamptz(6) 반올림과의 정합)
+        Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
         // 1차 신원 검증 — requested_at·user_id는 불변이지만 provider_id 스냅샷은 CANCELLED/PURGED
         // 전환 시 NULL로 바뀌는 가변 값. 선조회 이후의 상태 전이는 아래 스칼라 재확인이 검출한다.
         DeletionLog deletionLog = deletionLogRepository.findById(deletionLogId)
