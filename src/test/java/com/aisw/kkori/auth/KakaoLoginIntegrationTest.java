@@ -160,6 +160,27 @@ class KakaoLoginIntegrationTest extends AuthIntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("탈퇴 상태인데 최신 deletion_log가 종결(CANCELLED)인 모순 계정도 신규 전환으로 흡수된다")
+    void deletedUserWithTerminalLogIsAbsorbedAsNew() throws Exception {
+        User user = saveUser("kakao-3007");
+        Instant now = Instant.now();
+        user.softDelete(now);
+        userRepository.save(user);
+        deletionLogRepository.save(DeletionLog.pending(user.getId(), "kakao-3007", now));
+        jdbcTemplate.update("update deletion_log set status = 'CANCELLED' where user_id = ?", user.getId());
+        given(kakaoOAuthClient.authenticate(anyString()))
+                .willReturn(new KakaoUserInfo("kakao-3007", user.getEmail(), user.getName()));
+
+        postJson(LOGIN_URI, "{\"code\":\"valid-code\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isNewUser").value(true))
+                .andExpect(jsonPath("$.data.signupToken").isNotEmpty());
+
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getProviderId())
+                .isEqualTo("PURGED_" + user.getId());
+    }
+
+    @Test
     @DisplayName("code가 비어 있으면 400 INVALID_CODE(A001)를 반환한다")
     void blankCodeIsRejected() throws Exception {
         postJson(LOGIN_URI, "{\"code\":\"\"}")

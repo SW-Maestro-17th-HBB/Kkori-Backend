@@ -125,6 +125,8 @@ public class UserService {
         // 판정과 후속 상태 변경(마스킹·CANCELLED 전환) 사이의 배치 PURGING 선점을 차단한다.
         User user = userRepository.findWithLockById(deletionLog.getUserId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
+        // 반환값은 사용하지 않지만 이 잠금 자체가 목적이다 — 배치의 미커밋 PURGING 선점이
+        // 있으면 이 호출이 커밋까지 블로킹되어야 아래 스칼라 재확인이 안전해진다. 삭제 금지.
         deletionLogRepository.findWithLockById(deletionLogId);
 
         // 잠금 획득 후 스칼라 재확인 — 토큰 발급 후 10분 사이 배치가 선점했을 수 있고, 선조회 엔티티는 stale

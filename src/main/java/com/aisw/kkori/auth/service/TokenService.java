@@ -83,6 +83,8 @@ public class TokenService {
                 .orElse(null);
         DeletionStatus status = null;
         if (latestLogId != null) {
+            // 반환값은 사용하지 않지만 이 잠금 자체가 목적이다 — 배치의 미커밋 PURGING 선점이
+            // 있으면 이 호출이 커밋까지 블로킹되어야 아래 스칼라 재확인이 안전해진다. 삭제 금지.
             deletionLogRepository.findWithLockById(latestLogId);
             status = deletionLogRepository.findStatusById(latestLogId).orElse(null);
         }
