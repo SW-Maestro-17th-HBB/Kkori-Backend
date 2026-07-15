@@ -29,6 +29,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -287,7 +288,7 @@ class KakaoUnlinkWebhookIntegrationTest extends AuthIntegrationTestSupport {
                     pool.submit(() -> awaitAndRun(start, second)));
             start.countDown();
             for (Future<?> future : futures) {
-                future.get();
+                future.get(5, TimeUnit.SECONDS);
             }
         } finally {
             pool.shutdownNow();

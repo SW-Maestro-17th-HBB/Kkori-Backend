@@ -182,6 +182,10 @@ public class UserService {
             throw new BusinessException(ErrorCode.INVALID_NAME);
         }
         String trimmed = name.strip();
+        // PostgreSQL varchar는 NUL(\0)을 저장하지 못한다 — flush 시점 500 대신 여기서 거부
+        if (trimmed.indexOf('\0') >= 0) {
+            throw new BusinessException(ErrorCode.INVALID_NAME);
+        }
         int codePoints = trimmed.codePointCount(0, trimmed.length());
         if (codePoints < 1 || codePoints > MAX_NAME_CODE_POINTS) {
             throw new BusinessException(ErrorCode.INVALID_NAME);

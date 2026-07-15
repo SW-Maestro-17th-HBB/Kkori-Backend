@@ -31,6 +31,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -139,7 +140,7 @@ class UserAccountIntegrationTest extends AuthIntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("name 누락·null·공백뿐·101자는 U001로 거부되고 DB가 변경되지 않는다")
+    @DisplayName("name 누락·null·공백뿐·101자·NUL 포함은 U001로 거부되고 DB가 변경되지 않는다")
     void updateNameRejectsInvalidValues() throws Exception {
         User user = saveUser("kakao-9104");
         String accessToken = issueAccessToken(user);
@@ -154,6 +155,9 @@ class UserAccountIntegrationTest extends AuthIntegrationTestSupport {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("U001"));
         patchNameWithBearer("가".repeat(101), accessToken)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("U001"));
+        patchNameWithBearer("이름\0중간", accessToken)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("U001"));
 
@@ -289,8 +293,8 @@ class UserAccountIntegrationTest extends AuthIntegrationTestSupport {
                     pool.submit(() -> awaitAndWithdraw(start, user.getId())));
             start.countDown();
 
-            WithdrawResponse first = futures.get(0).get();
-            WithdrawResponse second = futures.get(1).get();
+            WithdrawResponse first = futures.get(0).get(5, TimeUnit.SECONDS);
+            WithdrawResponse second = futures.get(1).get(5, TimeUnit.SECONDS);
             assertThat(micros(first.purgeScheduledAt())).isEqualTo(micros(second.purgeScheduledAt()));
         } finally {
             pool.shutdownNow();
@@ -328,7 +332,8 @@ class UserAccountIntegrationTest extends AuthIntegrationTestSupport {
                     try {
                         userService.updateName(user.getId(), "경합 수정");
                     } catch (BusinessException e) {
-                        // 탈퇴가 먼저 커밋된 경우 401 — 정상 경로
+                        // 탈퇴가 먼저 커밋된 경우만 정상 경로 — 다른 코드는 회귀
+                        assertThat(e.getErrorCode()).isEqualTo(ErrorCode.UNAUTHORIZED);
                     }
                     return null;
                 });
@@ -338,8 +343,8 @@ class UserAccountIntegrationTest extends AuthIntegrationTestSupport {
                     return null;
                 });
                 start.countDown();
-                update.get();
-                withdraw.get();
+                update.get(5, TimeUnit.SECONDS);
+                withdraw.get(5, TimeUnit.SECONDS);
 
                 assertThat(userRepository.findById(user.getId()).orElseThrow().isDeleted())
                         .as("반복 %d — 수정 flush가 탈퇴를 되덮으면 안 된다", i)
@@ -364,7 +369,8 @@ class UserAccountIntegrationTest extends AuthIntegrationTestSupport {
                     try {
                         tokenService.reissue(tokens.refreshToken());
                     } catch (BusinessException e) {
-                        // 탈퇴가 먼저면 A007 — 정상 경로
+                        // 탈퇴가 먼저면 A007 — 정상 경로. 다른 코드는 회귀
+                        assertThat(e.getErrorCode()).isEqualTo(ErrorCode.RT_NOT_FOUND);
                     }
                     return null;
                 });
@@ -374,8 +380,8 @@ class UserAccountIntegrationTest extends AuthIntegrationTestSupport {
                     return null;
                 });
                 start.countDown();
-                reissue.get();
-                withdraw.get();
+                reissue.get(5, TimeUnit.SECONDS);
+                withdraw.get(5, TimeUnit.SECONDS);
 
                 assertThat(refreshTokenRepository.findAll().stream()
                         .filter(rt -> rt.getUserId().equals(user.getId()))
@@ -409,8 +415,8 @@ class UserAccountIntegrationTest extends AuthIntegrationTestSupport {
                     return null;
                 });
                 start.countDown();
-                login.get();
-                withdraw.get();
+                login.get(5, TimeUnit.SECONDS);
+                withdraw.get(5, TimeUnit.SECONDS);
 
                 // 로그인만으로는 복구되지 않으므로(재동의 필요 — HBB1-245) 최종 상태는 항상 탈퇴이고,
                 // 로그인이 먼저 발급한 RT도 탈퇴의 전량 폐기에 잡혀야 한다
