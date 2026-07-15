@@ -59,6 +59,15 @@ public class JwtTokenProvider {
      * email·nickname이 null이면 claim 자체를 생략한다.
      */
     public String createSignupToken(String providerId, String email, String nickname) {
+        return createSignupToken(providerId, email, nickname, null);
+    }
+
+    /**
+     * 복구용 signup token 발급 — {@code deletionLogId} claim으로 특정 탈퇴 요청 건에 바인딩한다.
+     * 무저장 토큰은 개별 무효화가 불가능하므로, 바인딩 없이는 복구 후 재탈퇴한 계정을
+     * 옛 토큰으로 되돌릴 수 있다(PRD account.md 기능 4).
+     */
+    public String createSignupToken(String providerId, String email, String nickname, Long deletionLogId) {
         Instant now = clock.instant();
         var builder = Jwts.builder()
                 .issuedAt(Date.from(now))
@@ -70,6 +79,9 @@ public class JwtTokenProvider {
         }
         if (nickname != null) {
             builder.claim("nickname", nickname);
+        }
+        if (deletionLogId != null) {
+            builder.claim("deletion_log_id", deletionLogId);
         }
         return builder.signWith(signupKey, Jwts.SIG.HS256).compact();
     }
@@ -86,10 +98,13 @@ public class JwtTokenProvider {
     /** signup token 검증 후 신원 claim을 반환한다. 실패 시 {@link JwtException}을 던진다. */
     public SignupClaims parseSignupToken(String token) {
         Claims claims = parse(signupKey, token, TokenType.SIGNUP);
+        // jjwt는 숫자 claim을 크기에 따라 Integer로 역직렬화할 수 있어 Number로 받아 변환한다
+        Number deletionLogId = claims.get("deletion_log_id", Number.class);
         return new SignupClaims(
                 claims.get("provider_id", String.class),
                 claims.get("email", String.class),
-                claims.get("nickname", String.class)
+                claims.get("nickname", String.class),
+                deletionLogId == null ? null : deletionLogId.longValue()
         );
     }
 
@@ -106,7 +121,10 @@ public class JwtTokenProvider {
         return claims;
     }
 
-    /** signup token이 운반하는 신원 정보. 카카오 원천 정보가 users로 가는 유일한 통로다. */
-    public record SignupClaims(String providerId, String email, String nickname) {
+    /**
+     * signup token이 운반하는 신원 정보. 카카오 원천 정보가 users로 가는 유일한 통로다.
+     * {@code deletionLogId}의 유무가 토큰 용도를 가른다 — 있으면 복구용, 없으면 신규 가입용.
+     */
+    public record SignupClaims(String providerId, String email, String nickname, Long deletionLogId) {
     }
 }

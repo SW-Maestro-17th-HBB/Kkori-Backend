@@ -3,6 +3,8 @@ package com.aisw.kkori.auth;
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.global.oauth.KakaoUserInfo;
+import com.aisw.kkori.user.domain.DeletionLog;
+import com.aisw.kkori.user.domain.DeletionStatus;
 import com.aisw.kkori.user.domain.User;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -53,15 +55,14 @@ class KakaoLoginIntegrationTest extends AuthIntegrationTestSupport {
         assertThat(userRepository.count()).isZero();
     }
 
-    // TODO(HBB1-245): 복구 계약 교체(signupToken + 재동의 제출 시 복구 — oauth.md §소셜 로그인) 시
-    //  이 테스트를 signupToken 기대값으로 재작성. 그때까지는 현행 구현(즉시 복구)의 임시 시맨틱을 문서화한다.
-    //  스토리 브랜치 통합 전략상 이 시맨틱은 develop에 도달하지 않는다.
     @Test
-    @DisplayName("탈퇴 유예 중 유저는 복구되고 isRestored=true와 토큰을 받는다")
-    void softDeletedUserIsRestored() throws Exception {
+    @DisplayName("유예 내 탈퇴 유저는 계정 변경 없이 isRestored=true와 복구용 signupToken만 받는다")
+    void softDeletedUserWithinGraceReceivesRestoreToken() throws Exception {
         User user = saveUser("kakao-3003");
-        user.softDelete(Instant.now());
+        Instant now = Instant.now();
+        user.softDelete(now);
         userRepository.save(user);
+        deletionLogRepository.save(DeletionLog.pending(user.getId(), "kakao-3003", now));
         given(kakaoOAuthClient.authenticate(anyString()))
                 .willReturn(new KakaoUserInfo("kakao-3003", user.getEmail(), user.getName()));
 
@@ -69,10 +70,15 @@ class KakaoLoginIntegrationTest extends AuthIntegrationTestSupport {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.isNewUser").value(false))
                 .andExpect(jsonPath("$.data.isRestored").value(true))
-                .andExpect(jsonPath("$.data.accessToken").isNotEmpty());
+                .andExpect(jsonPath("$.data.signupToken").isNotEmpty())
+                .andExpect(jsonPath("$.data.accessToken").doesNotExist())
+                .andExpect(jsonPath("$.data.refreshToken").doesNotExist());
 
-        User restored = userRepository.findByProviderId("kakao-3003").orElseThrow();
-        assertThat(restored.isDeleted()).isFalse();
+        // 로그인만으로는 복구되지 않는다 — 복구는 재동의 제출 시점에 성립(PRD 기능 4)
+        User unchanged = userRepository.findByProviderId("kakao-3003").orElseThrow();
+        assertThat(unchanged.isDeleted()).isTrue();
+        assertThat(deletionLogRepository.findFirstByUserIdOrderByRequestedAtDescIdDesc(user.getId())
+                .orElseThrow().getStatus()).isEqualTo(DeletionStatus.PENDING_PURGE);
     }
 
     @Test

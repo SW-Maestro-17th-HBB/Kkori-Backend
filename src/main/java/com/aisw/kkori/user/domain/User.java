@@ -50,4 +50,17 @@ public class User extends BaseEntity {
     public void updateName(String name) {
         this.name = name;
     }
+
+    /**
+     * 유예 초과 계정의 식별정보 선행 파기 (PRD 기능 4) — email·name은 NULL,
+     * provider_id는 {@code PURGED_{id}} 마스킹. NULL이 아닌 마스킹인 이유:
+     * NOT NULL 제약과 "모든 유저는 provider_id를 가진다" 불변식 유지.
+     * 원본 복원 불가(해시 금지 — 카카오 회원번호는 숫자라 전수 대입 역산 가능)·
+     * id 기반 유일·재실행 멱등.
+     */
+    public void purgeIdentifiers() {
+        this.email = null;
+        this.name = null;
+        this.providerId = "PURGED_" + this.id;
+    }
 }

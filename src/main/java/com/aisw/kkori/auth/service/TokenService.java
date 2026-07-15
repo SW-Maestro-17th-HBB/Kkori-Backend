@@ -10,6 +10,11 @@ import com.aisw.kkori.global.jwt.JwtProperties;
 import com.aisw.kkori.global.jwt.JwtTokenProvider;
 import com.aisw.kkori.global.jwt.TokenHasher;
 import com.aisw.kkori.global.oauth.KakaoUserInfo;
+import com.aisw.kkori.user.config.AccountPolicyProperties;
+import com.aisw.kkori.user.domain.DeletionLog;
+import com.aisw.kkori.user.domain.DeletionStatus;
+import com.aisw.kkori.user.domain.User;
+import com.aisw.kkori.user.repository.DeletionLogRepository;
 import com.aisw.kkori.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,32 +42,59 @@ public class TokenService {
 
     private final UserRepository userRepository;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final DeletionLogRepository deletionLogRepository;
     private final JwtTokenProvider jwtTokenProvider;
     private final JwtProperties jwtProperties;
+    private final AccountPolicyProperties accountPolicyProperties;
     private final Clock clock;
 
     /**
-     * 카카오 신원으로 신규/기존/복구를 판정한다. 복구와 토큰 발급은 이 한 트랜잭션으로 묶인다.
+     * 카카오 신원으로 신규/기존/복구 대상/유예 만료를 판정한다 (PRD account.md 기능 4 상태별 정책).
      *
-     * <p>판정·토큰 발급은 user 행 잠금 하에 수행한다(잠금 순서 user → RT) — 잠금 없이
-     * 조회 후 RT를 INSERT하면 탈퇴의 RT 전량 폐기와 경합해 탈퇴 후 활성 RT가 남을 수 있고,
-     * 복구 경로는 {@code deleted_at}을 변경하므로 잠금 없는 flush가 탈퇴를 되덮을 수 있다.
+     * <p>판정·토큰 발급은 user 행 잠금 하에 수행한다(잠금 순서 user → deletion_log → RT) —
+     * 잠금 없이 조회 후 RT를 INSERT하면 탈퇴의 RT 전량 폐기와 경합해 탈퇴 후 활성 RT가 남을 수 있고,
+     * 유예 만료 경로는 식별정보를 변경하므로 잠금 없는 flush가 탈퇴를 되덮을 수 있다.
      * id는 스칼라로 조회한다 — 엔티티 조회는 잠금 조회가 낡은 관리 인스턴스를 반환하게 만든다.
      */
     @Transactional
     public KakaoLoginResponse processKakaoLogin(KakaoUserInfo info) {
         return userRepository.findIdByProviderId(info.providerId())
                 .flatMap(userRepository::findWithLockById)
-                .map(user -> {
-                    boolean restored = user.isDeleted();
-                    if (restored) {
-                        // TODO(HBB1-245): deletion_log CANCELLED 전환·재동의 요구·유예 기간 검증으로 교체
-                        user.restore();
-                    }
-                    return KakaoLoginResponse.loggedIn(restored, issueTokenPair(user.getId()));
-                })
+                .map(user -> user.isDeleted()
+                        ? judgeDeletedUser(user, info)
+                        : KakaoLoginResponse.loggedIn(issueTokenPair(user.getId())))
                 .orElseGet(() -> KakaoLoginResponse.newUser(
                         jwtTokenProvider.createSignupToken(info.providerId(), info.email(), info.nickname())));
+    }
+
+    /**
+     * 탈퇴 계정의 상태별 판정 — user 행 잠금 보유 상태에서 호출된다.
+     * 복구는 여기서 수행하지 않는다: 복구용 signup token만 발급하고,
+     * 실제 복구는 재동의 제출({@code /auth/signup}) 시점에 성립한다.
+     */
+    private KakaoLoginResponse judgeDeletedUser(User user, KakaoUserInfo info) {
+        DeletionLog latest = deletionLogRepository
+                .findFirstByUserIdOrderByRequestedAtDescIdDesc(user.getId())
+                .orElse(null);
+        DeletionStatus status = latest == null ? null : latest.getStatus();
+
+        if (status == DeletionStatus.PURGING || status == DeletionStatus.FAILED) {
+            // 배치가 unlink 소유권을 쥔 상태 — 신규 가입을 허용하면 새 카카오 연결이 끊기는 경합
+            throw new BusinessException(ErrorCode.PURGE_IN_PROGRESS);
+        }
+        boolean withinGrace = status == DeletionStatus.PENDING_PURGE
+                && clock.instant().isBefore(user.getDeletedAt().plus(accountPolicyProperties.withdrawalGracePeriod()));
+        if (withinGrace) {
+            return KakaoLoginResponse.restoreRequired(jwtTokenProvider.createSignupToken(
+                    info.providerId(), info.email(), info.nickname(), latest.getId()));
+        }
+        if (status != DeletionStatus.PENDING_PURGE) {
+            log.error("탈퇴 계정의 deletion_log가 활성 상태가 아닙니다 — 데이터 모순, 신규 전환으로 흡수. userId={}, status={}",
+                    user.getId(), status);
+        }
+        user.purgeIdentifiers();
+        return KakaoLoginResponse.newUser(
+                jwtTokenProvider.createSignupToken(info.providerId(), info.email(), info.nickname()));
     }
 
     /**
