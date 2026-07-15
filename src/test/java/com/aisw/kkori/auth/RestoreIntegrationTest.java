@@ -365,7 +365,8 @@ class RestoreIntegrationTest extends AuthIntegrationTestSupport {
                     return e;
                 }
             });
-            Thread.sleep(300); // action이 로그 행 잠금 대기에 진입할 시간
+            // 고정 sleep은 잠금 진입을 보장하지 못한다 — 대기 잠금이 실제 관측된 뒤에만 선점을 커밋한다
+            awaitLockWaiter();
             release.countDown();
             claimer.get();
             BusinessException thrown = actionResult.get();
@@ -374,6 +375,24 @@ class RestoreIntegrationTest extends AuthIntegrationTestSupport {
         } finally {
             pool.shutdownNow();
         }
+    }
+
+    /**
+     * pg_locks에 대기 잠금(granted = false)이 나타날 때까지 폴링한다 —
+     * 격리된 테스트 DB에서 이 시점의 유일한 대기자는 action이므로, 관측 자체가
+     * "action이 행 잠금 대기에 진입했다"는 신호다.
+     */
+    private void awaitLockWaiter() throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (System.currentTimeMillis() < deadline) {
+            Integer waiters = jdbcTemplate.queryForObject(
+                    "select count(*) from pg_locks where not granted", Integer.class);
+            if (waiters != null && waiters > 0) {
+                return;
+            }
+            Thread.sleep(20);
+        }
+        throw new AssertionError("action이 5초 내에 행 잠금 대기에 진입하지 않았습니다");
     }
 
     /** 탈퇴 상태의 유저를 실제 흐름(withdraw)으로 준비한다 — deletion_log·RT 폐기 포함. */
