@@ -7,6 +7,7 @@ import com.aisw.kkori.global.jwt.JwtProperties;
 import com.aisw.kkori.global.jwt.JwtTokenProvider;
 import com.aisw.kkori.global.oauth.KakaoOAuthClient;
 import com.aisw.kkori.user.domain.User;
+import com.aisw.kkori.user.repository.DeletionLogRepository;
 import com.aisw.kkori.user.repository.UserConsentRepository;
 import com.aisw.kkori.user.repository.UserRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -52,6 +53,9 @@ public abstract class AuthIntegrationTestSupport {
     protected RefreshTokenRepository refreshTokenRepository;
 
     @Autowired
+    protected DeletionLogRepository deletionLogRepository;
+
+    @Autowired
     protected JwtTokenProvider jwtTokenProvider;
 
     @Autowired
@@ -67,6 +71,7 @@ public abstract class AuthIntegrationTestSupport {
     void cleanDatabase() {
         refreshTokenRepository.deleteAll();
         userConsentRepository.deleteAll();
+        deletionLogRepository.deleteAll();
         userRepository.deleteAll();
     }
 

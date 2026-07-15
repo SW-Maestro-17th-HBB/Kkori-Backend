@@ -8,8 +8,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Date;
 
@@ -21,9 +23,18 @@ class JwtTokenProviderTest {
     private static final String SECRET = "test-jwt-secret-key-for-unit-tests-32bytes!";
     private static final String SIGNUP_SECRET = "test-signup-secret-key-for-unit-tests-32b!";
 
+    /**
+     * 고정 Clock — 발급 시각이 주입된 Clock을 따르는지 결정적으로 검증한다.
+     * 과거의 임의 고정 시각을 쓰면 jjwt 파서가 실제 시스템 시각으로 만료를 검증해
+     * 파싱 테스트가 전부 만료 실패하므로, 실행 시점을 초 단위로 절삭해 고정한다
+     * (JWT iat/exp는 초 정밀도).
+     */
+    private static final Instant FIXED_NOW = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+
     private final JwtProperties properties = new JwtProperties(
             SECRET, SIGNUP_SECRET, Duration.ofMinutes(30), Duration.ofDays(14), Duration.ofMinutes(10));
-    private final JwtTokenProvider provider = new JwtTokenProvider(properties);
+    private final JwtTokenProvider provider =
+            new JwtTokenProvider(properties, Clock.fixed(FIXED_NOW, ZoneOffset.UTC));
 
     @Test
     @DisplayName("AT payload는 sub·iat·exp·token_type만 담는다 — 개인정보 미포함")
@@ -34,6 +45,15 @@ class JwtTokenProviderTest {
         assertThat(claims.keySet()).containsExactlyInAnyOrder("sub", "iat", "exp", "token_type");
         assertThat(claims.getSubject()).isEqualTo("1");
         assertThat(claims.get("token_type")).isEqualTo("access");
+    }
+
+    @Test
+    @DisplayName("AT의 iat은 주입된 Clock의 시각과 정확히 일치한다 — 발급 시각 결정성")
+    void accessTokenIatMatchesInjectedClock() {
+        Claims claims = parseWith(SECRET, provider.createAccessToken(1L));
+
+        assertThat(claims.getIssuedAt().toInstant()).isEqualTo(FIXED_NOW);
+        assertThat(claims.getExpiration().toInstant()).isEqualTo(FIXED_NOW.plus(Duration.ofMinutes(30)));
     }
 
     @Test

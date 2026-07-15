@@ -19,6 +19,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -40,6 +42,7 @@ public class AuthService {
     private final TokenService tokenService;
     private final UserRepository userRepository;
     private final UserConsentRepository userConsentRepository;
+    private final Clock clock;
 
     /** 카카오 인가 코드를 교환·조회한 뒤 신규/기존/복구를 판정해 응답한다. */
     public KakaoLoginResponse kakaoLogin(String code) {
@@ -60,8 +63,9 @@ public class AuthService {
         Map<ConsentType, Boolean> consents = validateConsents(request);
 
         User user = createUser(claims);
+        Instant now = clock.instant();
         consents.forEach((type, agreed) ->
-                userConsentRepository.save(UserConsent.create(user.getId(), type, agreed, CONSENT_VERSION)));
+                userConsentRepository.save(UserConsent.create(user.getId(), type, agreed, CONSENT_VERSION, now)));
 
         return tokenService.issueTokenPair(user.getId());
     }

@@ -81,15 +81,15 @@ public class RefreshToken {
     }
 
     /** RTR 회전 — 이 토큰을 폐기하고 다음 토큰의 해시를 기록한다. */
-    public void rotateTo(String nextTokenHash) {
-        this.revokedAt = Instant.now();
+    public void rotateTo(String nextTokenHash, Instant now) {
+        this.revokedAt = now;
         this.replacedByTokenHash = nextTokenHash;
     }
 
     /** 로그아웃·탈퇴 등 회전 없는 폐기. replaced_by는 NULL로 남는다. */
-    public void revoke() {
+    public void revoke(Instant now) {
         if (this.revokedAt == null) {
-            this.revokedAt = Instant.now();
+            this.revokedAt = now;
         }
     }
 

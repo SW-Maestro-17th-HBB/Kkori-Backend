@@ -7,6 +7,8 @@ import com.aisw.kkori.user.domain.User;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
@@ -51,11 +53,14 @@ class KakaoLoginIntegrationTest extends AuthIntegrationTestSupport {
         assertThat(userRepository.count()).isZero();
     }
 
+    // TODO(HBB1-245): 복구 계약 교체(signupToken + 재동의 제출 시 복구 — oauth.md §소셜 로그인) 시
+    //  이 테스트를 signupToken 기대값으로 재작성. 그때까지는 현행 구현(즉시 복구)의 임시 시맨틱을 문서화한다.
+    //  스토리 브랜치 통합 전략상 이 시맨틱은 develop에 도달하지 않는다.
     @Test
     @DisplayName("탈퇴 유예 중 유저는 복구되고 isRestored=true와 토큰을 받는다")
     void softDeletedUserIsRestored() throws Exception {
         User user = saveUser("kakao-3003");
-        user.softDelete();
+        user.softDelete(Instant.now());
         userRepository.save(user);
         given(kakaoOAuthClient.authenticate(anyString()))
                 .willReturn(new KakaoUserInfo("kakao-3003", user.getEmail(), user.getName()));

@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -38,15 +39,24 @@ public class TokenService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtTokenProvider jwtTokenProvider;
     private final JwtProperties jwtProperties;
+    private final Clock clock;
 
-    /** 카카오 신원으로 신규/기존/복구를 판정한다. 복구와 토큰 발급은 이 한 트랜잭션으로 묶인다. */
+    /**
+     * 카카오 신원으로 신규/기존/복구를 판정한다. 복구와 토큰 발급은 이 한 트랜잭션으로 묶인다.
+     *
+     * <p>판정·토큰 발급은 user 행 잠금 하에 수행한다(잠금 순서 user → RT) — 잠금 없이
+     * 조회 후 RT를 INSERT하면 탈퇴의 RT 전량 폐기와 경합해 탈퇴 후 활성 RT가 남을 수 있고,
+     * 복구 경로는 {@code deleted_at}을 변경하므로 잠금 없는 flush가 탈퇴를 되덮을 수 있다.
+     * id는 스칼라로 조회한다 — 엔티티 조회는 잠금 조회가 낡은 관리 인스턴스를 반환하게 만든다.
+     */
     @Transactional
     public KakaoLoginResponse processKakaoLogin(KakaoUserInfo info) {
-        return userRepository.findByProviderId(info.providerId())
+        return userRepository.findIdByProviderId(info.providerId())
+                .flatMap(userRepository::findWithLockById)
                 .map(user -> {
                     boolean restored = user.isDeleted();
                     if (restored) {
-                        // TODO(HBB1-10): deletion_log CANCELLED 전환·동의 AGREED 재기록·유예 기간 검증
+                        // TODO(HBB1-245): deletion_log CANCELLED 전환·재동의 요구·유예 기간 검증으로 교체
                         user.restore();
                     }
                     return KakaoLoginResponse.loggedIn(restored, issueTokenPair(user.getId()));
@@ -64,7 +74,7 @@ public class TokenService {
     @Transactional
     public TokenResponse issueTokenPair(Long userId) {
         String jti = UUID.randomUUID().toString();
-        Instant issuedAt = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        Instant issuedAt = clock.instant().truncatedTo(ChronoUnit.SECONDS);
         Instant expiresAt = issuedAt.plus(jwtProperties.refreshTokenTtl());
 
         String refreshToken = jwtTokenProvider.createRefreshToken(userId, jti, issuedAt, expiresAt);
@@ -80,15 +90,28 @@ public class TokenService {
      * 검사 순서: 미존재 → 폐기(재사용/Grace) → 만료 → 회전. 폐기를 만료보다 먼저 보는 이유는
      * 회전된 뒤 만료된 토큰도 재사용 신호를 담고 있기 때문이다.
      *
+     * <p>잠금 순서는 user 행 → RT 행이다. RT를 먼저 잠그면 탈퇴의 RT 전량 폐기(벌크 UPDATE)가
+     * 대기하는 사이 새 RT를 INSERT할 수 있고, 대기하던 폐기 쿼리는 그 새 RT를 보지 못해
+     * 탈퇴 후에도 활성 RT가 남는다. user 잠금 후 활성 여부를 재확인해 탈퇴 유저를 거부한다.
      */
     @Transactional(noRollbackFor = BusinessException.class)
     public TokenResponse reissue(String refreshToken) {
         if (refreshToken == null || refreshToken.isBlank()) {
             throw new BusinessException(ErrorCode.RT_NOT_FOUND);
         }
-        RefreshToken current = refreshTokenRepository.findWithLockByTokenHash(TokenHasher.sha256Hex(refreshToken))
+        String tokenHash = TokenHasher.sha256Hex(refreshToken);
+        // 스칼라 조회 — 엔티티로 읽으면 아래 잠금 조회가 낡은 관리 인스턴스를 반환할 수 있다
+        Long userId = refreshTokenRepository.findUserIdByTokenHash(tokenHash)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RT_NOT_FOUND));
-        Instant now = Instant.now();
+        boolean active = userRepository.findWithLockById(userId)
+                .filter(user -> !user.isDeleted())
+                .isPresent();
+        if (!active) {
+            throw new BusinessException(ErrorCode.RT_NOT_FOUND);
+        }
+        RefreshToken current = refreshTokenRepository.findWithLockByTokenHash(tokenHash)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RT_NOT_FOUND));
+        Instant now = clock.instant();
 
         if (current.isRevoked()) {
             return handleRevokedToken(current, now);
@@ -98,7 +121,7 @@ public class TokenService {
         }
 
         TokenResponse tokens = issueTokenPair(current.getUserId());
-        current.rotateTo(TokenHasher.sha256Hex(tokens.refreshToken()));
+        current.rotateTo(TokenHasher.sha256Hex(tokens.refreshToken()), now);
         return tokens;
     }
 
@@ -149,6 +172,6 @@ public class TokenService {
     public void logout(Long userId, String refreshToken) {
         refreshTokenRepository.findByTokenHash(TokenHasher.sha256Hex(refreshToken))
                 .filter(rt -> rt.getUserId().equals(userId))
-                .ifPresent(RefreshToken::revoke);
+                .ifPresent(rt -> rt.revoke(clock.instant()));
     }
 }

@@ -88,6 +88,7 @@
 - `name`은 앞뒤 공백 제거 후 1~100자여야 한다. 누락·null·공백뿐·길이 위반은 모두 `400 INVALID_NAME`으로 거부해야 한다.
 - 길이는 **Unicode 코드 포인트 수** 기준으로 센다(`String.length()`의 UTF-16 단위 기준 금지). DB 제약인 `varchar(100)`이 코드 포인트 기준이므로 검증과 저장 제약이 1:1로 일치하며, 서로게이트 쌍 문자(이모지 등)가 2로 세어져 저장 가능한 이름을 거부하는 불일치를 방지한다.
 - 검증은 서비스 계층에서 수행하고 도메인 에러 코드로 응답한다(bean validation의 공통 `C002`가 아님 — HBB1-11에서 확립한 기준: PRD에 도메인 에러 코드가 명시된 검증은 서비스 검증).
+- 수정은 **user 행 잠금(비관적 잠금) 하에** 수행하고 잠금 후 활성 여부를 재확인해야 한다(탈퇴됐으면 401). 잠금 없이 조회 후 변경을 flush하면, 그 사이 커밋된 탈퇴(조건부 UPDATE)의 `deleted_at`을 조회 시점의 null 값으로 되덮어 **탈퇴가 취소되는 lost update**가 발생할 수 있다(Hibernate 기본 UPDATE는 전체 컬럼을 메모리 값으로 씀). 유저 상태를 쓰는 모든 경로(수정·탈퇴·토큰 재발급·로그인/복구)는 user 행 잠금을 직렬화 지점으로 공유하며 잠금 순서는 user → RT다(재발급·로그인 측 요구는 HBB1-11 PRD 참조).
 
 ### 실행 조건
 
@@ -101,6 +102,8 @@
 - 경계값(1자·100자)이 허용되는지 확인
 - `email` 등 미지원 필드가 포함된 요청에서 해당 필드는 무시되고 name만 반영되며, `email`이 변경되지 않는지 확인
 - 서로게이트 쌍 문자가 포함된 name의 길이가 코드 포인트 기준으로 판정되는지 확인(예: BMP 밖 이모지 100개로 구성된 name은 허용 — UTF-16 단위로는 200)
+- 수정 트랜잭션이 User를 읽은 뒤 탈퇴가 끼어들어도 계정이 되살아나지 않고 탈퇴 상태가 유지되는지 확인 (동시성 통합 테스트)
+- 탈퇴된 유저의 수정 요청이 401로 거부되는지 확인
 - AT 없이 호출 시 `401`이 반환되는지 확인
 
 ### 성능 요구사항
@@ -150,8 +153,8 @@
 
 - 유효한 Access Token으로 인증된 상태여야 한다.
 - `deletion_log` 테이블이 존재해야 한다. 본 스토리에서 생성하며 스키마는 draft ERD에 `provider_id` 컬럼을 추가한 형태다.
-  - **컬럼**: `id`(PK) · `user_id`(NOT NULL — FK 없이 애플리케이션이 무결성 관리, `refresh_token`과 동일 방침) · `provider_id`(nullable — 탈퇴 시 스냅샷, 복구·파기 완료 시 NULL) · `requested_at`(NOT NULL) · `purged_at`(nullable — 파기 완료 시각) · `status`(NOT NULL — PENDING_PURGE/PURGING/PURGED/FAILED/CANCELLED) · `purge_detail`(jsonb, nullable)
-  - **인덱스**: 부분 UNIQUE 인덱스 `ux_deletion_log_active_user` — `(user_id) WHERE status IN ('PENDING_PURGE', 'PURGING', 'FAILED')`. 유저당 활성 삭제 요청을 DB 차원에서 1건으로 강제하고(직렬화 계약이 뚫려도 막는 최후 방어선), 복구 시 활성 레코드 조회와 배치의 활성 대상 스캔이 이 인덱스를 활용한다. 별도의 `(status, requested_at)` 인덱스는 활성 레코드가 항상 소량이라 보류한다(측정 후 추가 검토).
+  - **컬럼**: `id`(PK) · `user_id`(NOT NULL — FK 없이 애플리케이션이 무결성 관리, `refresh_token`과 동일 방침) · `provider_id`(nullable — 탈퇴 시 스냅샷, 복구·파기 완료 시 NULL) · `requested_at`(NOT NULL) · `purged_at`(nullable — 파기 완료 시각) · `status`(NOT NULL — PENDING_PURGE/PURGING/PURGED/FAILED/CANCELLED) · `purge_detail`(jsonb, nullable) · `updated_at`(NOT NULL — 마지막 상태 전이 시각. INSERT 시 `requested_at`과 동일 값으로 시작하고 상태 전이 시 갱신한다. 상태 전이는 조건부 UPDATE(벌크 쿼리)로 수행되어 auditing이 적용되지 않으므로 쿼리에서 명시적으로 갱신해야 한다. 용도: stale `PURGING` 회수·`FAILED` 재시도 판정 — 영구 삭제 스토리)
+  - **인덱스**: 부분 UNIQUE 인덱스 `ux_deletion_log_active_user` — `(user_id) WHERE status IN ('PENDING_PURGE', 'PURGING', 'FAILED')` — 는 **영구 삭제 스토리에서 마이그레이션 도구와 함께 후속 도입**한다. JPA 애너테이션으로 표현할 수 없어 본 스토리에서는 생성하지 않으며, 그때까지 유저당 활성 삭제 요청 1건의 보장은 애플리케이션 직렬화 계약(조건부 UPDATE)이 단독으로 담당한다. `(status, requested_at)` 인덱스도 활성 레코드가 항상 소량이라 동일하게 측정 후 검토한다.
   - **상태 전이**: `PENDING_PURGE → CANCELLED`(복구 — 본 스토리, 조건부 전환) · `PENDING_PURGE·FAILED → PURGING`(파기 선점 — 영구 삭제 스토리, 조건부 전환. 복구와의 상호 배타는 기능 4 참조) · `PURGING → PURGED`(파기 성공) · `PURGING → FAILED`(파기 실패, 재시도 대상). `PURGED`·`CANCELLED`는 종결 상태로 재전이가 없다. `FAILED → CANCELLED` 전이는 존재하지 않는다 — FAILED는 유예 경과 후 파기 시도에서만 발생하고, 유예 초과 계정은 복구가 불가하기 때문(기능 4). 중단으로 방치된 `PURGING`의 회수(stale 판정·재시도)는 영구 삭제 스토리에서 정의한다.
 
 ### 검증 기준
@@ -163,7 +166,6 @@
 - 탈퇴로 폐기된 RT로 재발급 시도 시 Grace Period 없이 거부되는지 확인
 - 탈퇴 시점에 `WITHDRAWN` 상태였던 동의 유형(예: marketing 미동의)에는 중복 `WITHDRAWN`이 append되지 않는지 확인
 - 동일 유저의 탈퇴 처리 두 건이 **동시에** 실행돼도 상태 전이를 수행한 한 건만 후속 작업을 진행해 `WITHDRAWN` append와 `deletion_log` INSERT가 각 1건만 생성되는지 확인 (동시성 통합 테스트)
-- 동일 유저의 활성(`PENDING_PURGE`·`FAILED`) `deletion_log`를 2건 INSERT하려 하면 부분 UNIQUE 제약 위반으로 실패하는지 확인 (복구되어 `CANCELLED`가 된 뒤의 재탈퇴 INSERT는 허용)
 
 ### 성능 요구사항
 

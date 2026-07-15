@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.Date;
 
@@ -17,15 +18,17 @@ public class JwtTokenProvider {
     private final SecretKey key;
     private final SecretKey signupKey;
     private final JwtProperties properties;
+    private final Clock clock;
 
-    public JwtTokenProvider(JwtProperties properties) {
+    public JwtTokenProvider(JwtProperties properties, Clock clock) {
         this.key = Keys.hmacShaKeyFor(properties.secret().getBytes(StandardCharsets.UTF_8));
         this.signupKey = Keys.hmacShaKeyFor(properties.signupSecret().getBytes(StandardCharsets.UTF_8));
         this.properties = properties;
+        this.clock = clock;
     }
 
     public String createAccessToken(Long userId) {
-        Instant now = Instant.now();
+        Instant now = clock.instant();
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .issuedAt(Date.from(now))
@@ -56,7 +59,7 @@ public class JwtTokenProvider {
      * email·nickname이 null이면 claim 자체를 생략한다.
      */
     public String createSignupToken(String providerId, String email, String nickname) {
-        Instant now = Instant.now();
+        Instant now = clock.instant();
         var builder = Jwts.builder()
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plus(properties.signupTokenTtl())))

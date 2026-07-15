@@ -45,4 +45,9 @@ public class User extends BaseEntity {
     public static User create(String providerId, String email, String name) {
         return new User(providerId, email, name);
     }
+
+    /** 표시 이름 변경. 검증(공백 제거 후 1~100 코드 포인트)은 서비스 계층이 담당한다. */
+    public void updateName(String name) {
+        this.name = name;
+    }
 }
