@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -38,6 +39,7 @@ public class TokenService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtTokenProvider jwtTokenProvider;
     private final JwtProperties jwtProperties;
+    private final Clock clock;
 
     /** 카카오 신원으로 신규/기존/복구를 판정한다. 복구와 토큰 발급은 이 한 트랜잭션으로 묶인다. */
     @Transactional
@@ -64,7 +66,7 @@ public class TokenService {
     @Transactional
     public TokenResponse issueTokenPair(Long userId) {
         String jti = UUID.randomUUID().toString();
-        Instant issuedAt = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        Instant issuedAt = clock.instant().truncatedTo(ChronoUnit.SECONDS);
         Instant expiresAt = issuedAt.plus(jwtProperties.refreshTokenTtl());
 
         String refreshToken = jwtTokenProvider.createRefreshToken(userId, jti, issuedAt, expiresAt);
@@ -88,7 +90,7 @@ public class TokenService {
         }
         RefreshToken current = refreshTokenRepository.findWithLockByTokenHash(TokenHasher.sha256Hex(refreshToken))
                 .orElseThrow(() -> new BusinessException(ErrorCode.RT_NOT_FOUND));
-        Instant now = Instant.now();
+        Instant now = clock.instant();
 
         if (current.isRevoked()) {
             return handleRevokedToken(current, now);
@@ -98,7 +100,7 @@ public class TokenService {
         }
 
         TokenResponse tokens = issueTokenPair(current.getUserId());
-        current.rotateTo(TokenHasher.sha256Hex(tokens.refreshToken()));
+        current.rotateTo(TokenHasher.sha256Hex(tokens.refreshToken()), now);
         return tokens;
     }
 
@@ -149,6 +151,6 @@ public class TokenService {
     public void logout(Long userId, String refreshToken) {
         refreshTokenRepository.findByTokenHash(TokenHasher.sha256Hex(refreshToken))
                 .filter(rt -> rt.getUserId().equals(userId))
-                .ifPresent(RefreshToken::revoke);
+                .ifPresent(rt -> rt.revoke(clock.instant()));
     }
 }

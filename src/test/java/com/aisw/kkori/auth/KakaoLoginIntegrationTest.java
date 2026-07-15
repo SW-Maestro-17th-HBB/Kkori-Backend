@@ -7,6 +7,8 @@ import com.aisw.kkori.user.domain.User;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.given;
@@ -55,7 +57,7 @@ class KakaoLoginIntegrationTest extends AuthIntegrationTestSupport {
     @DisplayName("탈퇴 유예 중 유저는 복구되고 isRestored=true와 토큰을 받는다")
     void softDeletedUserIsRestored() throws Exception {
         User user = saveUser("kakao-3003");
-        user.softDelete();
+        user.softDelete(Instant.now());
         userRepository.save(user);
         given(kakaoOAuthClient.authenticate(anyString()))
                 .willReturn(new KakaoUserInfo("kakao-3003", user.getEmail(), user.getName()));

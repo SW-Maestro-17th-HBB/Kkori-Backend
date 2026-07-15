@@ -8,6 +8,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -23,7 +24,7 @@ class JwtTokenProviderTest {
 
     private final JwtProperties properties = new JwtProperties(
             SECRET, SIGNUP_SECRET, Duration.ofMinutes(30), Duration.ofDays(14), Duration.ofMinutes(10));
-    private final JwtTokenProvider provider = new JwtTokenProvider(properties);
+    private final JwtTokenProvider provider = new JwtTokenProvider(properties, Clock.systemUTC());
 
     @Test
     @DisplayName("AT payload는 sub·iat·exp·token_type만 담는다 — 개인정보 미포함")
