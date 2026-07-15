@@ -69,7 +69,10 @@ public class UserService {
     @Transactional
     public WithdrawResponse withdraw(Long userId) {
         Instant now = clock.instant();
-        String providerId = getActiveUser(userId).getProviderId();
+        // 활성 필터 없이 조회한다 — 이미 탈퇴된 유저의 재호출도 멱등 응답해야 하기 때문(아래 0행 분기)
+        String providerId = userRepository.findById(userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED))
+                .getProviderId();
 
         int transitioned = userRepository.softDeleteById(userId, now);
         if (transitioned == 0) {
