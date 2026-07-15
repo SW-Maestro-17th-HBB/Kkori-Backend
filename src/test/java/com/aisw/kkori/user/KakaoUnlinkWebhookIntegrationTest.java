@@ -1,6 +1,7 @@
 package com.aisw.kkori.user;
 
 import com.aisw.kkori.auth.AuthIntegrationTestSupport;
+import com.aisw.kkori.global.logging.LogMasker;
 import com.aisw.kkori.global.oauth.KakaoOAuthProperties;
 import com.aisw.kkori.user.domain.ConsentAction;
 import com.aisw.kkori.user.domain.ConsentType;
@@ -63,6 +64,9 @@ class KakaoUnlinkWebhookIntegrationTest extends AuthIntegrationTestSupport {
     @Autowired
     private PlatformTransactionManager transactionManager;
 
+    @Autowired
+    private LogMasker logMasker;
+
     @MockitoSpyBean
     private WebhookWithdrawalExecutor webhookWithdrawalExecutorSpy;
 
@@ -100,7 +104,11 @@ class KakaoUnlinkWebhookIntegrationTest extends AuthIntegrationTestSupport {
         DeletionLog log = logs.getFirst();
         assertThat(log.getProviderId()).isEqualTo("kakao-9301");
         assertThat(log.getStatus()).isEqualTo(DeletionStatus.PENDING_PURGE);
-        assertThat(output.getOut()).contains("referrer_type=" + REFERRER);
+        // 로그에는 가명값만 — user_id 원문은 어느 경로에서도 남지 않는다 (PRD 기능 5)
+        assertThat(output.getOut())
+                .contains("referrer_type=" + REFERRER)
+                .contains("user_id_hmac=" + logMasker.mask("kakao-9301"))
+                .doesNotContain("kakao-9301");
     }
 
     @Test
@@ -147,11 +155,13 @@ class KakaoUnlinkWebhookIntegrationTest extends AuthIntegrationTestSupport {
         assertThat(userRepository.findById(user.getId()).orElseThrow().isDeleted()).isFalse();
         assertThat(deletionLogRepository.count()).isZero();
         assertThat(output.getOut()).contains("WARN").contains("카카오 웹훅 검증 실패");
-        // Authorization 헤더·어드민 키 원문은 로그에 나타나면 안 된다 (PRD 기능 5)
+        // Authorization 헤더·어드민 키·user_id 원문은 로그에 나타나면 안 된다 (PRD 기능 5)
         assertThat(output.getOut())
                 .doesNotContain(kakaoOAuthProperties.adminKey())
                 .doesNotContain("KakaoAK")
-                .doesNotContain("wrong-admin-key");
+                .doesNotContain("wrong-admin-key")
+                .doesNotContain("kakao-9304")
+                .contains("user_id_hmac=" + logMasker.mask("kakao-9304"));
     }
 
     @Test
@@ -190,7 +200,12 @@ class KakaoUnlinkWebhookIntegrationTest extends AuthIntegrationTestSupport {
         assertThat(output.getOut())
                 .contains("result=NOT_FOUND")
                 .contains("result=ALREADY_WITHDRAWN")
-                .contains("referrer_type=" + REFERRER);
+                .contains("referrer_type=" + REFERRER)
+                // 미존재·이미 탈퇴 경로도 가명값만 기록
+                .contains("user_id_hmac=" + logMasker.mask("no-such-user"))
+                .contains("user_id_hmac=" + logMasker.mask("kakao-9306"))
+                .doesNotContain("no-such-user")
+                .doesNotContain("kakao-9306");
     }
 
     @Test
@@ -232,7 +247,9 @@ class KakaoUnlinkWebhookIntegrationTest extends AuthIntegrationTestSupport {
         assertThat(deletionLogRepository.count()).isZero();
         assertThat(output.getOut()).contains("ERROR")
                 .contains("카카오 웹훅 탈퇴 동기화 실패")
-                .contains("user_id=kakao-9308");
+                // 수동 조치용 식별자도 가명값 — 원문 특정은 동일 키 DB 대조(PRD 운영 절차)
+                .contains("user_id_hmac=" + logMasker.mask("kakao-9308"))
+                .doesNotContain("kakao-9308");
     }
 
     @Test

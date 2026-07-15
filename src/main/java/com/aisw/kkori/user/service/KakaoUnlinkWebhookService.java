@@ -1,5 +1,6 @@
 package com.aisw.kkori.user.service;
 
+import com.aisw.kkori.global.logging.LogMasker;
 import com.aisw.kkori.global.oauth.KakaoOAuthProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,7 +17,9 @@ import java.security.MessageDigest;
  * 잡지 않는다(OutOfMemoryError 같은 JVM 치명 오류까지 200으로 숨기면 안 됨).
  *
  * <p>연결 해제 웹훅은 카카오 재전송이 없어 처리 실패는 ERROR 로그 기반 수동 조치로만
- * 복구된다(PRD 운영 절차). {@code Authorization} 헤더·어드민 키 원문은 절대 로그 금지.
+ * 복구된다(PRD 운영 절차). {@code Authorization} 헤더·어드민 키 원문은 절대 로그 금지이며,
+ * {@code user_id}(카카오 회원번호)는 안정적 외부 식별자라 원문 대신 HMAC 가명값으로만
+ * 기록한다 — 원문 특정은 동일 키의 DB 대조로 수행한다(PRD 운영 절차).
  */
 @Slf4j
 @Service
@@ -28,22 +31,23 @@ public class KakaoUnlinkWebhookService {
 
     private final KakaoOAuthProperties kakaoOAuthProperties;
     private final WebhookWithdrawalExecutor webhookWithdrawalExecutor;
+    private final LogMasker logMasker;
 
     /** 어드민 키·앱 ID 검증 후 탈퇴 동기화. 검증·처리 실패 모두 로그만 남기고 정상 반환한다. */
     public void receive(String authorization, String appId, String userId, String referrerType) {
         if (!hasValidAdminKey(authorization) || !kakaoOAuthProperties.appId().equals(appId)
                 || userId == null || userId.isBlank()) {
-            log.warn("카카오 웹훅 검증 실패 — 상태 변경 없이 무시. app_id={}, user_id={}, referrer_type={}",
-                    sanitize(appId), sanitize(userId), sanitize(referrerType));
+            log.warn("카카오 웹훅 검증 실패 — 상태 변경 없이 무시. app_id={}, user_id_hmac={}, referrer_type={}",
+                    sanitize(appId), logMasker.mask(userId), sanitize(referrerType));
             return;
         }
         try {
             WebhookWithdrawalExecutor.Result result = webhookWithdrawalExecutor.withdrawIfActive(userId);
-            log.info("카카오 웹훅 탈퇴 동기화 — result={}, user_id={}, referrer_type={}",
-                    result, sanitize(userId), sanitize(referrerType));
+            log.info("카카오 웹훅 탈퇴 동기화 — result={}, user_id_hmac={}, referrer_type={}",
+                    result, logMasker.mask(userId), sanitize(referrerType));
         } catch (Exception e) {
             log.error("카카오 웹훅 탈퇴 동기화 실패 — 재전송이 없으므로 수동 조치 필요(PRD 운영 절차). "
-                    + "user_id={}, referrer_type={}", sanitize(userId), sanitize(referrerType), e);
+                    + "user_id_hmac={}, referrer_type={}", logMasker.mask(userId), sanitize(referrerType), e);
         }
     }
 
