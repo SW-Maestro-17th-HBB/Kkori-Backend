@@ -1,0 +1,28 @@
+# 로컬 개발 환경 — docker compose(PostgreSQL/Redis/MinIO) 기준.
+# 아래 값들은 로컬 컨테이너용 더미 자격증명이라 커밋해도 무해함.
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/kkori
+    username: kkori
+    password: kkori
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  jpa:
+    hibernate:
+      ddl-auto: update
+  cloud:
+    aws:
+      s3:
+        endpoint: http://localhost:9000        # MinIO
+        path-style-access-enabled: true        # MinIO 필수 설정
+      credentials:
+        access-key: kkori
+        secret-key: kkori1234
+      region:
+        static: ap-northeast-2
+
+app:
+  s3:
+    bucket: kkori-resumes

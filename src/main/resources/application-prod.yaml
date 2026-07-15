@@ -1,0 +1,22 @@
+# 운영(AWS) 환경 — 비밀값은 환경변수로 주입 (기본값 없음 = 미주입 시 기동 실패로 즉시 발견).
+# S3: endpoint·credentials를 설정하지 않음 → SDK 기본 동작 (실제 S3 + IAM Role)
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  cloud:
+    aws:
+      region:
+        static: ap-northeast-2
+
+app:
+  s3:
+    bucket: ${S3_BUCKET}
