@@ -81,6 +81,7 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 - `POST /api/v1/resumes` — multipart/form-data (`file`: PDF, `title`: string 선택)
 - 응답은 공통 엔벨로프 `ApiResponse<T>`를 따른다 (이하 모든 REST API 동일)
 - Redis Stream: 분석 요청 스트림(발행), 상태 이벤트 스트림(소비). **스트림별 메시지 스키마의 정의 원천은 계약 record** — `ResumeParseRequestedMessage`(요청: resumeId, userId, bucket, objectKey, **mode**[FULL|REINDEX] — 신규 업로드도 FULL로 발행하며, 5개 필드는 모드와 무관하게 전부 필수. REINDEX에서 bucket/objectKey는 무시됨), `ResumeStatusChangedMessage`(상태: resumeId, **userId**, status, message — userId는 SSE 사용자별 라우팅 근거로, Worker가 요청 메시지의 userId를 에코). Python Worker는 이 두 파일을 계약 문서로 참조
+- 분석 요청 스트림은 Consumer Group 기반 **at-least-once** — 동일 메시지가 중복 전달될 수 있으므로 Worker 처리는 **resumeId 기준 멱등**이어야 한다(이행 방법은 Worker 소관). **모든 분석 요청은 반드시 EMBEDDED 또는 FAILED로 끝난다** — Worker는 ACK 없이 오래 방치된 메시지를 회수(XAUTOCLAIM)해 DB 상태 기준 체크포인트에서 재개하고, 재전달 횟수가 임계를 넘은 메시지는 재처리 없이 FAILED로 끝낸다(상세는 Worker PRD)
 
 ### 제약사항
 
@@ -90,7 +91,10 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 
 ### 기타 요구사항
 
-- Worker 장애 시 재처리·멱등성·DLQ 정책: **미정** (Redis Stream Consumer Group 기반 재처리 방향만 합의됨)
+- **Worker 장애·재처리 정책 (2026-07-15 확정)**: 회수한 메시지는 DB 상태로 재개 지점을 정한다 — EMBEDDED=스킵 후 ACK / EMBEDDING=기존 청크 정리 후 재임베딩 / PARSED=임베딩부터 / 그 이전=처음부터(원문 미저장이므로). 포기 규칙: 처리 시작 전 delivery count가 임계를 넘으면 재처리 없이 FAILED 기록(error_message "재전달 임계 초과" + 당시 count) 후 XACK. idle time·임계값·내부 재시도 수치는 Worker PRD 소관.
+- **별도 DLQ 스트림은 두지 않는다** — 메시지는 모든 필드가 DB에서 재유도 가능한 포인터라 격리 보존할 고유 정보가 없고, 재처리는 재주입이 아니라 §4 재분석(DB에서 새 메시지 생성)으로 한다. 격리 건은 FAILED 레코드로 일반 실패와 구분·조회 가능.
+- 잔여 한계: Worker가 장기간 완전 정지하면 회수도 멈춰 상태가 진행 중에 머문다 — API가 아닌 운영(모니터링·알림)의 영역.
+- **계약 변경 권한은 백엔드** — 스트림·상태·structuredData 계약이 양 repo에서 어긋나면 이 문서와 계약 record가 우선한다. Worker PRD는 크로스 레포 참조가 불가하므로(리뷰·CI가 상대 repo를 못 봄) 계약 전문의 자기완결 사본을 유지하고, 표류는 Worker 측 골든 샘플 픽스처 테스트로 방어한다.
 - **Outbox 패턴은 MVP에서 도입하지 않기로 결정** (2026-07-14). 발행은 DB 트랜잭션 안에서 수행 — 발행 실패 시 롤백되어 사용자에게 실패가 보이는(시끄러운 실패) 쪽을 선택. 남는 구멍(발행 성공 후 커밋 실패 → 유령 이벤트)은 확률이 낮고, 사용자 재시도를 dedup이 흡수 + Worker의 "레코드 없으면 스킵" 계약으로 무해화됨. **도입 재검토 신호**: "성공했는데 분석이 시작 안 됨" 문의 발생, 요청 유실 제로 SLA 요구, 발행 지점이 여러 도메인으로 확대. 그 전 중간 단계로 "오래된 UPLOADED 재발행 배치"도 선택지.
 
 ---
@@ -206,7 +210,7 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 - 수정(`PATCH /api/v1/resumes/{resumeId}/parsed`): 사용자가 수정한 structuredData를 저장한다. 수정만으로는 재분석되지 않는다.
 - 재분석(`POST /api/v1/resumes/{resumeId}/reanalyze`): **엔드포인트는 하나, 현재 상태가 모드를 결정한다** (사용자가 모드를 고르지 않음). Worker에 보내는 분석 요청 이벤트에 `mode` 필드로 전달한다.
   - **EMBEDDED → 재색인 모드(REINDEX)**: 수정된 structuredData를 진실로 삼아 청킹·임베딩·색인만 재수행. 구조화(텍스트 추출~STRUCTURING)를 재수행하면 LLM이 사용자 수정을 덮어쓰므로 건너뛴다. 상태는 EMBEDDING → EMBEDDED로 진행.
-  - **FAILED → 전체 재분석 모드(FULL)**: S3 원본 PDF를 진실로 삼아 텍스트 추출부터 전부 재수행. FAILED의 유일한 복구 수단이다(§1). 상태는 UPLOADED부터 재시작.
+  - **FAILED → 전체 재분석 모드(FULL)**: S3 원본 PDF를 진실로 삼아 텍스트 추출부터 전부 재수행. FAILED의 유일한 복구 수단이다(§1). 상태는 UPLOADED부터 재시작. FAILED는 Worker가 재시도를 소진했거나 재전달 임계를 초과한 끝 상태이며, 서버는 자동 재시도하지 않는다 — 복구 주체는 항상 사용자.
 
 파싱 결과의 조회·수정은 **분석이 완전히 완료된 상태(EMBEDDED)에서만 가능하다.** 진행 중(UPLOADED~EMBEDDING)에는 완료를 기다려야 하고, FAILED 이력서는 조회·수정 대상이 아니다(파싱 산출물이 없으므로).
 
@@ -244,6 +248,7 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 
 - 재분석 요청은 바디 없음 — reason 필드는 소비처가 없어 제거 (모드는 상태가 결정하므로 사유도 상태에서 유도 가능)
 - structuredData 크기 상한: 100KB — JSON 바디는 멀티파트와 달리 기본 크기 제한이 없어 대용량 주입(메모리·jsonb·청킹 입력) 방어 필요
+- `retry_count`는 Worker가 기록하고 서버는 읽기 전용 — 재분석 시에도 서버는 초기화하지 않는다(리셋 시점·의미는 Worker PRD 소관)
 
 ### 기타 요구사항
 
