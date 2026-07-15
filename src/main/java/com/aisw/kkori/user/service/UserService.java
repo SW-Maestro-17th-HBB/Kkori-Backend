@@ -49,11 +49,19 @@ public class UserService {
         return UserInfoResponse.from(getActiveUser(userId));
     }
 
-    /** 내 정보 수정 — MVP에서 수정 가능한 필드는 name 하나다. */
+    /**
+     * 내 정보 수정 — MVP에서 수정 가능한 필드는 name 하나다.
+     *
+     * <p>user 행 잠금 하에 읽고 활성 여부를 재확인한다. 잠금 없이 읽으면 flush 시점에
+     * Hibernate가 전체 컬럼을 메모리 값으로 다시 써서, 그 사이 커밋된 탈퇴의
+     * {@code deleted_at}을 null로 되덮어 계정이 되살아날 수 있다(PRD 기능 2 직렬화 계약).
+     */
     @Transactional
     public UserInfoResponse updateName(Long userId, String name) {
         String validated = validateName(name);
-        User user = getActiveUser(userId);
+        User user = userRepository.findWithLockById(userId)
+                .filter(u -> !u.isDeleted())
+                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
         user.updateName(validated);
         return UserInfoResponse.from(user);
     }

@@ -1,7 +1,9 @@
 package com.aisw.kkori.user.repository;
 
 import com.aisw.kkori.user.domain.User;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -16,6 +18,15 @@ public interface UserRepository extends JpaRepository<User, Long> {
      * 로그인 시 신규/기존/복구 판정과 인증 필터의 탈퇴 검증에 필요하다.
      */
     Optional<User> findByProviderId(String providerId);
+
+    /**
+     * user 행 잠금 조회 — 유저 상태를 쓰는 경로(수정·토큰 재발급)의 직렬화 지점.
+     * 잠금 없이 조회 후 flush하면 그 사이 커밋된 탈퇴의 {@code deleted_at}을
+     * 조회 시점 값으로 되덮는 lost update가 발생할 수 있다(PRD 기능 2).
+     * 잠금 순서는 user → RT로 통일한다(역전 시 탈퇴의 RT 전량 폐기가 새 RT를 놓침).
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Optional<User> findWithLockById(Long id);
 
     /**
      * 조건부 soft delete — 활성 상태일 때만 {@code deleted_at}을 기록한다.

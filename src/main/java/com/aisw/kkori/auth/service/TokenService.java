@@ -82,13 +82,26 @@ public class TokenService {
      * 검사 순서: 미존재 → 폐기(재사용/Grace) → 만료 → 회전. 폐기를 만료보다 먼저 보는 이유는
      * 회전된 뒤 만료된 토큰도 재사용 신호를 담고 있기 때문이다.
      *
+     * <p>잠금 순서는 user 행 → RT 행이다. RT를 먼저 잠그면 탈퇴의 RT 전량 폐기(벌크 UPDATE)가
+     * 대기하는 사이 새 RT를 INSERT할 수 있고, 대기하던 폐기 쿼리는 그 새 RT를 보지 못해
+     * 탈퇴 후에도 활성 RT가 남는다. user 잠금 후 활성 여부를 재확인해 탈퇴 유저를 거부한다.
      */
     @Transactional(noRollbackFor = BusinessException.class)
     public TokenResponse reissue(String refreshToken) {
         if (refreshToken == null || refreshToken.isBlank()) {
             throw new BusinessException(ErrorCode.RT_NOT_FOUND);
         }
-        RefreshToken current = refreshTokenRepository.findWithLockByTokenHash(TokenHasher.sha256Hex(refreshToken))
+        String tokenHash = TokenHasher.sha256Hex(refreshToken);
+        Long userId = refreshTokenRepository.findByTokenHash(tokenHash)
+                .map(RefreshToken::getUserId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RT_NOT_FOUND));
+        boolean active = userRepository.findWithLockById(userId)
+                .filter(user -> !user.isDeleted())
+                .isPresent();
+        if (!active) {
+            throw new BusinessException(ErrorCode.RT_NOT_FOUND);
+        }
+        RefreshToken current = refreshTokenRepository.findWithLockByTokenHash(tokenHash)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RT_NOT_FOUND));
         Instant now = clock.instant();
 
