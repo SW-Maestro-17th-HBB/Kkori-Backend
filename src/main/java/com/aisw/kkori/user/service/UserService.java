@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Collection;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -76,7 +77,9 @@ public class UserService {
      */
     @Transactional
     public WithdrawResponse withdraw(Long userId) {
-        Instant now = clock.instant();
+        // 마이크로초 절삭 — PostgreSQL timestamptz(6)는 나노초 입력을 마이크로초로 "반올림" 저장하므로
+        // (Linux JDK는 나노초 시계), 절삭 없이는 응답 purgeScheduledAt과 DB deleted_at 파생값이 1µs 어긋날 수 있다
+        Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
         // 활성 필터 없이 조회한다 — 이미 탈퇴된 유저의 재호출도 멱등 응답해야 하기 때문(아래 0행 분기)
         String providerId = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED))
