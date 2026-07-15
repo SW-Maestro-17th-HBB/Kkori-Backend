@@ -27,8 +27,8 @@ public interface UserApi {
     @Operation(summary = "회원 탈퇴",
             description = """
                     계정을 즉시 접근 차단(soft delete)하고 파기 대기로 등록한다.
-                    실제 개인정보 파기는 유예 기간(3일) 후 배치가 수행하며, 그 전에
-                    재로그인해 재동의하면 계정이 복구된다. 응답의 purgeScheduledAt이 파기 예정 시각이다.""",
+                    실제 개인정보 파기는 유예 기간(기본 3일, 설정으로 조정 가능) 후 배치가 수행하며,
+                    그 전에 재로그인해 재동의하면 계정이 복구된다. 응답의 purgeScheduledAt이 파기 예정 시각이다.""",
             security = @SecurityRequirement(name = "bearerAuth"))
     ApiResponse<WithdrawResponse> withdraw(@Parameter(hidden = true) Long userId);
 }

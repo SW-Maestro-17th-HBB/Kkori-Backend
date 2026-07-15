@@ -9,6 +9,7 @@ import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.Instant;
+import java.util.Objects;
 
 /**
  * 생성/수정 시각과 소프트 삭제를 관리하는 엔티티 공통 상위 타입.
@@ -43,6 +44,7 @@ public abstract class BaseEntity {
 
     /** 소프트 삭제 표시. 이미 삭제된 경우 시각을 갱신하지 않는다. */
     public void softDelete(Instant now) {
+        Objects.requireNonNull(now, "now");
         if (this.deletedAt == null) {
             this.deletedAt = now;
         }
