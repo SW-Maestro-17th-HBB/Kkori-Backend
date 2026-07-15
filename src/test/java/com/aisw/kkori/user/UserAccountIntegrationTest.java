@@ -165,6 +165,23 @@ class UserAccountIntegrationTest extends AuthIntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("JSON null·빈 본문은 바인딩 전 400 C002로 거부된다 — 핸들러 NPE에 도달하지 않음")
+    void updateRejectsNullAndEmptyBody() throws Exception {
+        User user = saveUser("kakao-9106");
+        String accessToken = issueAccessToken(user);
+
+        // required=true 본문이 null로 파싱되면 Spring이 핸들러 진입 전 HttpMessageNotReadableException을 던진다
+        patchJsonWithBearer("null", accessToken)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("C002"));
+        patchJsonWithBearer("", accessToken)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("C002"));
+
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getName()).isEqualTo("테스터");
+    }
+
+    @Test
     @DisplayName("미지원 필드(email)는 무시되고 name만 반영된다")
     void updateIgnoresUnsupportedFields() throws Exception {
         User user = saveUser("kakao-9105");
