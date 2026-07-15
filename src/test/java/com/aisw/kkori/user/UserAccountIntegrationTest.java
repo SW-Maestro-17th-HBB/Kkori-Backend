@@ -4,6 +4,7 @@ import com.aisw.kkori.auth.AuthIntegrationTestSupport;
 import com.aisw.kkori.auth.dto.TokenResponse;
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
+import com.aisw.kkori.global.oauth.KakaoUserInfo;
 import com.aisw.kkori.user.config.AccountPolicyProperties;
 import com.aisw.kkori.user.domain.ConsentAction;
 import com.aisw.kkori.user.domain.ConsentType;
@@ -373,6 +374,46 @@ class UserAccountIntegrationTest extends AuthIntegrationTestSupport {
                         .filter(rt -> rt.getRevokedAt() == null))
                         .as("반복 %d — 재발급이 INSERT한 새 RT까지 폐기돼야 한다", i)
                         .isEmpty();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("카카오 로그인과 탈퇴가 동시에 실행돼도 최종 탈퇴 상태면 활성 RT가 남지 않는다")
+    void concurrentKakaoLoginAndWithdrawKeepsInvariant() throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            for (int i = 0; i < 10; i++) {
+                String providerId = "kakao-9210-" + i;
+                User user = saveUser(providerId);
+                KakaoUserInfo info = new KakaoUserInfo(providerId, user.getEmail(), user.getName());
+                CountDownLatch start = new CountDownLatch(1);
+                Future<?> login = pool.submit(() -> {
+                    start.await();
+                    tokenService.processKakaoLogin(info);
+                    return null;
+                });
+                Future<?> withdraw = pool.submit(() -> {
+                    start.await();
+                    userService.withdraw(user.getId());
+                    return null;
+                });
+                start.countDown();
+                login.get();
+                withdraw.get();
+
+                // 로그인이 늦게 잠금을 얻으면 복구(현행 시맨틱 — HBB1-245에서 재동의 방식으로 교체)로
+                // 활성 상태가 될 수 있다. 불변식: 최종 탈퇴 상태라면 활성 RT가 없어야 한다.
+                boolean deleted = userRepository.findById(user.getId()).orElseThrow().isDeleted();
+                if (deleted) {
+                    assertThat(refreshTokenRepository.findAll().stream()
+                            .filter(rt -> rt.getUserId().equals(user.getId()))
+                            .filter(rt -> rt.getRevokedAt() == null))
+                            .as("반복 %d — 탈퇴 상태인데 로그인 발급 RT가 살아 있으면 안 된다", i)
+                            .isEmpty();
+                }
             }
         } finally {
             pool.shutdownNow();

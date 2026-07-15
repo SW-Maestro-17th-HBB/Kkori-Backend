@@ -57,6 +57,35 @@ class ReissueIntegrationTest extends AuthIntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("동일 RT의 동시 재발급은 한 건만 회전하고 나머지는 Grace 경로로 같은 토큰을 받는다 — 이중 회전 방지")
+    void concurrentReissueOfSameTokenRotatesOnce() throws Exception {
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            for (int i = 0; i < 10; i++) {
+                User user = saveUser("kakao-8006-" + i);
+                TokenResponse issued = tokenService.issueTokenPair(user.getId());
+                java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+                java.util.List<java.util.concurrent.Future<TokenResponse>> futures = java.util.List.of(
+                        pool.submit(() -> { start.await(); return tokenService.reissue(issued.refreshToken()); }),
+                        pool.submit(() -> { start.await(); return tokenService.reissue(issued.refreshToken()); }));
+                start.countDown();
+
+                String first = futures.get(0).get().refreshToken();
+                String second = futures.get(1).get().refreshToken();
+                assertThat(first).as("반복 %d — 패자는 Grace 경로로 승자의 RT를 그대로 받아야 한다", i)
+                        .isEqualTo(second);
+                assertThat(refreshTokenRepository.findAll().stream()
+                        .filter(rt -> rt.getUserId().equals(user.getId()))
+                        .filter(rt -> rt.getRevokedAt() == null))
+                        .as("반복 %d — 활성 RT는 정확히 1건이어야 한다(이중 회전 금지)", i)
+                        .hasSize(1);
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
     @DisplayName("탈퇴된 유저에게 활성 RT가 남아 있어도(경합 잔여 상태) 재발급이 A007로 거부된다")
     void deletedUserWithSurvivingActiveTokenIsRejected() throws Exception {
         User user = saveUser("kakao-8005");
