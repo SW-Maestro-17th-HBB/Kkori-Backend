@@ -34,6 +34,7 @@
 - 신규·복구 유저는 프론트가 동의 화면으로 라우팅하고, 동의 완료 시 `POST /api/v1/auth/signup`으로 signup token과 동의 내역을 전달한다. 서버는 서명 검증 후 필수 동의 항목이 전부 동의됐는지 확인하고, **토큰의 `deletion_log_id` 유무**에 따라 신규 가입용 토큰은 `users` 생성을, 복구용 토큰은 해당 탈퇴 건의 계정 복구를 동의 기록 저장과 한 트랜잭션으로 처리한 뒤 JWT를 발급해야 한다. 용도가 어긋난 토큰(신규 가입용 토큰인데 `provider_id`가 탈퇴 상태 계정, 복구용 토큰인데 대상 탈퇴 건이 이미 처리됨)은 `401 INVALID_SIGNUP_TOKEN`으로 거부해 재로그인을 유도한다.
 - 중복 가입은 `provider_id`의 UNIQUE 제약으로 차단해야 한다(활성 유저의 `provider_id`로 signup 시 409 ALREADY_REGISTERED). 유예 내 탈퇴 상태의 `provider_id`는 중복이 아니라 복구로 처리한다.
 - 카카오가 이메일을 제공하지 않는 유저(이메일 제공 미동의)도 가입을 허용해야 한다. `users.email`은 nullable로 저장하며, signup token의 email claim도 null일 수 있다.
+- 기존/복구 유저의 판정과 토큰 발급은 **user 행 잠금 하에** 수행해야 한다(잠금 순서 user → RT). 잠금 없이 조회 후 RT를 발급하면 탈퇴의 RT 전량 폐기와 경합해 탈퇴 후 활성 RT가 남을 수 있고, 복구 경로의 `deleted_at` 변경이 탈퇴를 되덮을 수 있다(HBB1-10에서 확정한 직렬화 계약).
 
 ### 실행 조건
 
