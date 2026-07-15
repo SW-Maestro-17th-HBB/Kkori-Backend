@@ -213,6 +213,8 @@
 
 에러 구분 원칙: **401은 토큰이 더 이상 유효한 대상을 가리키지 않을 때, 409는 대상은 유효하나 파기가 진행 중일 때** 사용한다.
 
+상태 판정과 후속 상태 변경(식별정보 파기·복구)은 **user 행 잠금에 이어 대상 `deletion_log` 행 잠금을 획득한 뒤** 수행해야 한다(잠금 순서 user → deletion_log — 기능 2의 직렬화 계약). 로그를 잠금 없이 읽으면 판정 직후 파기 배치가 `PURGING`으로 선점해도 마스킹·신규 발급이 계속 진행되어 409 계약이 깨진다. 상태 재조회는 잠금 획득 후 스칼라 쿼리로만 한다(선조회 엔티티는 1차 캐시 때문에 재확인이 되지 않음).
+
 **유예 기간 내 — 재동의를 거쳐 복구**:
 
 복구는 재로그인만으로 자동 수행하지 않는다. 탈퇴로 동의가 철회된 상태이므로 유저가 동의를 다시 제출해야 복구가 성립한다.
@@ -221,8 +223,8 @@
 2. `/auth/signup` 제출 시 토큰에 `deletion_log_id`가 있으면 복구 경로로 처리하고, 아래를 **한 트랜잭션에서 이 순서대로** 수행한다:
    1. Clock에서 트랜잭션 시각 `now`를 한 번 취득한다
    2. `deletion_log_id`로 레코드를 조회해 **1차 신원 검증**한다 — 레코드가 없거나 토큰의 `provider_id`와 스냅샷이 일치하지 않으면 `401 INVALID_SIGNUP_TOKEN`. 판정 재료 중 `requested_at`·`user_id`는 불변이지만 **`provider_id` 스냅샷은 CANCELLED/PURGED 전환 시 NULL로 바뀌는 가변 값**이므로, 선조회 이후의 상태 전이는 4의 재확인이 검출한다
-   3. 레코드의 `user_id`로 **user 행을 잠근다** (잠금 순서 user → deletion_log → RT — 기능 2의 직렬화 계약)
-   4. **로그 상태를 스칼라 쿼리로 재확인**한다(엔티티 재조회는 1차 캐시가 낡은 인스턴스를 반환해 재확인이 되지 않음) — 위 상태별 정책 표대로 분기: `PENDING_PURGE`+유예 내(`now < requested_at + 유예 기간`, 시각 정합 요구에 의해 `deleted_at` 기준과 동일)면 5로 진행, `PENDING_PURGE`+유예 초과면 유예 초과 처리(식별정보 파기 후 신규 계정 생성), `PURGING`·`FAILED`면 `409 PURGE_IN_PROGRESS`, 종결 상태·레코드 소실이면 `401 INVALID_SIGNUP_TOKEN`
+   3. 레코드의 `user_id`로 **user 행을 잠그고, 이어서 대상 `deletion_log` 행을 잠근다** (잠금 순서 user → deletion_log → RT — 기능 2의 직렬화 계약. 로그 행 잠금이 판정과 후속 상태 변경 사이에 배치의 `PURGING` 선점이 끼어드는 것을 차단한다)
+   4. 잠금 획득 후 **로그 상태를 스칼라 쿼리로 재확인**한다(엔티티 재조회는 1차 캐시가 낡은 인스턴스를 반환해 재확인이 되지 않음) — 위 상태별 정책 표대로 분기: `PENDING_PURGE`+유예 내(`now < requested_at + 유예 기간`, 시각 정합 요구에 의해 `deleted_at` 기준과 동일)면 5로 진행, `PENDING_PURGE`+유예 초과면 유예 초과 처리(식별정보 파기 후 신규 계정 생성), `PURGING`·`FAILED`면 `409 PURGE_IN_PROGRESS`, 종결 상태·레코드 소실이면 `401 INVALID_SIGNUP_TOKEN`
    5. `id = {deletion_log_id} AND status = 'PENDING_PURGE' AND requested_at + 유예 기간 > {now}` **조건부 UPDATE**로 `CANCELLED` 전환 + `provider_id` 스냅샷 NULL 처리 (배치 파기 대상에서 제외, 탈퇴 요청 이력은 audit으로 보존). 유예 조건을 UPDATE 술어에도 중복 포함해, 판정 순서를 착오한 구현이 유예 초과 건을 취소하는 실수를 쿼리 수준에서 차단한다. **영향 행 수가 1인 경우에만 복구를 계속 진행**하며, 0이면 `401` — 모든 복구 제출이 user 잠금을 먼저 잡아 동시 제출은 4에서 걸러지므로, 0행은 재확인 이후의 예외적 상태 변화를 방어적으로 감지하는 최후 방어선이다
    6. `users.deleted_at = NULL` (잠금 보유 중)
    7. `user_consent`: 제출받은 동의 내역을 append (신규 가입과 동일한 필수 동의 검증 — 누락 시 `400 MISSING_REQUIRED_CONSENT` — 및 동일한 저장 방식, **최신 동의서 버전**으로 기록)
@@ -269,6 +271,7 @@
 - 동일 복구용 토큰의 동시 제출 두 건 중 한 건만 복구를 수행하는지 확인 (동시성 통합 테스트)
 - 파기 배치가 선점한(`PURGING`) 레코드에 대한 복구 제출이 상태 재확인에서 `409 PURGE_IN_PROGRESS`로 차단되는지 확인 (배치 구현 전이므로 상태를 직접 설정해 검증)
 - `PURGING`·`FAILED` 상태 계정의 카카오 로그인이 `409 PURGE_IN_PROGRESS`로 차단되는지 확인
+- 유예 만료 판정과 배치의 `PURGING` 선점이 **동시에** 실행돼도, 선점이 먼저 커밋되면 409로 차단되고 식별정보가 파기되지 않는지 확인 (동시성 통합 테스트 — 로그인·복구 제출 양 경로)
 - 탈퇴 상태(`deleted_at` 기록)인데 로그가 없거나 종결 상태인 모순 계정의 로그인은 ERROR 로그를 남기고 신규 전환되는지 확인
 - 유예 초과 상태에서 복구용 토큰을 제출하면 `deletion_log`가 `CANCELLED`로 전환되지 않고 `PENDING_PURGE`를 유지한 채 신규 계정이 생성되는지 확인
 - **유예 기간(3일) 초과** 유저가 로그인하면 복구되지 않고 `isNewUser: true` + signupToken이 반환되며, `users`의 `email`·`name`이 NULL, `provider_id`가 `PURGED_{users.id}`로 마스킹되는지 확인 (KakaoLoginIntegrationTest에 유예 경과 케이스 추가)
