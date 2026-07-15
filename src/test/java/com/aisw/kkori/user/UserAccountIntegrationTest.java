@@ -185,6 +185,14 @@ class UserAccountIntegrationTest extends AuthIntegrationTestSupport {
     // ── 회원 탈퇴 ────────────────────────────────────────────────
 
     @Test
+    @DisplayName("토큰 없이 탈퇴 요청 시 401이 반환된다")
+    void withdrawWithoutTokenIsRejected() throws Exception {
+        mockMvc.perform(delete(USER_URI))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("C005"));
+    }
+
+    @Test
     @DisplayName("탈퇴는 soft delete·RT 전체 폐기·WITHDRAWN append·deletion_log 등록을 한 트랜잭션 시각으로 수행한다")
     void withdrawPerformsAllFourWritesWithSameInstant() throws Exception {
         User user = saveUser("kakao-9201");
