@@ -63,9 +63,10 @@ public class JwtTokenProvider {
     }
 
     /**
-     * 복구용 signup token 발급 — {@code deletionLogId} claim으로 특정 탈퇴 요청 건에 바인딩한다.
-     * 무저장 토큰은 개별 무효화가 불가능하므로, 바인딩 없이는 복구 후 재탈퇴한 계정을
-     * 옛 토큰으로 되돌릴 수 있다(PRD account.md 기능 4).
+     * 탈퇴 건 바인딩 signup token 발급 — {@code deletionLogId} claim으로 특정 탈퇴 요청 건에
+     * 바인딩해 제출 시 잠금 하 재판정(복구/만료 신규 생성/409/401)을 강제한다. 무저장 토큰은
+     * 개별 무효화가 불가능하므로, 바인딩 없이는 복구 후 재탈퇴한 계정을 옛 토큰으로 되돌리거나
+     * 배치의 파기 선점을 우회할 수 있다(PRD account.md 기능 4).
      */
     public String createSignupToken(String providerId, String email, String nickname, Long deletionLogId) {
         Instant now = clock.instant();
@@ -123,7 +124,8 @@ public class JwtTokenProvider {
 
     /**
      * signup token이 운반하는 신원 정보. 카카오 원천 정보가 users로 가는 유일한 통로다.
-     * {@code deletionLogId}의 유무가 토큰 용도를 가른다 — 있으면 복구용, 없으면 신규 가입용.
+     * {@code deletionLogId}의 유무가 토큰 용도를 가른다 — 있으면 탈퇴 건 바인딩
+     * (제출 시 상태·유예를 잠금 하에 재판정해 복구 또는 신규 생성), 없으면 신규 가입용.
      */
     public record SignupClaims(String providerId, String email, String nickname, Long deletionLogId) {
     }
