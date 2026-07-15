@@ -40,3 +40,6 @@ kakao:
   redirect-uri: ${KAKAO_REDIRECT_URI:http://localhost:3000/auth/kakao/callback}
   token-uri: https://kauth.kakao.com/oauth/token
   user-info-uri: https://kapi.kakao.com/v2/user/me
+  # 연결 해제 웹훅 검증용. app-id(숫자 앱 ID)는 client-id(REST API 키)와 다른 값
+  admin-key: ${KAKAO_ADMIN_KEY:local-dev-admin-key}
+  app-id: ${KAKAO_APP_ID:local-dev-app-id}
