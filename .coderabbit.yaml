@@ -50,6 +50,8 @@ reviews:
     # Spring 애플리케이션 공통 리뷰 기준
     - path: "src/main/java/**"
       instructions: |
+        - 변경된 도메인의 docs/requirements/<도메인>/ PRD의 검증 기준·정책과 구현이 일치하는지 확인하고, 어긋나는 지점을 지적하세요.
+        - PR 본문의 완료 조건이 코드와 테스트로 실제 충족되는지 확인하세요.
         - 실제 버그, 보안 문제, 데이터 정합성 문제를 우선 검토하세요.
         - Controller, Service, Repository 계층의 책임이 적절히 분리되었는지 확인하세요.
         - 트랜잭션 경계와 예외 처리 방식이 적절한지 확인하세요.
@@ -85,8 +87,12 @@ knowledge_base:
   web_search:
     enabled: true
   # 레포지토리 내의 특정 파일을 AI의 코드 스타일 가이드라인으로 사용하도록 설정합니다.
+  # PRD(검증 기준·정책)를 리뷰 컨텍스트로 학습시키기 위해 사용. CLAUDE.md는 기본 패턴이라 자동 포함.
   code_guidelines:
-    enabled: false
+    enabled: true
+    filePatterns:
+      - docs/requirements/*.md
+      - docs/requirements/**/*.md
   # CodeRabbit이 대화나 리뷰를 통해 학습한 내용을 어디에 저장하고 참조할지 범위를 설정합니다. 'local'은 현재 레포지토리에 한정됨을 의미합니다.
   learnings:
     scope: local
