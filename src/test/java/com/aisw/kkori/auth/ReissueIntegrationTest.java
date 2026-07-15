@@ -57,6 +57,20 @@ class ReissueIntegrationTest extends AuthIntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("탈퇴된 유저에게 활성 RT가 남아 있어도(경합 잔여 상태) 재발급이 A007로 거부된다")
+    void deletedUserWithSurvivingActiveTokenIsRejected() throws Exception {
+        User user = saveUser("kakao-8005");
+        TokenResponse issued = tokenService.issueTokenPair(user.getId());
+        // 재발급 vs 탈퇴 경합의 잔여 상태 재현: 유저는 탈퇴됐지만 RT는 폐기를 빠져나가 활성
+        user.softDelete(Instant.now());
+        userRepository.save(user);
+
+        postJson(REISSUE_URI, reissueBody(issued.refreshToken()))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("A007"));
+    }
+
+    @Test
     @DisplayName("만료된 RT는 401 RT_EXPIRED(A008)로 거부된다")
     void expiredTokenIsRejected() throws Exception {
         User user = saveUser("kakao-8002");

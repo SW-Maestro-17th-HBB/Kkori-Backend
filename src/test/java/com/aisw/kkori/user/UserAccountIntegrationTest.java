@@ -2,6 +2,8 @@ package com.aisw.kkori.user;
 
 import com.aisw.kkori.auth.AuthIntegrationTestSupport;
 import com.aisw.kkori.auth.dto.TokenResponse;
+import com.aisw.kkori.global.exception.BusinessException;
+import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.user.config.AccountPolicyProperties;
 import com.aisw.kkori.user.domain.ConsentAction;
 import com.aisw.kkori.user.domain.ConsentType;
@@ -30,6 +32,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -288,6 +291,92 @@ class UserAccountIntegrationTest extends AuthIntegrationTestSupport {
         assertThat(userConsentRepository.findByUserId(user.getId()).stream()
                 .filter(c -> c.getAction() == ConsentAction.WITHDRAWN && c.getConsentType() != ConsentType.MARKETING))
                 .hasSize(3);
+    }
+
+    @Test
+    @DisplayName("탈퇴된 유저의 수정 요청은 잠금 후 재확인으로 401이 된다")
+    void updateNameOnWithdrawnUserIsRejected() {
+        User user = saveUser("kakao-9207");
+        userService.withdraw(user.getId());
+
+        assertThatThrownBy(() -> userService.updateName(user.getId(), "되살리기 시도"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.UNAUTHORIZED);
+        assertThat(userRepository.findById(user.getId()).orElseThrow().isDeleted()).isTrue();
+    }
+
+    @Test
+    @DisplayName("수정과 탈퇴가 동시에 실행돼도 계정이 되살아나지 않는다 — user 행 잠금 직렬화")
+    void concurrentUpdateAndWithdrawNeverResurrects() throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            for (int i = 0; i < 10; i++) {
+                User user = saveUser("kakao-9208-" + i);
+                CountDownLatch start = new CountDownLatch(1);
+                Future<?> update = pool.submit(() -> {
+                    start.await();
+                    try {
+                        userService.updateName(user.getId(), "경합 수정");
+                    } catch (BusinessException e) {
+                        // 탈퇴가 먼저 커밋된 경우 401 — 정상 경로
+                    }
+                    return null;
+                });
+                Future<?> withdraw = pool.submit(() -> {
+                    start.await();
+                    userService.withdraw(user.getId());
+                    return null;
+                });
+                start.countDown();
+                update.get();
+                withdraw.get();
+
+                assertThat(userRepository.findById(user.getId()).orElseThrow().isDeleted())
+                        .as("반복 %d — 수정 flush가 탈퇴를 되덮으면 안 된다", i)
+                        .isTrue();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("재발급과 탈퇴가 동시에 실행돼도 탈퇴 완료 후 활성 RT가 남지 않는다 — 잠금 순서 user → RT")
+    void concurrentReissueAndWithdrawLeavesNoActiveRefreshToken() throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            for (int i = 0; i < 10; i++) {
+                User user = saveUser("kakao-9209-" + i);
+                TokenResponse tokens = tokenService.issueTokenPair(user.getId());
+                CountDownLatch start = new CountDownLatch(1);
+                Future<?> reissue = pool.submit(() -> {
+                    start.await();
+                    try {
+                        tokenService.reissue(tokens.refreshToken());
+                    } catch (BusinessException e) {
+                        // 탈퇴가 먼저면 A007 — 정상 경로
+                    }
+                    return null;
+                });
+                Future<?> withdraw = pool.submit(() -> {
+                    start.await();
+                    userService.withdraw(user.getId());
+                    return null;
+                });
+                start.countDown();
+                reissue.get();
+                withdraw.get();
+
+                assertThat(refreshTokenRepository.findAll().stream()
+                        .filter(rt -> rt.getUserId().equals(user.getId()))
+                        .filter(rt -> rt.getRevokedAt() == null))
+                        .as("반복 %d — 재발급이 INSERT한 새 RT까지 폐기돼야 한다", i)
+                        .isEmpty();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     @Test
