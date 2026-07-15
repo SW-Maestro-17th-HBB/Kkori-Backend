@@ -88,7 +88,7 @@
 - `name`은 앞뒤 공백 제거 후 1~100자여야 한다. 누락·null·공백뿐·길이 위반은 모두 `400 INVALID_NAME`으로 거부해야 한다.
 - 길이는 **Unicode 코드 포인트 수** 기준으로 센다(`String.length()`의 UTF-16 단위 기준 금지). DB 제약인 `varchar(100)`이 코드 포인트 기준이므로 검증과 저장 제약이 1:1로 일치하며, 서로게이트 쌍 문자(이모지 등)가 2로 세어져 저장 가능한 이름을 거부하는 불일치를 방지한다.
 - 검증은 서비스 계층에서 수행하고 도메인 에러 코드로 응답한다(bean validation의 공통 `C002`가 아님 — HBB1-11에서 확립한 기준: PRD에 도메인 에러 코드가 명시된 검증은 서비스 검증).
-- 수정은 **user 행 잠금(비관적 잠금) 하에** 수행하고 잠금 후 활성 여부를 재확인해야 한다(탈퇴됐으면 401). 잠금 없이 조회 후 변경을 flush하면, 그 사이 커밋된 탈퇴(조건부 UPDATE)의 `deleted_at`을 조회 시점의 null 값으로 되덮어 **탈퇴가 취소되는 lost update**가 발생할 수 있다(Hibernate 기본 UPDATE는 전체 컬럼을 메모리 값으로 씀). 유저 상태를 쓰는 모든 경로(수정·탈퇴·토큰 재발급·로그인/복구)는 user 행 잠금을 직렬화 지점으로 공유하며 잠금 순서는 user → RT다(재발급·로그인 측 요구는 HBB1-11 PRD 참조).
+- 수정은 **user 행 잠금(비관적 잠금) 하에** 수행하고 잠금 후 활성 여부를 재확인해야 한다(탈퇴됐으면 401). 잠금 없이 조회 후 변경을 flush하면, 그 사이 커밋된 탈퇴(조건부 UPDATE)의 `deleted_at`을 조회 시점의 null 값으로 되덮어 **탈퇴가 취소되는 lost update**가 발생할 수 있다(Hibernate 기본 UPDATE는 전체 컬럼을 메모리 값으로 씀). 유저 상태를 쓰는 모든 경로(수정·탈퇴·토큰 재발급·로그인/복구)는 user 행 잠금을 직렬화 지점으로 공유하며 잠금 순서는 **user → deletion_log → RT**다(재발급·로그인 측 요구는 HBB1-11 PRD, 복구 측 절차는 기능 4 참조).
 
 ### 실행 조건
 
@@ -202,7 +202,16 @@
 
 ### 설명
 
-카카오 로그인(`POST /api/v1/auth/kakao`, HBB1-11)에서 `provider_id`가 존재하고 `deleted_at`이 기록된 유저로 판정되면, 서버는 유예 기간 경과 여부(`now < deleted_at + 유예 기간`)로 분기해야 한다. 판정·응답 계약은 HBB1-11 PRD(본 변경으로 개정), 내부 처리는 본 문서가 정의한다(현재 구현 `TokenService.processKakaoLogin`은 기간 검증 없이 로그인 시점에 즉시 `deleted_at`을 해제하므로 본 요구사항으로 교체).
+카카오 로그인(`POST /api/v1/auth/kakao`, HBB1-11)에서 `provider_id`가 존재하고 `deleted_at`이 기록된 유저로 판정되면, 서버는 유예 기간 경과 여부(`now < deleted_at + 유예 기간`)와 **해당 유저 최신 `deletion_log`의 상태**로 분기해야 한다(최신 = `requested_at`·`id` 내림차순 정렬 명시 조회). 판정·응답 계약은 HBB1-11 PRD(본 변경으로 개정), 내부 처리는 본 문서가 정의한다(현재 구현 `TokenService.processKakaoLogin`은 기간 검증 없이 로그인 시점에 즉시 `deleted_at`을 해제하므로 본 요구사항으로 교체).
+
+| 최신 로그 상태 | 처리 (`/auth/kakao` 판정·`/auth/signup` 재판정 공통) |
+| --- | --- |
+| `PENDING_PURGE` + 유예 내 | 재동의를 거쳐 복구 (아래) |
+| `PENDING_PURGE` + 유예 초과 | 식별정보 즉시 파기 후 신규 취급 (아래) |
+| `PURGING`·`FAILED` | **`409 PURGE_IN_PROGRESS`(U002)로 차단** — 파기 배치가 스냅샷으로 unlink를 수행·재시도할 소유권을 쥔 상태라, 신규 가입을 허용하면 방금 만든 카카오 연결이 배치의 unlink로 끊기는 경합이 생긴다. FAILED 차단의 함의로 파기 성공 전까지 해당 카카오 계정은 가입이 불가하다 — 운영 개입(파기 실패 해소)이 필요한 잔여 리스크로 수용 |
+| 로그 부재·종결 상태 모순 | 엔드포인트별로 다르다: `/auth/kakao`는 ERROR 로그를 남기고 유예 초과 경로로 흡수(가용성 우선), `/auth/signup`은 `401 INVALID_SIGNUP_TOKEN`(이미 사용된 토큰 — 정보 비노출) |
+
+에러 구분 원칙: **401은 토큰이 더 이상 유효한 대상을 가리키지 않을 때, 409는 대상은 유효하나 파기가 진행 중일 때** 사용한다.
 
 **유예 기간 내 — 재동의를 거쳐 복구**:
 
@@ -211,13 +220,13 @@
 1. `/auth/kakao`: 계정을 변경하지 않고 **복구용 signup token**을 발급하며 `isNewUser: false`·`isRestored: true`로 응답한다. 복구용 토큰은 신규 가입용과 claim 구성이 같되 **`deletion_log_id`(해당 유저의 활성 `PENDING_PURGE` 레코드 id) claim을 추가**해 특정 탈퇴 요청 건에 바인딩한다. 프론트는 신규 가입과 같은 동의 화면으로 라우팅하되 복구 안내를 표시할 수 있다.
 2. `/auth/signup` 제출 시 토큰에 `deletion_log_id`가 있으면 복구 경로로 처리하고, 아래를 **한 트랜잭션에서 이 순서대로** 수행한다:
    1. Clock에서 트랜잭션 시각 `now`를 한 번 취득한다
-   2. `deletion_log_id`로 레코드를 조회하고 토큰 신원과 대조한다 — 레코드가 없거나 토큰의 `provider_id`와 일치하지 않으면 `401 INVALID_SIGNUP_TOKEN`
-   3. 유예를 판정한다: `now < requested_at + 유예 기간` (시각 정합 요구에 의해 `deleted_at` 기준 판정식과 동일)
-      - **유예 초과**: `CANCELLED`로 전환하지 않고 아래 유예 초과 처리(식별정보 파기 + 신규 계정 생성)로 진행한다
-      - **유예 내**: `id = {deletion_log_id} AND status = 'PENDING_PURGE' AND requested_at + 유예 기간 > {now}` **조건부 UPDATE**로 `CANCELLED` 전환 + `provider_id` 스냅샷 NULL 처리 (배치 파기 대상에서 제외, 탈퇴 요청 이력은 audit으로 보존). **영향 행 수가 1인 경우에만 복구를 계속 진행**하고, 0이면 다른 트랜잭션(동시 제출 또는 파기 배치의 선점)이 이미 처리한 것이므로 `401 INVALID_SIGNUP_TOKEN`으로 거부해 재로그인을 유도한다. 유예 조건을 UPDATE 술어에도 중복 포함해, 판정 순서를 착오한 구현이 유예 초과 건을 취소하는 실수를 쿼리 수준에서 차단한다
-   4. `users.deleted_at = NULL`
-   5. `user_consent`: 제출받은 동의 내역을 append (신규 가입과 동일한 필수 동의 검증 — 누락 시 `400 MISSING_REQUIRED_CONSENT` — 및 동일한 저장 방식, **최신 동의서 버전**으로 기록)
-   6. JWT 발급
+   2. `deletion_log_id`로 레코드를 조회해 **1차 신원 검증**한다 — 레코드가 없거나 토큰의 `provider_id`와 스냅샷이 일치하지 않으면 `401 INVALID_SIGNUP_TOKEN`. 판정 재료 중 `requested_at`·`user_id`는 불변이지만 **`provider_id` 스냅샷은 CANCELLED/PURGED 전환 시 NULL로 바뀌는 가변 값**이므로, 선조회 이후의 상태 전이는 4의 재확인이 검출한다
+   3. 레코드의 `user_id`로 **user 행을 잠근다** (잠금 순서 user → deletion_log → RT — 기능 2의 직렬화 계약)
+   4. **로그 상태를 스칼라 쿼리로 재확인**한다(엔티티 재조회는 1차 캐시가 낡은 인스턴스를 반환해 재확인이 되지 않음) — 위 상태별 정책 표대로 분기: `PENDING_PURGE`+유예 내(`now < requested_at + 유예 기간`, 시각 정합 요구에 의해 `deleted_at` 기준과 동일)면 5로 진행, `PENDING_PURGE`+유예 초과면 유예 초과 처리(식별정보 파기 후 신규 계정 생성), `PURGING`·`FAILED`면 `409 PURGE_IN_PROGRESS`, 종결 상태·레코드 소실이면 `401 INVALID_SIGNUP_TOKEN`
+   5. `id = {deletion_log_id} AND status = 'PENDING_PURGE' AND requested_at + 유예 기간 > {now}` **조건부 UPDATE**로 `CANCELLED` 전환 + `provider_id` 스냅샷 NULL 처리 (배치 파기 대상에서 제외, 탈퇴 요청 이력은 audit으로 보존). 유예 조건을 UPDATE 술어에도 중복 포함해, 판정 순서를 착오한 구현이 유예 초과 건을 취소하는 실수를 쿼리 수준에서 차단한다. **영향 행 수가 1인 경우에만 복구를 계속 진행**하며, 0이면 `401` — 모든 복구 제출이 user 잠금을 먼저 잡아 동시 제출은 4에서 걸러지므로, 0행은 재확인 이후의 예외적 상태 변화를 방어적으로 감지하는 최후 방어선이다
+   6. `users.deleted_at = NULL` (잠금 보유 중)
+   7. `user_consent`: 제출받은 동의 내역을 append (신규 가입과 동일한 필수 동의 검증 — 누락 시 `400 MISSING_REQUIRED_CONSENT` — 및 동일한 저장 방식, **최신 동의서 버전**으로 기록)
+   8. JWT 발급
 3. 동의 화면에서 이탈(미제출)하면 계정은 탈퇴 상태를 유지하고 파기 일정도 그대로 진행된다 — 복구는 명시적 재동의로만 성립한다.
 
 - **토큰 용도 분리**: `deletion_log_id`가 없는(신규 가입용) 토큰으로 제출했는데 `provider_id`가 탈퇴 상태 계정이면 복구하지 않고 `401 INVALID_SIGNUP_TOKEN`으로 거부한다 — 프론트는 재로그인(`/auth/kakao`)으로 새 복구용 토큰을 받게 한다.
@@ -258,7 +267,9 @@
 - 복구에 이미 사용된 복구용 토큰을 재사용하면(복구 후 재탈퇴한 경우 포함) 조건부 전환 실패로 `401 INVALID_SIGNUP_TOKEN`이 반환되고 계정이 복구되지 않는지 확인
 - 신규 가입용(`deletion_log_id` 없는) 토큰으로 탈퇴 상태 계정에 제출 시 복구되지 않고 `401 INVALID_SIGNUP_TOKEN`이 반환되는지 확인
 - 동일 복구용 토큰의 동시 제출 두 건 중 한 건만 복구를 수행하는지 확인 (동시성 통합 테스트)
-- 파기 배치가 선점한(`PURGING`) 레코드에 대한 복구 제출이 조건부 전환 실패로 `401 INVALID_SIGNUP_TOKEN`이 되는지 확인 (배치 구현 전이므로 상태를 직접 설정해 검증)
+- 파기 배치가 선점한(`PURGING`) 레코드에 대한 복구 제출이 상태 재확인에서 `409 PURGE_IN_PROGRESS`로 차단되는지 확인 (배치 구현 전이므로 상태를 직접 설정해 검증)
+- `PURGING`·`FAILED` 상태 계정의 카카오 로그인이 `409 PURGE_IN_PROGRESS`로 차단되는지 확인
+- 탈퇴 상태(`deleted_at` 기록)인데 로그가 없거나 종결 상태인 모순 계정의 로그인은 ERROR 로그를 남기고 신규 전환되는지 확인
 - 유예 초과 상태에서 복구용 토큰을 제출하면 `deletion_log`가 `CANCELLED`로 전환되지 않고 `PENDING_PURGE`를 유지한 채 신규 계정이 생성되는지 확인
 - **유예 기간(3일) 초과** 유저가 로그인하면 복구되지 않고 `isNewUser: true` + signupToken이 반환되며, `users`의 `email`·`name`이 NULL, `provider_id`가 `PURGED_{users.id}`로 마스킹되는지 확인 (KakaoLoginIntegrationTest에 유예 경과 케이스 추가)
 - 유예 초과 후 동일 카카오 계정으로 가입 완료 시 `409 ALREADY_REGISTERED` 없이 새 계정이 생성되는지 확인
@@ -362,6 +373,7 @@
 | 코드 | 이름 | HTTP | 상황 |
 | --- | --- | --- | --- |
 | U001 | INVALID_NAME | 400 | name 누락·null·공백뿐·1~100자 위반 |
+| U002 | PURGE_IN_PROGRESS | 409 | 파기가 진행·재시도 중(`PURGING`·`FAILED`)인 계정의 로그인·가입 시도 — 재시도 가능 |
 
 - 인증 실패(AT 없음/무효/탈퇴 유저)는 기존 공통 401 처리를 따른다.
 - 웹훅은 검증 실패를 포함해 항상 200을 반환하므로(카카오 웹훅 명세) 에러 코드를 사용하지 않는다.
