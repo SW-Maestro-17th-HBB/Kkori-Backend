@@ -77,36 +77,55 @@ public class TokenService {
      * 409 계약이 깨진다. 상태는 잠금 획득 후 스칼라로 재조회한다(1차 캐시 우회).
      */
     private KakaoLoginResponse judgeDeletedUser(User user, KakaoUserInfo info) {
-        Long latestLogId = deletionLogRepository
-                .findFirstByUserIdOrderByRequestedAtDescIdDesc(user.getId())
-                .map(DeletionLog::getId)
-                .orElse(null);
-        DeletionStatus status = null;
-        if (latestLogId != null) {
-            // 반환값은 사용하지 않지만 이 잠금 자체가 목적이다 — 배치의 미커밋 PURGING 선점이
-            // 있으면 이 호출이 커밋까지 블로킹되어야 아래 스칼라 재확인이 안전해진다. 삭제 금지.
-            deletionLogRepository.findWithLockById(latestLogId);
-            status = deletionLogRepository.findStatusById(latestLogId).orElse(null);
-        }
+        Long latestLogId = latestDeletionLogId(user);
+        DeletionStatus status = lockAndReadStatus(latestLogId);
 
         if (status == DeletionStatus.PURGING || status == DeletionStatus.FAILED) {
             // 배치가 unlink 소유권을 쥔 상태 — 신규 가입을 허용하면 새 카카오 연결이 끊기는 경합
             throw new BusinessException(ErrorCode.PURGE_IN_PROGRESS);
         }
         if (status == DeletionStatus.PENDING_PURGE) {
-            // 유예 내·만료 모두 계정을 변경하지 않고 해당 탈퇴 건에 바인딩된 토큰만 발급한다.
-            // 만료 시점에 여기서 마스킹하면 제출 전 재로그인이 provider_id 매칭에 실패해
-            // 바인딩 없는 완전 신규로 판정되어 배치 선점(PURGING)의 409 차단을 우회한다 —
-            // 식별정보 파기·신규 생성은 제출 트랜잭션(UserService.restore)이 잠금 하 재판정 후 수행한다.
-            String boundToken = jwtTokenProvider.createSignupToken(
-                    info.providerId(), info.email(), info.nickname(), latestLogId);
-            boolean withinGrace = clock.instant()
-                    .isBefore(user.getDeletedAt().plus(accountPolicyProperties.withdrawalGracePeriod()));
-            return withinGrace
-                    ? KakaoLoginResponse.restoreRequired(boundToken)
-                    : KakaoLoginResponse.newUser(boundToken);
+            return respondWithBoundToken(user, info, latestLogId);
         }
-        // 로그 부재·종결 상태 모순 — 활성 로그가 없어 바인딩 대상도 배치 경합도 없다. 여기서만 즉시 파기한다.
+        return absorbAnomalyAsNewUser(user, info, status);
+    }
+
+    private Long latestDeletionLogId(User user) {
+        return deletionLogRepository
+                .findFirstByUserIdOrderByRequestedAtDescIdDesc(user.getId())
+                .map(DeletionLog::getId)
+                .orElse(null);
+    }
+
+    /** 로그 행을 잠근 뒤 현재 상태를 읽는다. 로그가 없으면 null. */
+    private DeletionStatus lockAndReadStatus(Long deletionLogId) {
+        if (deletionLogId == null) {
+            return null;
+        }
+        // 반환값은 사용하지 않지만 이 잠금 자체가 목적이다 — 배치의 미커밋 PURGING 선점이
+        // 있으면 이 호출이 커밋까지 블로킹되어야 아래 스칼라 재확인이 안전해진다. 삭제 금지.
+        deletionLogRepository.findWithLockById(deletionLogId);
+        return deletionLogRepository.findStatusById(deletionLogId).orElse(null);
+    }
+
+    /**
+     * 유예 내·만료 모두 계정을 변경하지 않고 해당 탈퇴 건에 바인딩된 토큰만 발급한다.
+     * 만료 시점에 여기서 마스킹하면 제출 전 재로그인이 provider_id 매칭에 실패해
+     * 바인딩 없는 완전 신규로 판정되어 배치 선점(PURGING)의 409 차단을 우회한다 —
+     * 식별정보 파기·신규 생성은 제출 트랜잭션(UserService.restore)이 잠금 하 재판정 후 수행한다.
+     */
+    private KakaoLoginResponse respondWithBoundToken(User user, KakaoUserInfo info, Long deletionLogId) {
+        String boundToken = jwtTokenProvider.createSignupToken(
+                info.providerId(), info.email(), info.nickname(), deletionLogId);
+        boolean withinGrace = clock.instant()
+                .isBefore(user.getDeletedAt().plus(accountPolicyProperties.withdrawalGracePeriod()));
+        return withinGrace
+                ? KakaoLoginResponse.restoreRequired(boundToken)
+                : KakaoLoginResponse.newUser(boundToken);
+    }
+
+    /** 로그 부재·종결 상태 모순 — 활성 로그가 없어 바인딩 대상도 배치 경합도 없다. 여기서만 즉시 파기한다. */
+    private KakaoLoginResponse absorbAnomalyAsNewUser(User user, KakaoUserInfo info, DeletionStatus status) {
         log.error("탈퇴 계정의 deletion_log가 활성 상태가 아닙니다 — 데이터 모순, 신규 전환으로 흡수. userId={}, status={}",
                 user.getId(), status);
         user.purgeIdentifiers();
