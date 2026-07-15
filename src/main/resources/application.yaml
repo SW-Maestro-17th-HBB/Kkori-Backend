@@ -26,6 +26,10 @@ jwt:
   refresh-token-ttl: ${JWT_REFRESH_TTL:14d}
   signup-token-ttl: ${JWT_SIGNUP_TTL:10m}
 
+# 계정 정책 — 탈퇴 후 파기 유예 기간
+account:
+  withdrawal-grace-period: ${WITHDRAWAL_GRACE_PERIOD:3d}
+
 # 쉼표로 여러 오리진 허용 가능. 배포 시 프론트 도메인을 환경변수로 주입
 cors:
   allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
