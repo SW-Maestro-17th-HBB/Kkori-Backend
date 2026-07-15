@@ -10,6 +10,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.web.servlet.ResultActions;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -89,32 +90,31 @@ class KakaoLoginIntegrationTest extends AuthIntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("유예 초과 탈퇴 유저는 식별정보가 파기되고 신규 유저로 전환된다")
-    void graceExpiredUserIsMaskedAndTreatedAsNew() throws Exception {
+    @DisplayName("유예 초과 탈퇴 유저는 계정 변경 없이 해당 탈퇴 건에 바인딩된 signupToken을 받는다")
+    void graceExpiredUserReceivesBoundSignupToken() throws Exception {
         User user = saveUser("kakao-3004");
         Instant past = Instant.now().minus(Duration.ofDays(4));
         user.softDelete(past);
         userRepository.save(user);
-        deletionLogRepository.save(DeletionLog.pending(user.getId(), "kakao-3004", past));
+        DeletionLog pending = deletionLogRepository.save(DeletionLog.pending(user.getId(), "kakao-3004", past));
         given(kakaoOAuthClient.authenticate(anyString()))
                 .willReturn(new KakaoUserInfo("kakao-3004", user.getEmail(), user.getName()));
 
-        postJson(LOGIN_URI, "{\"code\":\"valid-code\"}")
+        ResultActions result = postJson(LOGIN_URI, "{\"code\":\"valid-code\"}")
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.isNewUser").value(true))
                 .andExpect(jsonPath("$.data.signupToken").isNotEmpty())
                 .andExpect(jsonPath("$.data.isRestored").doesNotExist());
 
-        // 식별정보 선행 파기 — email·name NULL, provider_id 마스킹. 잔여 파기는 배치 몫(로그·스냅샷 유지)
-        User purged = userRepository.findById(user.getId()).orElseThrow();
-        assertThat(purged.getProviderId()).isEqualTo("PURGED_" + user.getId());
-        assertThat(purged.getEmail()).isNull();
-        assertThat(purged.getName()).isNull();
-        assertThat(purged.isDeleted()).isTrue();
-        DeletionLog log = deletionLogRepository.findFirstByUserIdOrderByRequestedAtDescIdDesc(user.getId())
-                .orElseThrow();
-        assertThat(log.getStatus()).isEqualTo(DeletionStatus.PENDING_PURGE);
-        assertThat(log.getProviderId()).isEqualTo("kakao-3004");
+        // 토큰이 탈퇴 건에 바인딩된다 — 제출 시 잠금 하 재판정을 강제(배치 선점 시 409)
+        String signupToken = responseData(result).get("signupToken").asText();
+        assertThat(jwtTokenProvider.parseSignupToken(signupToken).deletionLogId()).isEqualTo(pending.getId());
+
+        // 계정은 변경되지 않는다 — 식별정보 파기·신규 생성은 제출 시점에 수행
+        User unchanged = userRepository.findById(user.getId()).orElseThrow();
+        assertThat(unchanged.getProviderId()).isEqualTo("kakao-3004");
+        assertThat(unchanged.getEmail()).isNotNull();
+        assertThat(unchanged.isDeleted()).isTrue();
     }
 
     @Test

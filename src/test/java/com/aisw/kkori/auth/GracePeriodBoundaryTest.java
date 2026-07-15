@@ -53,8 +53,10 @@ class GracePeriodBoundaryTest extends AuthIntegrationTestSupport {
 
         assertThat(response.isNewUser()).isTrue();
         assertThat(response.signupToken()).isNotEmpty();
+        // 바인딩 토큰만 발급 — 계정은 변경되지 않는다(파기·신규 생성은 제출 시점)
+        assertThat(jwtTokenProvider.parseSignupToken(response.signupToken()).deletionLogId()).isNotNull();
         assertThat(userRepository.findById(user.getId()).orElseThrow().getProviderId())
-                .isEqualTo("PURGED_" + user.getId());
+                .isEqualTo("kakao-7101");
     }
 
     @Test

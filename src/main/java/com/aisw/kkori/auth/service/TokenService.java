@@ -91,16 +91,22 @@ public class TokenService {
             // 배치가 unlink 소유권을 쥔 상태 — 신규 가입을 허용하면 새 카카오 연결이 끊기는 경합
             throw new BusinessException(ErrorCode.PURGE_IN_PROGRESS);
         }
-        boolean withinGrace = status == DeletionStatus.PENDING_PURGE
-                && clock.instant().isBefore(user.getDeletedAt().plus(accountPolicyProperties.withdrawalGracePeriod()));
-        if (withinGrace) {
-            return KakaoLoginResponse.restoreRequired(jwtTokenProvider.createSignupToken(
-                    info.providerId(), info.email(), info.nickname(), latestLogId));
+        if (status == DeletionStatus.PENDING_PURGE) {
+            // 유예 내·만료 모두 계정을 변경하지 않고 해당 탈퇴 건에 바인딩된 토큰만 발급한다.
+            // 만료 시점에 여기서 마스킹하면 제출 전 재로그인이 provider_id 매칭에 실패해
+            // 바인딩 없는 완전 신규로 판정되어 배치 선점(PURGING)의 409 차단을 우회한다 —
+            // 식별정보 파기·신규 생성은 제출 트랜잭션(UserService.restore)이 잠금 하 재판정 후 수행한다.
+            String boundToken = jwtTokenProvider.createSignupToken(
+                    info.providerId(), info.email(), info.nickname(), latestLogId);
+            boolean withinGrace = clock.instant()
+                    .isBefore(user.getDeletedAt().plus(accountPolicyProperties.withdrawalGracePeriod()));
+            return withinGrace
+                    ? KakaoLoginResponse.restoreRequired(boundToken)
+                    : KakaoLoginResponse.newUser(boundToken);
         }
-        if (status != DeletionStatus.PENDING_PURGE) {
-            log.error("탈퇴 계정의 deletion_log가 활성 상태가 아닙니다 — 데이터 모순, 신규 전환으로 흡수. userId={}, status={}",
-                    user.getId(), status);
-        }
+        // 로그 부재·종결 상태 모순 — 활성 로그가 없어 바인딩 대상도 배치 경합도 없다. 여기서만 즉시 파기한다.
+        log.error("탈퇴 계정의 deletion_log가 활성 상태가 아닙니다 — 데이터 모순, 신규 전환으로 흡수. userId={}, status={}",
+                user.getId(), status);
         user.purgeIdentifiers();
         return KakaoLoginResponse.newUser(
                 jwtTokenProvider.createSignupToken(info.providerId(), info.email(), info.nickname()));

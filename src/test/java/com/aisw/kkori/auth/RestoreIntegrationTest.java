@@ -279,6 +279,26 @@ class RestoreIntegrationTest extends AuthIntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("만료 로그인 → 배치 PURGING 선점 → 제출 순서에서 제출이 409로 차단되고 계정이 변경되지 않는다")
+    void expiredLoginTokenSubmitBlockedAfterPurgeClaim() throws Exception {
+        User user = withdrawnUser("kakao-6012");
+        backdateWithdrawal(user, Duration.ofDays(4));
+        // 만료 로그인 — 계정 변경 없이 바인딩 토큰만 발급된다
+        String boundToken = tokenService.processKakaoLogin(
+                new KakaoUserInfo("kakao-6012", user.getEmail(), user.getName())).signupToken();
+        // 로그인과 제출 사이에 배치가 선점
+        jdbcTemplate.update("update deletion_log set status = 'PURGING' where user_id = ?", user.getId());
+
+        postJson(SIGNUP_URI, signupBody(boundToken, ALL_CONSENTS))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("U002"));
+
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getProviderId())
+                .isEqualTo("kakao-6012"); // 마스킹되지 않는다
+        assertThat(userRepository.count()).isEqualTo(1); // 신규 계정 미생성
+    }
+
+    @Test
     @DisplayName("유예 만료 로그인과 배치의 PURGING 선점이 경합해도 선점이 커밋되면 409로 차단되고 마스킹되지 않는다")
     void expiredLoginBlockedByConcurrentPurgeClaim() throws Exception {
         User user = withdrawnUser("kakao-6010");
