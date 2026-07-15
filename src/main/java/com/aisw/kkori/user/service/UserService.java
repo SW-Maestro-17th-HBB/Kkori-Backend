@@ -5,7 +5,9 @@ import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.user.config.AccountPolicyProperties;
 import com.aisw.kkori.user.domain.ConsentAction;
+import com.aisw.kkori.user.domain.ConsentType;
 import com.aisw.kkori.user.domain.DeletionLog;
+import com.aisw.kkori.user.domain.DeletionStatus;
 import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.domain.UserConsent;
 import com.aisw.kkori.user.dto.UserInfoResponse;
@@ -18,9 +20,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Collection;
+import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -97,6 +102,53 @@ public class UserService {
         withdrawAgreedConsents(userId, now);
         deletionLogRepository.save(DeletionLog.pending(userId, providerId, now));
         return new WithdrawResponse(purgeScheduledAt(now));
+    }
+
+    /**
+     * 재동의 기반 계정 복구 (PRD 기능 4 — 한 트랜잭션에서 이 순서대로).
+     * 트랜잭션 소유자는 {@code AuthService.signup}이며 이 메서드는 REQUIRED로 참여한다 —
+     * {@link RestoreResult.Expired} 반환 후 호출부의 신규 생성·JWT 저장까지 원자적이어야
+     * 식별정보 파기만 커밋되는 부분 반영이 없다.
+     */
+    @Transactional
+    public RestoreResult restore(String tokenProviderId, Long deletionLogId,
+                                 Map<ConsentType, Boolean> consents, int consentVersion) {
+        Instant now = clock.instant();
+        // 1차 신원 검증 — requested_at·user_id는 불변이지만 provider_id 스냅샷은 CANCELLED/PURGED
+        // 전환 시 NULL로 바뀌는 가변 값. 선조회 이후의 상태 전이는 아래 스칼라 재확인이 검출한다.
+        DeletionLog deletionLog = deletionLogRepository.findById(deletionLogId)
+                .filter(log -> Objects.equals(log.getProviderId(), tokenProviderId))
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
+
+        // 잠금 순서 user → deletion_log → RT (기능 2 직렬화 계약)
+        User user = userRepository.findWithLockById(deletionLog.getUserId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
+
+        // 스칼라 재확인 — 토큰 발급 후 10분 사이 배치가 선점했을 수 있고, 선조회 엔티티는 stale
+        DeletionStatus current = deletionLogRepository.findStatusById(deletionLogId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
+        switch (current) {
+            case PURGING, FAILED -> throw new BusinessException(ErrorCode.PURGE_IN_PROGRESS);
+            case CANCELLED, PURGED -> throw new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN);
+            case PENDING_PURGE -> { /* 계속 진행 */ }
+        }
+
+        Duration grace = accountPolicyProperties.withdrawalGracePeriod();
+        if (!now.isBefore(deletionLog.getRequestedAt().plus(grace))) {
+            user.purgeIdentifiers();
+            return RestoreResult.Expired.INSTANCE;
+        }
+
+        int transitioned = deletionLogRepository.cancelPendingPurge(deletionLogId, now, now.minus(grace));
+        if (transitioned == 0) {
+            // 모든 복구 제출이 user 잠금을 먼저 잡으므로 여기 도달은 예외적 — 방어적 최후 방어선
+            throw new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN);
+        }
+
+        user.restore();
+        consents.forEach((type, agreed) -> userConsentRepository.save(
+                UserConsent.create(user.getId(), type, agreed, consentVersion, now)));
+        return new RestoreResult.Restored(user.getId());
     }
 
     /** 탈퇴 시점에 최신 상태가 AGREED인 모든 동의 유형에 동일 version으로 WITHDRAWN을 append한다. */
