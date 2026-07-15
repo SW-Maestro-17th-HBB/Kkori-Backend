@@ -2,6 +2,7 @@ package com.aisw.kkori.resume.dto;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * {@code resume.parse.requested} 스트림 메시지 계약 — 이 파일이 이 스트림의 유일한 스키마 정의다.
@@ -19,10 +20,18 @@ public record ResumeParseRequestedMessage(
 
     public static final String STREAM_KEY = "resume.parse.requested";
 
+    /** 계약의 유일한 스키마 정의이므로 잘못된 메시지가 스트림에 실리기 전에 차단한다. */
+    public ResumeParseRequestedMessage {
+        Objects.requireNonNull(resumeId, "resumeId");
+        Objects.requireNonNull(userId, "userId");
+        Objects.requireNonNull(bucket, "bucket");
+        Objects.requireNonNull(objectKey, "objectKey");
+    }
+
     public Map<String, String> toMap() {
         Map<String, String> map = new HashMap<>();
         map.put("resumeId", String.valueOf(resumeId));
-        map.put("userId", userId == null ? "" : String.valueOf(userId));  // null 없음 — 빈 문자열 = 소유자 미상
+        map.put("userId", String.valueOf(userId));
         map.put("bucket", bucket);
         map.put("objectKey", objectKey);
         return map;

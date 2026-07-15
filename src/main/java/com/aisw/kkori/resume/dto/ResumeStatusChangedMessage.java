@@ -2,6 +2,7 @@ package com.aisw.kkori.resume.dto;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * {@code resume.parse.status.changed} 스트림 메시지 계약 — 이 파일이 이 스트림의 유일한 스키마 정의다.
@@ -20,6 +21,13 @@ public record ResumeStatusChangedMessage(
 ) {
 
     public static final String STREAM_KEY = "resume.parse.status.changed";
+
+    /** 계약의 유일한 스키마 정의이므로 잘못된 메시지를 사전 차단한다 (message는 실패 사유 전달용이라 null 허용). */
+    public ResumeStatusChangedMessage {
+        Objects.requireNonNull(resumeId, "resumeId");
+        Objects.requireNonNull(userId, "userId");
+        Objects.requireNonNull(status, "status");
+    }
 
     public static ResumeStatusChangedMessage from(Map<String, String> value) {
         return new ResumeStatusChangedMessage(

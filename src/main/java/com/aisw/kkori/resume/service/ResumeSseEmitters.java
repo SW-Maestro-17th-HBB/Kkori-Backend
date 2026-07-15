@@ -28,7 +28,12 @@ public class ResumeSseEmitters {
 
     public SseEmitter add(Long userId) {
         SseEmitter emitter = new SseEmitter(TIMEOUT_MILLIS);
-        emittersByUser.computeIfAbsent(userId, key -> ConcurrentHashMap.newKeySet()).add(emitter);
+        // compute()로 추가를 키 단위 원자화 — remove()의 빈 Set 정리와 경합해도 새 연결이 유실되지 않는다
+        emittersByUser.compute(userId, (key, emitters) -> {
+            Set<SseEmitter> set = (emitters != null) ? emitters : ConcurrentHashMap.newKeySet();
+            set.add(emitter);
+            return set;
+        });
         emitter.onCompletion(() -> remove(userId, emitter));
         emitter.onTimeout(() -> remove(userId, emitter));
         emitter.onError(e -> remove(userId, emitter));
@@ -68,15 +73,15 @@ public class ResumeSseEmitters {
     }
 
     private void remove(Long userId, SseEmitter emitter) {
-        Set<SseEmitter> emitters = emittersByUser.get(userId);
-        if (emitters == null) {
-            return;
-        }
-        emitters.remove(emitter);
-        // 빈 Set 정리 — remove(key, value)는 값이 그대로일 때만 지우므로 동시 add와 경합해도 안전
-        if (emitters.isEmpty()) {
-            emittersByUser.remove(userId, emitters);
-        }
+        // compute()로 제거·빈 Set 정리를 키 단위 원자화 — add()와 직렬화되어
+        // "비었다고 판단한 사이 새 emitter가 추가된 Set을 통째로 제거"하는 유실이 없다
+        emittersByUser.compute(userId, (key, emitters) -> {
+            if (emitters == null) {
+                return null;
+            }
+            emitters.remove(emitter);
+            return emitters.isEmpty() ? null : emitters;
+        });
     }
 
     int connectionCount() {
