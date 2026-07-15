@@ -80,7 +80,7 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 
 - `POST /api/v1/resumes` — multipart/form-data (`file`: PDF, `title`: string 선택)
 - 응답은 공통 엔벨로프 `ApiResponse<T>`를 따른다 (이하 모든 REST API 동일)
-- Redis Stream: 분석 요청 스트림(발행), 상태 이벤트 스트림(소비). **스트림별 메시지 스키마의 정의 원천은 계약 record** — `ResumeParseRequestedMessage`(요청: resumeId, userId, bucket, objectKey), `ResumeStatusChangedMessage`(상태: resumeId, **userId**, status, message — userId는 SSE 사용자별 라우팅 근거로, Worker가 요청 메시지의 userId를 에코). Python Worker는 이 두 파일을 계약 문서로 참조
+- Redis Stream: 분석 요청 스트림(발행), 상태 이벤트 스트림(소비). **스트림별 메시지 스키마의 정의 원천은 계약 record** — `ResumeParseRequestedMessage`(요청: resumeId, userId, bucket, objectKey, **mode**[FULL|REINDEX] — 신규 업로드도 FULL로 발행하며, 5개 필드는 모드와 무관하게 전부 필수. REINDEX에서 bucket/objectKey는 무시됨), `ResumeStatusChangedMessage`(상태: resumeId, **userId**, status, message — userId는 SSE 사용자별 라우팅 근거로, Worker가 요청 메시지의 userId를 에코). Python Worker는 이 두 파일을 계약 문서로 참조
 
 ### 제약사항
 
@@ -223,7 +223,9 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 - FAILED 이력서에 조회·수정 요청 시 409(RESUME_ANALYSIS_FAILED)가 반환되는지 확인
 - FAILED 이력서에 재분석 요청 시 mode=FULL로 분석 요청 이벤트가 발행되고 상태가 재시작되는지 확인
 - EMBEDDED 이력서에 재분석 요청 시 mode=REINDEX로 발행되고 수정된 structuredData가 보존되는지 확인
-- 형식이 잘못된 structuredData 수정 요청 시 400(INVALID_STRUCTURED_DATA)이 반환되는지 확인
+- 구조가 잘못된 structuredData(역직렬화 불가, 배열 내 null 요소) 수정 요청 시 400(INVALID_INPUT_VALUE + fieldErrors)이 반환되는지 확인 — 전용 코드(INVALID_STRUCTURED_DATA)는 폐기하고 표준 검증 응답으로 통일
+- 빈 배열·필드 누락(null)은 유효한 수정으로 허용되는지 확인 — 내용의 올바름은 시스템이 판정하지 않으며(부실하면 손해는 질문 품질로 사용자에게), 구조와 안전만 검증한다
+- structuredData 크기 상한 초과 시 400으로 거부되는지 확인
 - 수정 후 재분석을 요청해야만 청크·임베딩이 갱신되는지 확인 (수정만으로는 기존 색인 유지)
 - 진행 중인 면접에서 사용 중인 이력서에 수정·재분석 요청 시 409(RESUME_IN_USE)가 반환되는지 확인
 - 조회 응답에 rawText 필드가 없는지 확인
@@ -234,12 +236,14 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 
 ### 인터페이스 요구사항
 
-- `GET·PATCH /api/v1/resumes/{resumeId}/parsed` / `POST /api/v1/resumes/{resumeId}/reanalyze`
+- `GET·PATCH /api/v1/resumes/{resumeId}/parsed` / `POST /api/v1/resumes/{resumeId}/reanalyze`(바디 없음)
 - structuredData 스키마: profile(name, email), skills[](category, items[]), projects[](name, role, description, techStacks[]), experiences[](title, description)
+- **스키마의 정의 원천은 계약 record `StructuredData`** (jsonb ↔ record 매핑, 스트림 계약 record와 동일 철학) — Worker(쓰기: LLM 구조화 결과 저장 / 읽기: REINDEX 입력)와 공유하는 계약 문서. 읽기는 관대(unknown 필드 무시), 쓰기는 엄격(구조 검증)
 
 ### 제약사항
 
-- 재분석 사유(reason)는 선택 입력, 기본값 USER_REQUESTED
+- 재분석 요청은 바디 없음 — reason 필드는 소비처가 없어 제거 (모드는 상태가 결정하므로 사유도 상태에서 유도 가능)
+- structuredData 크기 상한: 100KB — JSON 바디는 멀티파트와 달리 기본 크기 제한이 없어 대용량 주입(메모리·jsonb·청킹 입력) 방어 필요
 
 ### 기타 요구사항
 
