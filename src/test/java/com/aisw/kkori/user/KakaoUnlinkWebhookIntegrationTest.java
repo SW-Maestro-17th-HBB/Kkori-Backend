@@ -21,7 +21,9 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionSystemException;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.List;
@@ -58,6 +60,9 @@ class KakaoUnlinkWebhookIntegrationTest extends AuthIntegrationTestSupport {
     @Autowired
     private UserService userService;
 
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
     @MockitoSpyBean
     private WebhookWithdrawalExecutor webhookWithdrawalExecutorSpy;
 
@@ -81,13 +86,18 @@ class KakaoUnlinkWebhookIntegrationTest extends AuthIntegrationTestSupport {
         // ① soft delete ② RT 전체 폐기 ③ WITHDRAWN append ④ deletion_log — 기능 3과 동일 4종
         User deleted = userRepository.findById(user.getId()).orElseThrow();
         assertThat(deleted.isDeleted()).isTrue();
-        assertThat(refreshTokenRepository.findAll())
+        assertThat(refreshTokenRepository.findAll().stream()
+                .filter(rt -> rt.getUserId().equals(user.getId())))
+                .isNotEmpty()
                 .allSatisfy(rt -> assertThat(rt.getRevokedAt()).isNotNull());
         assertThat(userConsentRepository.findByUserId(user.getId()).stream()
                 .filter(c -> c.getAction() == ConsentAction.WITHDRAWN && c.getConsentType() != ConsentType.MARKETING))
                 .hasSize(3);
-        DeletionLog log = deletionLogRepository.findAll().getFirst();
-        assertThat(log.getUserId()).isEqualTo(user.getId());
+        List<DeletionLog> logs = deletionLogRepository.findAll().stream()
+                .filter(log -> log.getUserId().equals(user.getId()))
+                .toList();
+        assertThat(logs).hasSize(1);
+        DeletionLog log = logs.getFirst();
         assertThat(log.getProviderId()).isEqualTo("kakao-9301");
         assertThat(log.getStatus()).isEqualTo(DeletionStatus.PENDING_PURGE);
         assertThat(output.getOut()).contains("referrer_type=" + REFERRER);
@@ -150,10 +160,13 @@ class KakaoUnlinkWebhookIntegrationTest extends AuthIntegrationTestSupport {
         User user = saveUser("kakao-9305");
 
         webhookGet(null, kakaoOAuthProperties.appId(), "kakao-9305", REFERRER).andExpect(status().isOk());
+        webhookGet("", kakaoOAuthProperties.appId(), "kakao-9305", REFERRER).andExpect(status().isOk());
         webhookGet("Bearer not-kakao-format", kakaoOAuthProperties.appId(), "kakao-9305", REFERRER)
                 .andExpect(status().isOk());
         webhookGet(validAuth(), null, "kakao-9305", REFERRER).andExpect(status().isOk());
+        webhookGet(validAuth(), "", "kakao-9305", REFERRER).andExpect(status().isOk());
         webhookGet(validAuth(), kakaoOAuthProperties.appId(), null, REFERRER).andExpect(status().isOk());
+        webhookGet(validAuth(), kakaoOAuthProperties.appId(), "", REFERRER).andExpect(status().isOk());
         webhookGet(validAuth(), kakaoOAuthProperties.appId(), "  ", REFERRER).andExpect(status().isOk());
 
         assertThat(userRepository.findById(user.getId()).orElseThrow().isDeleted()).isFalse();
@@ -196,9 +209,12 @@ class KakaoUnlinkWebhookIntegrationTest extends AuthIntegrationTestSupport {
     // ── 처리 실패 흡수 ───────────────────────────────────────────
 
     @Test
-    @DisplayName("탈퇴 동기화 중 오류는 롤백 후 200을 유지하고 user_id 포함 ERROR 로그를 남긴다")
+    @DisplayName("탈퇴 동기화 중 오류는 4종 기록 전부 롤백 후 200을 유지하고 user_id 포함 ERROR 로그를 남긴다")
     void processingErrorIsAbsorbedWithErrorLog(CapturedOutput output) throws Exception {
         User user = saveUser("kakao-9308");
+        seedConsents(user.getId());
+        tokenService.issueTokenPair(user.getId());
+        long consentCountBefore = userConsentRepository.count();
         doThrow(new RuntimeException("deletion_log 저장 실패 주입"))
                 .when(deletionLogRepositorySpy).save(any(DeletionLog.class));
 
@@ -206,7 +222,14 @@ class KakaoUnlinkWebhookIntegrationTest extends AuthIntegrationTestSupport {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
 
+        // 부분 반영 없이 전부 원상태 — soft delete·RT 폐기·WITHDRAWN append·deletion_log
         assertThat(userRepository.findById(user.getId()).orElseThrow().isDeleted()).isFalse();
+        assertThat(refreshTokenRepository.findAll().stream()
+                .filter(rt -> rt.getUserId().equals(user.getId())))
+                .isNotEmpty()
+                .allSatisfy(rt -> assertThat(rt.getRevokedAt()).isNull());
+        assertThat(userConsentRepository.count()).isEqualTo(consentCountBefore);
+        assertThat(deletionLogRepository.count()).isZero();
         assertThat(output.getOut()).contains("ERROR")
                 .contains("카카오 웹훅 탈퇴 동기화 실패")
                 .contains("user_id=kakao-9308");
@@ -224,6 +247,46 @@ class KakaoUnlinkWebhookIntegrationTest extends AuthIntegrationTestSupport {
                 .andExpect(jsonPath("$.success").value(true));
 
         assertThat(output.getOut()).contains("카카오 웹훅 탈퇴 동기화 실패");
+    }
+
+    @Test
+    @DisplayName("행 잠금 경합으로 트랜잭션이 실제 timeout돼도 잠금 대기 없이 200을 유지한다 — 3초 응답 계약")
+    void lockContentionTimeoutIsAbsorbed(CapturedOutput output) throws Exception {
+        User user = saveUser("kakao-9312");
+        CountDownLatch locked = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            // 별도 트랜잭션이 user 행 잠금을 점유한 상태에서 웹훅 수신 —
+            // withdraw의 조건부 UPDATE가 대기하다 executor timeout(2초)으로 중단돼야 한다
+            Future<?> lockHolder = pool.submit(() -> {
+                new TransactionTemplate(transactionManager).execute(status -> {
+                    userRepository.findWithLockById(user.getId());
+                    locked.countDown();
+                    try {
+                        release.await(10, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    return null;
+                });
+                return null;
+            });
+            assertThat(locked.await(5, TimeUnit.SECONDS)).isTrue();
+
+            webhookGet(validAuth(), kakaoOAuthProperties.appId(), "kakao-9312", REFERRER)
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.success").value(true));
+
+            // 잠금이 아직 안 풀렸는데 200이 반환됨 = timeout이 대기를 끊었다는 증거
+            assertThat(output.getOut()).contains("카카오 웹훅 탈퇴 동기화 실패");
+            release.countDown();
+            lockHolder.get(5, TimeUnit.SECONDS);
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+        assertThat(userRepository.findById(user.getId()).orElseThrow().isDeleted()).isFalse();
     }
 
     // ── 동시성 — 탈퇴 트랜잭션 1회 ───────────────────────────────
