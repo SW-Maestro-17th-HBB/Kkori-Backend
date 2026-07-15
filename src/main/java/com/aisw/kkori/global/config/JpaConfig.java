@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
 /**
@@ -22,6 +23,8 @@ public class JpaConfig {
 
     @Bean
     DateTimeProvider auditingDateTimeProvider(Clock clock) {
-        return () -> Optional.of(Instant.now(clock));
+        // 마이크로초 절삭 — PostgreSQL timestamptz(6)는 나노초 입력을 마이크로초로 반올림 저장하므로
+        // (Linux JDK는 나노초 시계), 절삭 없이는 영속화 전 메모리 값과 DB 재조회 값이 어긋난다
+        return () -> Optional.of(Instant.now(clock).truncatedTo(ChronoUnit.MICROS));
     }
 }

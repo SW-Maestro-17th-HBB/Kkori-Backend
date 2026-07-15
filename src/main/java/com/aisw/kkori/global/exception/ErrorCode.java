@@ -35,6 +35,7 @@ public enum ErrorCode {
 
     // 사용자 (U)
     INVALID_NAME(HttpStatus.BAD_REQUEST, "U001", "이름은 앞뒤 공백을 제외하고 1~100자여야 합니다."),
+    PURGE_IN_PROGRESS(HttpStatus.CONFLICT, "U002", "탈퇴 처리 중인 계정입니다. 잠시 후 다시 시도해 주세요."),
     ;
 
     private final HttpStatus status;

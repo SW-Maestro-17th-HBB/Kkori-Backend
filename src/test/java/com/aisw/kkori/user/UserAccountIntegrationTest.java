@@ -412,16 +412,16 @@ class UserAccountIntegrationTest extends AuthIntegrationTestSupport {
                 login.get();
                 withdraw.get();
 
-                // 로그인이 늦게 잠금을 얻으면 복구(현행 시맨틱 — HBB1-245에서 재동의 방식으로 교체)로
-                // 활성 상태가 될 수 있다. 불변식: 최종 탈퇴 상태라면 활성 RT가 없어야 한다.
-                boolean deleted = userRepository.findById(user.getId()).orElseThrow().isDeleted();
-                if (deleted) {
-                    assertThat(refreshTokenRepository.findAll().stream()
-                            .filter(rt -> rt.getUserId().equals(user.getId()))
-                            .filter(rt -> rt.getRevokedAt() == null))
-                            .as("반복 %d — 탈퇴 상태인데 로그인 발급 RT가 살아 있으면 안 된다", i)
-                            .isEmpty();
-                }
+                // 로그인만으로는 복구되지 않으므로(재동의 필요 — HBB1-245) 최종 상태는 항상 탈퇴이고,
+                // 로그인이 먼저 발급한 RT도 탈퇴의 전량 폐기에 잡혀야 한다
+                assertThat(userRepository.findById(user.getId()).orElseThrow().isDeleted())
+                        .as("반복 %d — 로그인이 탈퇴를 되돌리면 안 된다", i)
+                        .isTrue();
+                assertThat(refreshTokenRepository.findAll().stream()
+                        .filter(rt -> rt.getUserId().equals(user.getId()))
+                        .filter(rt -> rt.getRevokedAt() == null))
+                        .as("반복 %d — 탈퇴 상태인데 로그인 발급 RT가 살아 있으면 안 된다", i)
+                        .isEmpty();
             }
         } finally {
             pool.shutdownNow();

@@ -94,6 +94,34 @@ class JwtTokenProviderTest {
     }
 
     @Test
+    @DisplayName("deletion_log_id claim이 없으면 deletionLogId는 null로 파싱된다")
+    void signupTokenWithoutDeletionLogIdParsesNull() {
+        JwtTokenProvider.SignupClaims claims =
+                provider.parseSignupToken(provider.createSignupToken("pid", null, null));
+
+        assertThat(claims.deletionLogId()).isNull();
+    }
+
+    @Test
+    @DisplayName("작은 deletion_log_id는 jjwt가 Integer로 역직렬화해도 Long으로 파싱된다")
+    void smallDeletionLogIdParsesAsLong() {
+        JwtTokenProvider.SignupClaims claims =
+                provider.parseSignupToken(provider.createSignupToken("pid", null, null, 1L));
+
+        assertThat(claims.deletionLogId()).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("Integer 범위를 넘는 deletion_log_id도 손실 없이 보존된다")
+    void largeDeletionLogIdIsPreserved() {
+        long large = 3_000_000_000L; // > Integer.MAX_VALUE
+        JwtTokenProvider.SignupClaims claims =
+                provider.parseSignupToken(provider.createSignupToken("pid", null, null, large));
+
+        assertThat(claims.deletionLogId()).isEqualTo(large);
+    }
+
+    @Test
     @DisplayName("위변조된 AT는 거부된다")
     void tamperedTokenIsRejected() {
         String tampered = provider.createAccessToken(1L) + "x";
