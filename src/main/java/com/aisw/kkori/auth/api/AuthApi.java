@@ -25,7 +25,9 @@ public interface AuthApi {
     @Operation(summary = "회원가입 완료",
             description = """
                     signupToken과 동의 내역을 받아 계정을 생성하고 토큰 쌍을 발급한다.
-                    필수 동의 3종(privacy·audio_usage·resume_usage)이 모두 agreed=true여야 한다.""")
+                    필수 동의 3종(privacy·audio_usage·resume_usage)이 모두 agreed=true여야 한다.
+                    agreed=true 항목은 사용자가 확인한 동의서 version이 필수이며, 서버 현재 버전과
+                    다르면 409(U005) — 최신 동의서를 다시 확인한 뒤 재제출해야 한다. 동일 type 중복은 400.""")
     ApiResponse<TokenResponse> signup(SignupRequest request);
 
     @Operation(summary = "토큰 재발급",

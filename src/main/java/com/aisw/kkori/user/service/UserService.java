@@ -112,9 +112,7 @@ public class UserService {
      */
     @Transactional
     public RestoreResult restore(String tokenProviderId, Long deletionLogId,
-                                 Map<ConsentType, Boolean> consents, int consentVersion) {
-        // 마이크로초 절삭 — withdraw와 동일한 이유(DB timestamptz(6) 반올림과의 정합)
-        Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+                                 Map<ConsentType, ConsentDecision> consents) {
         // 1차 신원 검증 — requested_at·user_id는 불변이지만 provider_id 스냅샷은 CANCELLED/PURGED
         // 전환 시 NULL로 바뀌는 가변 값. 선조회 이후의 상태 전이는 아래 스칼라 재확인이 검출한다.
         DeletionLog deletionLog = deletionLogRepository.findById(deletionLogId)
@@ -128,6 +126,11 @@ public class UserService {
         // 반환값은 사용하지 않지만 이 잠금 자체가 목적이다 — 배치의 미커밋 PURGING 선점이
         // 있으면 이 호출이 커밋까지 블로킹되어야 아래 스칼라 재확인이 안전해진다. 삭제 금지.
         deletionLogRepository.findWithLockById(deletionLogId);
+
+        // 트랜잭션 시각 — 잠금 획득 "후" 취득한다(account.md 기능 4-3). 잠금 전에 취득하면 잠금 대기 중
+        // 다른 트랜잭션이 더 나중 시각으로 먼저 커밋해, 이후 기록(동의 append 등)의 시각이 커밋 순서에
+        // 역행할 수 있다. 마이크로초 절삭은 withdraw와 동일한 이유(DB timestamptz(6) 반올림과의 정합).
+        Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
 
         // 잠금 획득 후 스칼라 재확인 — 토큰 발급 후 10분 사이 배치가 선점했을 수 있고, 선조회 엔티티는 stale
         DeletionStatus current = deletionLogRepository.findStatusById(deletionLogId)
@@ -151,8 +154,8 @@ public class UserService {
         }
 
         user.restore();
-        consents.forEach((type, agreed) -> userConsentRepository.save(
-                UserConsent.create(user.getId(), type, agreed, consentVersion, now)));
+        consents.forEach((type, decision) -> userConsentRepository.save(
+                UserConsent.create(user.getId(), type, decision.agreed(), decision.version(), now)));
         return new RestoreResult.Restored(user.getId());
     }
 

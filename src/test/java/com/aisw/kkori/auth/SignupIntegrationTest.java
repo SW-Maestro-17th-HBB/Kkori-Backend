@@ -26,9 +26,9 @@ class SignupIntegrationTest extends AuthIntegrationTestSupport {
     private static final String SIGNUP_URI = "/api/v1/auth/signup";
     private static final String ALL_CONSENTS = """
             [
-              {"type": "privacy", "agreed": true},
-              {"type": "audio_usage", "agreed": true},
-              {"type": "resume_usage", "agreed": true},
+              {"type": "privacy", "agreed": true, "version": 1},
+              {"type": "audio_usage", "agreed": true, "version": 1},
+              {"type": "resume_usage", "agreed": true, "version": 1},
               {"type": "marketing", "agreed": false}
             ]""";
 
@@ -63,8 +63,8 @@ class SignupIntegrationTest extends AuthIntegrationTestSupport {
         String signupToken = jwtTokenProvider.createSignupToken("kakao-5002", null, null);
         String withoutResumeUsage = """
                 [
-                  {"type": "privacy", "agreed": true},
-                  {"type": "audio_usage", "agreed": true},
+                  {"type": "privacy", "agreed": true, "version": 1},
+                  {"type": "audio_usage", "agreed": true, "version": 1},
                   {"type": "resume_usage", "agreed": false}
                 ]""";
 
@@ -83,9 +83,9 @@ class SignupIntegrationTest extends AuthIntegrationTestSupport {
         String withNullItem = """
                 [
                   null,
-                  {"type": "privacy", "agreed": true},
-                  {"type": "audio_usage", "agreed": true},
-                  {"type": "resume_usage", "agreed": true}
+                  {"type": "privacy", "agreed": true, "version": 1},
+                  {"type": "audio_usage", "agreed": true, "version": 1},
+                  {"type": "resume_usage", "agreed": true, "version": 1}
                 ]""";
 
         postJson(SIGNUP_URI, signupBody(signupToken, withNullItem))
@@ -101,10 +101,10 @@ class SignupIntegrationTest extends AuthIntegrationTestSupport {
         String signupToken = jwtTokenProvider.createSignupToken("kakao-5009", null, null);
         String withNullType = """
                 [
-                  {"type": null, "agreed": true},
-                  {"type": "privacy", "agreed": true},
-                  {"type": "audio_usage", "agreed": true},
-                  {"type": "resume_usage", "agreed": true}
+                  {"type": null, "agreed": true, "version": 1},
+                  {"type": "privacy", "agreed": true, "version": 1},
+                  {"type": "audio_usage", "agreed": true, "version": 1},
+                  {"type": "resume_usage", "agreed": true, "version": 1}
                 ]""";
 
         postJson(SIGNUP_URI, signupBody(signupToken, withNullType))
