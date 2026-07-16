@@ -136,6 +136,27 @@ class RestoreIntegrationTest extends AuthIntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("복구 제출의 동의서 버전이 현재 버전과 다르면 409 U005이고 계정은 탈퇴 상태를 유지한다")
+    void versionMismatchKeepsAccountDeleted() throws Exception {
+        User user = withdrawnUser("kakao-6010");
+        String restoreToken = restoreToken(user);
+        String staleVersion = """
+                [
+                  {"type": "privacy", "agreed": true, "version": 99},
+                  {"type": "audio_usage", "agreed": true, "version": 1},
+                  {"type": "resume_usage", "agreed": true, "version": 1}
+                ]""";
+
+        postJson(SIGNUP_URI, signupBody(restoreToken, staleVersion))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("U005"));
+
+        assertThat(userRepository.findById(user.getId()).orElseThrow().isDeleted()).isTrue();
+        assertThat(activeLogStatus(user)).isEqualTo(DeletionStatus.PENDING_PURGE);
+        assertThat(userConsentRepository.count()).isZero();
+    }
+
+    @Test
     @DisplayName("복구 트랜잭션 중단 시 deleted_at 해제·CANCELLED 전환·동의 append가 전부 롤백된다")
     void restoreRollsBackAllWritesOnFailure() throws Exception {
         User user = withdrawnUser("kakao-6003");
