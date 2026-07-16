@@ -96,6 +96,7 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 - 잔여 한계: Worker가 장기간 완전 정지하면 회수도 멈춰 상태가 진행 중에 머문다 — API가 아닌 운영(모니터링·알림)의 영역.
 - **계약 변경 권한은 백엔드** — 스트림·상태·structuredData 계약이 양 repo에서 어긋나면 이 문서와 계약 record가 우선한다. Worker PRD는 크로스 레포 참조가 불가하므로(리뷰·CI가 상대 repo를 못 봄) 계약 전문의 자기완결 사본을 유지하고, 표류는 Worker 측 골든 샘플 픽스처 테스트로 방어한다.
 - **임베딩 벡터 스키마 (2026-07-15 확정)**: `resume_chunks.embedding vector(1024)` — Cohere Embed Multilingual v3 기준. 모델 교체는 컬럼·인덱스 재생성 + 전량 재임베딩을 수반하므로 차원·모델명을 스키마 사실로 기록. 모델 선정·운용(구조화 LLM Claude Haiku 4.5, 색인/질의 입력 타입 비대칭 등)은 Worker PRD 소관 — 면접 도메인의 질의 벡터 생성도 Python 쪽이므로 백엔드가 이행할 규칙은 없음.
+- **pgvector 인프라는 백엔드 리포가 제공 (2026-07-16 확정)**: 로컬(docker-compose)·테스트(Testcontainers) PostgreSQL은 pgvector 동봉 이미지(`pgvector/pgvector:pg16`)를 사용하고, 로컬은 초기화 스크립트가 확장을 자동 활성화한다. 이미지가 이 능력을 잃으면 CI 테스트(`PgvectorAvailabilityTest`)가 실패한다. `resume_chunks` 테이블 생성은 Worker 소관 유지. dev/prod(RDS 등)의 확장 활성화는 운영 설정 소관.
 - **Outbox 패턴은 MVP에서 도입하지 않기로 결정** (2026-07-14). 발행은 DB 트랜잭션 안에서 수행 — 발행 실패 시 롤백되어 사용자에게 실패가 보이는(시끄러운 실패) 쪽을 선택. 남는 구멍(발행 성공 후 커밋 실패 → 유령 이벤트)은 확률이 낮고, 사용자 재시도를 dedup이 흡수 + Worker의 "레코드 없으면 스킵" 계약으로 무해화됨. **도입 재검토 신호**: "성공했는데 분석이 시작 안 됨" 문의 발생, 요청 유실 제로 SLA 요구, 발행 지점이 여러 도메인으로 확대. 그 전 중간 단계로 "오래된 UPLOADED 재발행 배치"도 선택지.
 
 ---
