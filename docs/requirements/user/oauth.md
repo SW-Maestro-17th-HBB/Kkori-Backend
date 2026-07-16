@@ -136,7 +136,7 @@
 
 `version`은 사용자가 동의 화면에서 확인한 동의서 버전으로, `agreed: true` 항목에 필수다. 항목·버전의 제공(`GET /api/v1/consents`)과 대조 계약은 수집 동의 스토리(HBB1-12)를 따른다.
 
-`consents` 배열의 형태 규칙: 각 항목은 `type`·`agreed`가 필수이며, 알 수 없는 `type`, **동일 `type`의 중복**, 항목 필드 누락(null)은 `400 INVALID_INPUT_VALUE`(공통 C002)로 거부한다 — 동의 증적 입력에서 중복을 마지막 값으로 조용히 수렴시키는 처리(last-wins)는 금지한다. 검증 순서는 형태(400) → 동의서 버전 대조(409) → 필수 동의(400)다.
+`consents` 배열의 형태 규칙: `type`·`agreed`는 **모든 항목에서 필수**이고, `version`은 **`agreed: true`일 때만 필수**다 — `agreed: false`에서는 생략 가능하며, 전달돼도 검증·기록에 사용하지 않는다(버전 확인 계약의 비대칭 — HBB1-12). 알 수 없는 `type`, **동일 `type`의 중복**, `type`·`agreed`의 누락(null), `agreed: true`인데 `version` 누락은 `400 INVALID_INPUT_VALUE`(공통 C002)로 거부한다 — 동의 증적 입력에서 중복을 마지막 값으로 조용히 수렴시키는 처리(last-wins)는 금지한다. 검증 순서는 형태(400) → 동의서 버전 대조(409) → 필수 동의(400)다.
 
 ### 제약사항
 
