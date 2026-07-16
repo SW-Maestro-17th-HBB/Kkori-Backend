@@ -53,6 +53,8 @@ public class ResumeParsedService {
         // TODO(면접 도메인): 진행 중인 면접 세션에서 사용 중인 이력서는 수정 차단 (RESUME_IN_USE) — 세션 테이블 도입 시 구현
         requireWithinSizeLimit(structuredData);
         resume.updateStructuredData(structuredData);
+        // updatedAt은 auditing이 flush 시점에 갱신한다 — 응답에 이번 저장 시각을 담으려면 DTO 생성 전에 flush 필요
+        resumeRepository.flush();
         return ResumeParsedResponse.of(resume, status.getParseStatus());
     }
 
