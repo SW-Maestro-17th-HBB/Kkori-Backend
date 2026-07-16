@@ -48,7 +48,7 @@ public class ResumeParsedService {
     @Transactional
     public ResumeParsedResponse updateParsed(Long userId, Long resumeId, StructuredData structuredData) {
         Resume resume = findAuthorized(userId, resumeId);
-        ResumeAnalysisStatus status = statusOf(resumeId);
+        ResumeAnalysisStatus status = lockedStatusOf(resumeId);
         requireEmbedded(status);
         // TODO(면접 도메인): 진행 중인 면접 세션에서 사용 중인 이력서는 수정 차단 (RESUME_IN_USE) — 세션 테이블 도입 시 구현
         requireWithinSizeLimit(structuredData);
@@ -61,7 +61,7 @@ public class ResumeParsedService {
     @Transactional
     public ResumeReanalyzeResponse reanalyze(Long userId, Long resumeId) {
         Resume resume = findAuthorized(userId, resumeId);
-        ResumeAnalysisStatus status = statusOf(resumeId);
+        ResumeAnalysisStatus status = lockedStatusOf(resumeId);
 
         AnalysisMode mode = switch (status.getParseStatus()) {
             case EMBEDDED -> AnalysisMode.REINDEX;   // 수정 반영 — DB structuredData부터 청킹·색인
@@ -93,6 +93,15 @@ public class ResumeParsedService {
     /** 상태 행은 업로드 트랜잭션에서 Resume과 함께 생성되므로, 없다는 것은 데이터 정합성 깨짐(서버 결함)이다. */
     private ResumeAnalysisStatus statusOf(Long resumeId) {
         return statusRepository.findByResumeId(resumeId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR));
+    }
+
+    /**
+     * 상태 검사 후 행동(수정·재분석)하는 트랜잭션은 잠그고 읽는다 — 검사와 커밋 사이에 다른 요청이
+     * 상태를 바꾸면 낡은 판정으로 통과하기 때문(check-then-act). 읽기 전용인 조회는 잠그지 않는다.
+     */
+    private ResumeAnalysisStatus lockedStatusOf(Long resumeId) {
+        return statusRepository.findForUpdateByResumeId(resumeId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR));
     }
 
