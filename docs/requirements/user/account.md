@@ -221,9 +221,9 @@
 
 1. `/auth/kakao`: 계정을 변경하지 않고 **복구용 signup token**을 발급하며 `isNewUser: false`·`isRestored: true`로 응답한다. 복구용 토큰은 신규 가입용과 claim 구성이 같되 **`deletion_log_id`(해당 유저의 활성 `PENDING_PURGE` 레코드 id) claim을 추가**해 특정 탈퇴 요청 건에 바인딩한다. 프론트는 신규 가입과 같은 동의 화면으로 라우팅하되 복구 안내를 표시할 수 있다.
 2. `/auth/signup` 제출 시 토큰에 `deletion_log_id`가 있으면 복구 경로로 처리하고, 아래를 **한 트랜잭션에서 이 순서대로** 수행한다:
-   1. Clock에서 트랜잭션 시각 `now`를 한 번 취득한다
-   2. `deletion_log_id`로 레코드를 조회해 **1차 신원 검증**한다 — 레코드가 없거나 토큰의 `provider_id`와 스냅샷이 일치하지 않으면 `401 INVALID_SIGNUP_TOKEN`. 판정 재료 중 `requested_at`·`user_id`는 불변이지만 **`provider_id` 스냅샷은 CANCELLED/PURGED 전환 시 NULL로 바뀌는 가변 값**이므로, 선조회 이후의 상태 전이는 4의 재확인이 검출한다
-   3. 레코드의 `user_id`로 **user 행을 잠그고, 이어서 대상 `deletion_log` 행을 잠근다** (잠금 순서 user → deletion_log → RT — 기능 2의 직렬화 계약. 로그 행 잠금이 판정과 후속 상태 변경 사이에 배치의 `PURGING` 선점이 끼어드는 것을 차단한다)
+   1. `deletion_log_id`로 레코드를 조회해 **1차 신원 검증**한다 — 레코드가 없거나 토큰의 `provider_id`와 스냅샷이 일치하지 않으면 `401 INVALID_SIGNUP_TOKEN`. 판정 재료 중 `requested_at`·`user_id`는 불변이지만 **`provider_id` 스냅샷은 CANCELLED/PURGED 전환 시 NULL로 바뀌는 가변 값**이므로, 선조회 이후의 상태 전이는 4의 재확인이 검출한다
+   2. 레코드의 `user_id`로 **user 행을 잠그고, 이어서 대상 `deletion_log` 행을 잠근다** (잠금 순서 user → deletion_log → RT — 기능 2의 직렬화 계약. 로그 행 잠금이 판정과 후속 상태 변경 사이에 배치의 `PURGING` 선점이 끼어드는 것을 차단한다)
+   3. Clock에서 트랜잭션 시각 `now`를 한 번 취득한다 — **잠금 획득 후에** 취득한다. 잠금 전에 취득하면 잠금 대기 중 다른 트랜잭션이 더 나중 시각으로 먼저 커밋해, 이후 기록(동의 append 등)의 시각이 실제 커밋 순서에 대해 역행할 수 있다(공통: 시각 처리). 유예 재판정 역시 잠금 획득 후의 `now`가 판정 시점 기준으로 정확하다
    4. 잠금 획득 후 **로그 상태를 스칼라 쿼리로 재확인**한다(엔티티 재조회는 1차 캐시가 낡은 인스턴스를 반환해 재확인이 되지 않음) — 위 상태별 정책 표대로 분기: `PENDING_PURGE`+유예 내(`now < requested_at + 유예 기간`, 시각 정합 요구에 의해 `deleted_at` 기준과 동일)면 5로 진행, `PENDING_PURGE`+유예 초과면 유예 초과 처리(식별정보 파기 후 신규 계정 생성), `PURGING`·`FAILED`면 `409 PURGE_IN_PROGRESS`, 종결 상태·레코드 소실이면 `401 INVALID_SIGNUP_TOKEN`
    5. `id = {deletion_log_id} AND status = 'PENDING_PURGE' AND requested_at + 유예 기간 > {now}` **조건부 UPDATE**로 `CANCELLED` 전환 + `provider_id` 스냅샷 NULL 처리 (배치 파기 대상에서 제외, 탈퇴 요청 이력은 audit으로 보존). 유예 조건을 UPDATE 술어에도 중복 포함해, 판정 순서를 착오한 구현이 유예 초과 건을 취소하는 실수를 쿼리 수준에서 차단한다. **영향 행 수가 1인 경우에만 복구를 계속 진행**하며, 0이면 `401` — 모든 복구 제출이 user 잠금을 먼저 잡아 동시 제출은 4에서 걸러지므로, 0행은 재확인 이후의 예외적 상태 변화를 방어적으로 감지하는 최후 방어선이다
    6. `users.deleted_at = NULL` (잠금 보유 중)
@@ -370,6 +370,7 @@
 - API 응답의 시각 필드(`createdAt`·`purgeScheduledAt` 등)는 ISO-8601 UTC(`Z` 접미, 예: `2026-01-18T09:00:00Z`)로 직렬화한다.
 - 시각 취득은 주입된 `Clock`을 사용한다(`Instant.now()` 직접 호출 금지). `BaseEntity.softDelete()`처럼 내부에서 시스템 시간을 직접 취하는 메서드는 시각을 파라미터로 받도록 변경한다. 유예 만료·복구 경계 등 시간 조건 테스트는 Clock 고정으로 검증한다.
 - 탈퇴 트랜잭션(기능 3·5)은 Clock에서 시각을 **한 번만** 취해 `deleted_at`·`deletion_log.requested_at`·`WITHDRAWN`의 `created_at`에 동일 값을 사용한다(한 트랜잭션이 남기는 기록 간 시각 정합 — `purgeScheduledAt` 계산·audit 일관성).
+- 명시적 행 잠금 하에 시각을 기록하는 경로(기능 4의 복구 제출, HBB1-12의 선택 동의 변경)는 시각을 **잠금 획득 후** 취득한다 — 잠금 전에 취득하면 잠금 대기 순서와 시각 순서가 어긋나, 나중에 커밋된 기록이 더 오래된 시각을 가질 수 있다.
 
 ---
 

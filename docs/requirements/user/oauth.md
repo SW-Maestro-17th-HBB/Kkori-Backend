@@ -31,7 +31,7 @@
 - **기존 유저** (`provider_id` 존재 + `deleted_at IS NULL`): 즉시 JWT를 발급하여 로그인을 완료해야 한다.
 - **신규 유저** (조회 결과 없음): 계정을 만들지 않고 **signup token**(10분 유효, 서버 미저장)만 발급해야 한다. signup token은 JWT로, claim은 `provider_id`·`email`(null 가능)·`nickname`(null 가능, 카카오 프로필 닉네임 — 가입 시 `users.name`의 출처)·`token_type=signup`·만료로 구성하며 AT와 별도의 서명 키를 사용한다. 검증 시 `token_type`을 확인해 AT로의 오용을 차단해야 한다.
 - **복구 대상** (`provider_id` 존재 + `deleted_at` 기록, 탈퇴 유예 기간 내): 즉시 복구하지 않고 **복구용 signup token**을 발급하며, `isNewUser: false`·`isRestored: true`로 응답해 프론트가 복구 안내와 함께 동의 화면으로 라우팅할 수 있게 해야 한다. 복구용 토큰은 신규 가입용과 동일한 claim 구성에 **`deletion_log_id`(해당 탈퇴 요청 식별자) claim을 추가**해 특정 탈퇴 건에 바인딩한다(복구 후 재탈퇴한 계정을 옛 토큰으로 되돌리는 재사용 차단 — 상세는 HBB1-10). 탈퇴로 동의가 철회된 상태이므로 재동의 제출(`/auth/signup`) 시점에 복구가 성립한다. **유예가 만료된 탈퇴 계정도** 계정 변경 없이 신규 유저 응답(`isNewUser: true`)과 함께 같은 방식으로 바인딩된 토큰을 받는다 — 식별정보 파기와 신규 생성은 제출 시점의 재판정이 수행한다. 복구·만료 처리의 내부(`deleted_at` 해제, 삭제 로그·동의 기록 갱신, 상태·유예 재판정)는 계정 관리 스토리(HBB1-10)의 요구사항을 따른다.
-- 신규·복구 유저는 프론트가 동의 화면으로 라우팅하고, 동의 완료 시 `POST /api/v1/auth/signup`으로 signup token과 동의 내역을 전달한다. 서버는 서명 검증 후 필수 동의 항목이 전부 동의됐는지 확인하고, **토큰의 `deletion_log_id` 유무**로 분기한다: 없으면(신규 가입용) `users` 생성을, 있으면(탈퇴 건 바인딩) 해당 건을 **잠금 하에 재판정**해 유예 내면 계정 복구를, 유예 만료면 식별정보 파기 후 신규 생성을 — 동의 기록 저장과 한 트랜잭션으로 처리한 뒤 JWT를 발급해야 한다(상세는 HBB1-10). 재판정에서 파기가 진행·재시도 중이면 `409 PURGE_IN_PROGRESS`로 차단하고, 용도가 어긋난 토큰(신규 가입용 토큰인데 `provider_id`가 탈퇴 상태 계정, 바인딩 토큰인데 대상 탈퇴 건이 이미 처리됨)은 `401 INVALID_SIGNUP_TOKEN`으로 거부해 재로그인을 유도한다.
+- 신규·복구 유저는 프론트가 동의 화면으로 라우팅하고, 동의 완료 시 `POST /api/v1/auth/signup`으로 signup token과 동의 내역을 전달한다. 서버는 서명 검증 후 `consents`의 형태(중복·미지원 type 등 — 아래 형태 규칙), 제출된 동의의 동의서 버전이 서버 현재 버전과 일치하는지(불일치 시 `409 CONSENT_VERSION_MISMATCH` — 버전 확인 계약은 HBB1-12), 필수 동의 항목이 전부 동의됐는지 순서대로 확인하고, **토큰의 `deletion_log_id` 유무**로 분기한다: 없으면(신규 가입용) `users` 생성을, 있으면(탈퇴 건 바인딩) 해당 건을 **잠금 하에 재판정**해 유예 내면 계정 복구를, 유예 만료면 식별정보 파기 후 신규 생성을 — 동의 기록 저장과 한 트랜잭션으로 처리한 뒤 JWT를 발급해야 한다(상세는 HBB1-10). 재판정에서 파기가 진행·재시도 중이면 `409 PURGE_IN_PROGRESS`로 차단하고, 용도가 어긋난 토큰(신규 가입용 토큰인데 `provider_id`가 탈퇴 상태 계정, 바인딩 토큰인데 대상 탈퇴 건이 이미 처리됨)은 `401 INVALID_SIGNUP_TOKEN`으로 거부해 재로그인을 유도한다.
 - 중복 가입은 `provider_id`의 UNIQUE 제약으로 차단해야 한다(활성 유저의 `provider_id`로 signup 시 409 ALREADY_REGISTERED). 유예 내 탈퇴 상태의 `provider_id`는 중복이 아니라 복구로 처리한다.
 - 카카오가 이메일을 제공하지 않는 유저(이메일 제공 미동의)도 가입을 허용해야 한다. `users.email`은 nullable로 저장하며, signup token의 email claim도 null일 수 있다.
 - 기존/복구 유저의 판정과 토큰 발급은 **user 행 잠금 하에** 수행해야 한다(잠금 순서 user → RT). 잠금 없이 조회 후 RT를 발급하면 탈퇴의 RT 전량 폐기와 경합해 탈퇴 후 활성 RT가 남을 수 있고, 복구 경로의 `deleted_at` 변경이 탈퇴를 되덮을 수 있다(HBB1-10에서 확정한 직렬화 계약).
@@ -47,6 +47,8 @@
 - 기존 유저의 code 전달 시 `isNewUser: false`와 함께 accessToken·refreshToken이 반환되는지 확인
 - 신규 유저의 code 전달 시 `isNewUser: true`와 signupToken만 반환되고, `users` 테이블에 계정이 생성되지 않았는지 확인
 - 필수 동의 항목이 하나라도 누락된 signup 요청이 `400 MISSING_REQUIRED_CONSENT`로 거부되는지 확인
+- 서버 현재 버전과 다른 동의서 `version`으로 제출된 signup 요청이 `409 CONSENT_VERSION_MISMATCH`로 거부되고 계정·동의 기록이 생성되지 않는지 확인
+- `consents`에 동일 `type`이 중복되거나 알 수 없는 `type`이 포함된 요청이 `400`으로 거부되고(last-wins 금지) 계정·동의 기록이 생성되지 않는지 확인
 - 만료되거나 위변조된 signup token으로 signup 요청 시 `401 INVALID_SIGNUP_TOKEN`이 반환되는지 확인
 - 용도가 어긋난 signup token(신규 가입용으로 탈퇴 계정 복구 시도, 이미 사용된 복구용 토큰 재사용)이 `401 INVALID_SIGNUP_TOKEN`으로 거부되는지 확인
 - 가입 완료 시 `users`와 동의 기록이 함께 생성되고, 트랜잭션 중단 시 둘 다 롤백되는지 확인
@@ -67,7 +69,7 @@
 - 외부 API: 카카오 토큰 교환 API, 카카오 사용자 정보 조회 API
 - 환경 변수: 카카오 client id / client secret / redirect URI(카카오 토큰 교환 시 code 발급에 쓰인 URI 검증용), signup token 서명 키
 - 모든 응답은 공통 envelope `ApiResponse<T>`로 감싼다. 성공 `{ "success": true, "data": {...} }`, 실패 `{ "success": false, "data": null, "error": { "code", "message", "fieldErrors" } }`. HTTP 상태코드는 바디에 넣지 않는다(HTTP 상태줄이 유일 원천).
-- 에러는 `ErrorCode` enum(인증 도메인 접두사 `A` + 3자리)으로 정의한다: `INVALID_CODE`(400) · `KAKAO_AUTH_FAILED`(401) · `KAKAO_SERVER_ERROR`(500) (`/auth/kakao`), `MISSING_REQUIRED_CONSENT`(400) · `INVALID_SIGNUP_TOKEN`(401) · `ALREADY_REGISTERED`(409) (`/auth/signup`)
+- 에러는 `ErrorCode` enum(인증 도메인 접두사 `A` + 3자리)으로 정의한다: `INVALID_CODE`(400) · `KAKAO_AUTH_FAILED`(401) · `KAKAO_SERVER_ERROR`(500) (`/auth/kakao`), `MISSING_REQUIRED_CONSENT`(400) · `INVALID_SIGNUP_TOKEN`(401) · `ALREADY_REGISTERED`(409) (`/auth/signup`). `/auth/signup`은 동의 도메인 코드 `CONSENT_VERSION_MISMATCH`(409, U005 — HBB1-12에서 정의)도 함께 사용한다
 
 `POST /api/v1/auth/kakao` 요청:
 
@@ -124,19 +126,23 @@
 {
   "signupToken": "eyJhbG...",
   "consents": [
-    { "type": "privacy", "agreed": true },
-    { "type": "audio_usage", "agreed": true },
-    { "type": "resume_usage", "agreed": true },
+    { "type": "privacy", "agreed": true, "version": 1 },
+    { "type": "audio_usage", "agreed": true, "version": 1 },
+    { "type": "resume_usage", "agreed": true, "version": 1 },
     { "type": "marketing", "agreed": false }
   ]
 }
 ```
 
+`version`은 사용자가 동의 화면에서 확인한 동의서 버전으로, `agreed: true` 항목에 필수다. 항목·버전의 제공(`GET /api/v1/consents`)과 대조 계약은 수집 동의 스토리(HBB1-12)를 따른다.
+
+`consents` 배열의 형태 규칙: 각 항목은 `type`·`agreed`가 필수이며, 알 수 없는 `type`, **동일 `type`의 중복**, 항목 필드 누락(null)은 `400 INVALID_INPUT_VALUE`(공통 C002)로 거부한다 — 동의 증적 입력에서 중복을 마지막 값으로 조용히 수렴시키는 처리(last-wins)는 금지한다. 검증 순서는 형태(400) → 동의서 버전 대조(409) → 필수 동의(400)다.
+
 ### 제약사항
 
 - 소셜 프로바이더는 카카오 단일만 지원한다(비밀번호 로그인 없음). 멀티 프로바이더는 확장 범위.
 - signup token 유효기간은 10분이며, 서버에 저장하지 않으므로 개별 무효화는 지원하지 않는다. 단 복구용 토큰은 `deletion_log_id` 바인딩에 의해 해당 탈퇴 건이 처리되는 순간 사실상 무효가 된다(재사용 시 401).
-- signup 시 필수 동의 항목은 `privacy`·`audio_usage`·`resume_usage` 3종이다. 동의 항목의 정의·변경 및 저장 정책(append-only)은 수집 동의 스토리(HBB1-12)를 따른다.
+- signup 시 필수 동의 항목은 `privacy`·`audio_usage`·`resume_usage` 3종이다. 동의 항목의 정의·변경, 저장 정책(append-only), 동의서 버전 확인 계약(확인 버전 제출·불일치 409)은 수집 동의 스토리(HBB1-12)를 따른다.
 - 카카오 인가 코드는 백엔드가 아닌 프론트 콜백으로만 수신한다.
 
 ### 기타 요구사항
