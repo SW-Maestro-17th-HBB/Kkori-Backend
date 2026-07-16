@@ -82,16 +82,24 @@ public class UserService {
      */
     @Transactional
     public WithdrawResponse withdraw(Long userId) {
+        // user 행 잠금을 조건부 UPDATE보다 먼저 획득한다(활성 필터 없음 — 이미 탈퇴된 유저의
+        // 재호출·웹훅 중복 수신도 아래 0행 분기로 멱등 응답해야 하기 때문). 잠금은 시각 순서
+        // 보장용이고 상태 전이의 권위는 여전히 조건부 UPDATE의 영향 행 수다: user 잠금 하에
+        // 동의를 기록하는 선택 동의 변경과 경합할 때, 잠금 전에 취득한 이른 시각으로 더 큰 id의
+        // WITHDRAWN이 기록되는 시각 역행을 막는다(PRD 공통: 시각 처리).
+        String providerId = userRepository.findWithLockById(userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED))
+                .getProviderId();
         // 마이크로초 절삭 — PostgreSQL timestamptz(6)는 나노초 입력을 마이크로초로 "반올림" 저장하므로
         // (Linux JDK는 나노초 시계), 절삭 없이는 응답 purgeScheduledAt과 DB deleted_at 파생값이 1µs 어긋날 수 있다
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
-        // 활성 필터 없이 조회한다 — 이미 탈퇴된 유저의 재호출도 멱등 응답해야 하기 때문(아래 0행 분기)
-        String providerId = userRepository.findById(userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED))
-                .getProviderId();
 
         int transitioned = userRepository.softDeleteById(userId, now);
         if (transitioned == 0) {
+            // 잠금 대기 중 다른 트랜잭션이 탈퇴를 커밋한 경우, 위에서 잠근 엔티티는 1차 캐시의
+            // 낡은 인스턴스일 수 있다(같은 트랜잭션이 앞서 로딩했다면 잠금 조회도 캐시 인스턴스를
+            // 반환 — deleted_at이 null로 보임). softDeleteById가 clearAutomatically로 컨텍스트를
+            // 비웠으므로 여기서의 재조회만이 확정 커밋 값을 읽는다.
             Instant deletedAt = userRepository.findById(userId)
                     .map(User::getDeletedAt)
                     .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
