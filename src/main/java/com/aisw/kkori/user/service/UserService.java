@@ -23,11 +23,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * 계정 조회·수정·탈퇴 (PRD {@code docs/requirements/user/account.md} 기능 1~3).
@@ -169,11 +166,7 @@ public class UserService {
 
     /** 탈퇴 시점에 최신 상태가 AGREED인 모든 동의 유형에 동일 version으로 WITHDRAWN을 append한다. */
     private void withdrawAgreedConsents(Long userId, Instant now) {
-        Collection<UserConsent> latestByType = userConsentRepository.findByUserId(userId).stream()
-                .collect(Collectors.toMap(UserConsent::getConsentType, Function.identity(),
-                        (a, b) -> a.getId() > b.getId() ? a : b))
-                .values();
-        latestByType.stream()
+        userConsentRepository.findLatestByUserId(userId).stream()
                 .filter(latest -> latest.getAction() == ConsentAction.AGREED)
                 .forEach(latest -> userConsentRepository.save(
                         UserConsent.create(userId, latest.getConsentType(), false, latest.getVersion(), now)));
