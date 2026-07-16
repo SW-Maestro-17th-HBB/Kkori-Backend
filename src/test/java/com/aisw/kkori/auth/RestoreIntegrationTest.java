@@ -52,9 +52,9 @@ class RestoreIntegrationTest extends AuthIntegrationTestSupport {
     private static final String SIGNUP_URI = "/api/v1/auth/signup";
     private static final String ALL_CONSENTS = """
             [
-              {"type": "privacy", "agreed": true},
-              {"type": "audio_usage", "agreed": true},
-              {"type": "resume_usage", "agreed": true},
+              {"type": "privacy", "agreed": true, "version": 1},
+              {"type": "audio_usage", "agreed": true, "version": 1},
+              {"type": "resume_usage", "agreed": true, "version": 1},
               {"type": "marketing", "agreed": false}
             ]""";
 
@@ -122,13 +122,34 @@ class RestoreIntegrationTest extends AuthIntegrationTestSupport {
         String restoreToken = restoreToken(user);
         String withoutResumeUsage = """
                 [
-                  {"type": "privacy", "agreed": true},
-                  {"type": "audio_usage", "agreed": true}
+                  {"type": "privacy", "agreed": true, "version": 1},
+                  {"type": "audio_usage", "agreed": true, "version": 1}
                 ]""";
 
         postJson(SIGNUP_URI, signupBody(restoreToken, withoutResumeUsage))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("A004"));
+
+        assertThat(userRepository.findById(user.getId()).orElseThrow().isDeleted()).isTrue();
+        assertThat(activeLogStatus(user)).isEqualTo(DeletionStatus.PENDING_PURGE);
+        assertThat(userConsentRepository.count()).isZero();
+    }
+
+    @Test
+    @DisplayName("복구 제출의 동의서 버전이 현재 버전과 다르면 409 U005이고 계정은 탈퇴 상태를 유지한다")
+    void versionMismatchKeepsAccountDeleted() throws Exception {
+        User user = withdrawnUser("kakao-6010");
+        String restoreToken = restoreToken(user);
+        String staleVersion = """
+                [
+                  {"type": "privacy", "agreed": true, "version": 99},
+                  {"type": "audio_usage", "agreed": true, "version": 1},
+                  {"type": "resume_usage", "agreed": true, "version": 1}
+                ]""";
+
+        postJson(SIGNUP_URI, signupBody(restoreToken, staleVersion))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("U005"));
 
         assertThat(userRepository.findById(user.getId()).orElseThrow().isDeleted()).isTrue();
         assertThat(activeLogStatus(user)).isEqualTo(DeletionStatus.PENDING_PURGE);
@@ -243,10 +264,10 @@ class RestoreIntegrationTest extends AuthIntegrationTestSupport {
     void concurrentRestoreSubmissionsOnlyOneSucceeds() throws Exception {
         User user = withdrawnUser("kakao-6009");
         SignupRequest request = new SignupRequest(restoreToken(user), List.of(
-                new SignupRequest.ConsentItem(ConsentType.PRIVACY, true),
-                new SignupRequest.ConsentItem(ConsentType.AUDIO_USAGE, true),
-                new SignupRequest.ConsentItem(ConsentType.RESUME_USAGE, true),
-                new SignupRequest.ConsentItem(ConsentType.MARKETING, false)));
+                new SignupRequest.ConsentItem(ConsentType.PRIVACY, true, 1),
+                new SignupRequest.ConsentItem(ConsentType.AUDIO_USAGE, true, 1),
+                new SignupRequest.ConsentItem(ConsentType.RESUME_USAGE, true, 1),
+                new SignupRequest.ConsentItem(ConsentType.MARKETING, false, null)));
 
         ExecutorService pool = Executors.newFixedThreadPool(2);
         int succeeded = 0;
@@ -317,9 +338,9 @@ class RestoreIntegrationTest extends AuthIntegrationTestSupport {
     void expiredSubmitBlockedByConcurrentPurgeClaim() throws Exception {
         User user = withdrawnUser("kakao-6011");
         SignupRequest request = new SignupRequest(restoreToken(user), List.of(
-                new SignupRequest.ConsentItem(ConsentType.PRIVACY, true),
-                new SignupRequest.ConsentItem(ConsentType.AUDIO_USAGE, true),
-                new SignupRequest.ConsentItem(ConsentType.RESUME_USAGE, true)));
+                new SignupRequest.ConsentItem(ConsentType.PRIVACY, true, 1),
+                new SignupRequest.ConsentItem(ConsentType.AUDIO_USAGE, true, 1),
+                new SignupRequest.ConsentItem(ConsentType.RESUME_USAGE, true, 1)));
         backdateWithdrawal(user, Duration.ofDays(4));
 
         BusinessException thrown = runWhileLogClaimed(user, () -> authService.signup(request));
