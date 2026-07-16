@@ -1,4 +1,4 @@
-package com.aisw.kkori.resume.dto;
+package com.aisw.kkori.resume.domain;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.validation.Valid;

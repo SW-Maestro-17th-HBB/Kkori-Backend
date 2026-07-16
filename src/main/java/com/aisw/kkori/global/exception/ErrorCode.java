@@ -30,6 +30,10 @@ public enum ErrorCode {
     PAGE_LIMIT_EXCEEDED(HttpStatus.BAD_REQUEST, "R005", "PDF는 최대 10페이지까지 업로드할 수 있습니다."),
     FILE_UPLOAD_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "R006", "파일 저장에 실패했습니다."),
     RESUME_ANALYSIS_REQUEST_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "R007", "이력서 분석 요청에 실패했습니다."),
+    RESUME_NOT_FOUND(HttpStatus.NOT_FOUND, "R008", "이력서를 찾을 수 없습니다."),
+    RESUME_FORBIDDEN(HttpStatus.FORBIDDEN, "R009", "해당 이력서에 접근할 권한이 없습니다."),
+    RESUME_ANALYSIS_IN_PROGRESS(HttpStatus.CONFLICT, "R010", "이력서 분석이 진행 중입니다. 완료 후 다시 시도해 주세요."),
+    RESUME_ANALYSIS_FAILED(HttpStatus.CONFLICT, "R011", "이력서 분석이 실패한 상태입니다. 재분석을 먼저 요청해 주세요."),
 
     // 인증 (A)
     INVALID_CODE(HttpStatus.BAD_REQUEST, "A001", "카카오 인가 코드가 누락되었거나 형식이 올바르지 않습니다."),
