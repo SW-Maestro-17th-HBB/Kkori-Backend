@@ -27,6 +27,15 @@ jwt:
 account:
   withdrawal-grace-period: ${WITHDRAWAL_GRACE_PERIOD:3d}
 
+# 동의서 버전 — 항목별 현재 동의서 버전 (HBB1-12). 단조 증가만 허용(롤백 금지, 정정은 새 버전 발행).
+# 버전 N의 문서 자산이 게시된 후에만 N으로 인상할 것 (docs/requirements/user/consent.md 기능 1)
+consent:
+  versions:
+    "[privacy]": 1
+    "[audio_usage]": 1
+    "[resume_usage]": 1
+    "[marketing]": 1
+
 # 로그 가명화 — 외부 계정 식별자(user_id 등)를 로그에 남길 때 쓰는 HMAC 전용 키.
 # 인증·서명 키와 공유 금지. 기본값은 로컬 개발 전용
 log-masking:

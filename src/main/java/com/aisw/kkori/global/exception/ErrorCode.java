@@ -45,6 +45,9 @@ public enum ErrorCode {
     // 사용자 (U)
     INVALID_NAME(HttpStatus.BAD_REQUEST, "U001", "이름은 앞뒤 공백을 제외하고 1~100자여야 합니다."),
     PURGE_IN_PROGRESS(HttpStatus.CONFLICT, "U002", "탈퇴 처리 중인 계정입니다. 잠시 후 다시 시도해 주세요."),
+    INVALID_CONSENT_TYPE(HttpStatus.BAD_REQUEST, "U003", "알 수 없는 동의 항목입니다."),
+    CONSENT_NOT_CHANGEABLE(HttpStatus.BAD_REQUEST, "U004", "필수 동의 항목은 변경할 수 없습니다. 철회는 탈퇴로만 가능합니다."),
+    CONSENT_VERSION_MISMATCH(HttpStatus.CONFLICT, "U005", "동의서 버전이 현재 버전과 일치하지 않습니다. 최신 동의서를 확인한 뒤 다시 제출해 주세요."),
     ;
 
     private final HttpStatus status;
