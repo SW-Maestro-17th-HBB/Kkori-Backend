@@ -244,6 +244,7 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 - `GET·PATCH /api/v1/resumes/{resumeId}/parsed` / `POST /api/v1/resumes/{resumeId}/reanalyze`(바디 없음)
 - structuredData 스키마: profile(name, email), skills[](category, items[]), projects[](name, role, description, techStacks[]), experiences[](title, description)
 - **스키마의 정의 원천은 계약 record `StructuredData`** (jsonb ↔ record 매핑, 스트림 계약 record와 동일 철학) — Worker(쓰기: LLM 구조화 결과 저장 / 읽기: REINDEX 입력)와 공유하는 계약 문서. 읽기는 관대(unknown 필드 무시), 쓰기는 엄격(구조 검증)
+- **수정 요청(PATCH)에서도 스키마에 없는 필드는 에러 없이 무시된다 — 의도된 동작 (2026-07-16 확정)**: 클라이언트는 타입 명세를 공유하는 자사 프론트뿐이라 필드명 오류는 런타임 사용자 실수가 아니라 개발 중 잡힐 통합 버그이고, 수정 응답이 저장된 결과 전체를 되돌려주므로 무시된 필드는 응답에서 바로 드러난다. 엄격 거부를 위해 스키마 사본(PATCH 전용 DTO)을 두는 것은 정의 원천 단일화 원칙과 상충해 채택하지 않음
 
 ### 제약사항
 
