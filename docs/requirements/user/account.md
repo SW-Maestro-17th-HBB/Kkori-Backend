@@ -144,6 +144,7 @@
 4. `deletion_log` INSERT: `status = PENDING_PURGE`, `requested_at = now`, **`provider_id` 스냅샷 저장**
 
 - **동일 유저의 탈퇴 처리는 직렬화해야 한다**: soft delete를 `deleted_at IS NULL` 조건부 UPDATE로 수행하고, **영향 행 수가 1인(상태 전이를 실제로 수행한) 트랜잭션만** 후속 작업(RT 폐기·`WITHDRAWN` append·`deletion_log` INSERT)을 진행한다. 영향 행 수가 0이면 이미 탈퇴된 것으로 보고 상태를 변경하지 않는다 — API 요청과 웹훅(기능 5)이 같은 유저에 동시 도착해도 `WITHDRAWN`·`deletion_log`가 중복 생성되지 않게 하기 위함이다. 조건부 UPDATE에서 밀린 API 요청은 기존 `deleted_at` 기준의 `purgeScheduledAt`을 반환한다(멱등).
+- 탈퇴 트랜잭션은 조건부 UPDATE에 앞서 **user 행 잠금을 먼저 획득하고, 그 후에 시각을 취득**한다(공통: 시각 처리). 잠금은 시각 순서 보장용이며 **상태 전이의 권위는 여전히 조건부 UPDATE의 영향 행 수다** — 잠금 획득이 곧 탈퇴 진행을 뜻하지 않고, 0행이면 위 멱등 경로로 빠진다. 이 잠금이 없으면 user 잠금 하에 동의를 기록하는 선택 동의 변경(HBB1-12)과의 경합에서, 탈퇴가 잠금 전에 취득한 이른 시각으로 더 큰 id의 `WITHDRAWN`을 기록하는 시각 역행이 생긴다.
 - 응답의 `purgeScheduledAt`은 `deleted_at + 유예 기간`으로 계산한다. 유예 기간은 **3일**이며 설정값(`@ConfigurationProperties` record + compact constructor fail-fast — JwtProperties 패턴)으로 관리한다.
 - `provider_id` 스냅샷은 파기 배치의 카카오 연결 해제(unlink, 어드민 키 방식) 호출에 필요하다. `users.provider_id`가 유예 만료 처리(기능 4)로 먼저 마스킹될 수 있으므로 탈퇴 시점에 확보해 둔다. 스냅샷도 개인 식별정보이므로 복구 시(CANCELLED 전환)와 파기 완료 시(unlink 후) NULL 처리한다 — 파기 시점 처리는 영구 삭제 스토리 범위.
 - 탈퇴 직후부터 JWT 필터의 `deleted_at` 검증이 잔여 AT를 차단하므로(이미 구현됨) AT 블랙리스트는 불필요하다.
@@ -369,8 +370,8 @@
 - 모든 시각은 **UTC 기준의 절대 시점**으로 저장·계산하며, 도메인 시각 타입은 **`Instant`로 통일**한다. auth 도메인(`refresh_token`·JWT)은 이미 Instant를 사용 중이고, `BaseEntity`(`created_at`·`updated_at`·`deleted_at`)와 `user_consent.created_at`의 `LocalDateTime`은 본 스토리에서 Instant로 전환한다(서버 타임존에 따라 유예 계산이 달라지는 문제 제거).
 - API 응답의 시각 필드(`createdAt`·`purgeScheduledAt` 등)는 ISO-8601 UTC(`Z` 접미, 예: `2026-01-18T09:00:00Z`)로 직렬화한다.
 - 시각 취득은 주입된 `Clock`을 사용한다(`Instant.now()` 직접 호출 금지). `BaseEntity.softDelete()`처럼 내부에서 시스템 시간을 직접 취하는 메서드는 시각을 파라미터로 받도록 변경한다. 유예 만료·복구 경계 등 시간 조건 테스트는 Clock 고정으로 검증한다.
-- 탈퇴 트랜잭션(기능 3·5)은 Clock에서 시각을 **한 번만** 취해 `deleted_at`·`deletion_log.requested_at`·`WITHDRAWN`의 `created_at`에 동일 값을 사용한다(한 트랜잭션이 남기는 기록 간 시각 정합 — `purgeScheduledAt` 계산·audit 일관성).
-- 명시적 행 잠금 하에 시각을 기록하는 경로(기능 4의 복구 제출, HBB1-12의 선택 동의 변경)는 시각을 **잠금 획득 후** 취득한다 — 잠금 전에 취득하면 잠금 대기 순서와 시각 순서가 어긋나, 나중에 커밋된 기록이 더 오래된 시각을 가질 수 있다.
+- 탈퇴 트랜잭션(기능 3·5)은 **user 행 잠금 획득 후** Clock에서 시각을 **한 번만** 취해 `deleted_at`·`deletion_log.requested_at`·`WITHDRAWN`의 `created_at`에 동일 값을 사용한다(한 트랜잭션이 남기는 기록 간 시각 정합 — `purgeScheduledAt` 계산·audit 일관성).
+- 시각을 기록하는 유저 상태 쓰기 경로(기능 3·5의 탈퇴, 기능 4의 복구 제출, HBB1-12의 선택 동의 변경)는 시각을 **user 행 잠금 획득 후** 취득한다 — 잠금 전에 취득하면 잠금 대기 순서와 시각 순서가 어긋나, 나중에 커밋된 기록이 더 오래된 시각을 가질 수 있다(예: 동의 변경이 user 잠금을 보유한 사이 탈퇴가 이른 시각을 취득해 대기하면, 탈퇴의 `WITHDRAWN`이 더 큰 id인데 더 오래된 시각을 갖는 역행).
 
 ---
 
