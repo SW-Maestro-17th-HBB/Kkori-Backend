@@ -80,7 +80,8 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 
 - `POST /api/v1/resumes` — multipart/form-data (`file`: PDF, `title`: string 선택)
 - 응답은 공통 엔벨로프 `ApiResponse<T>`를 따른다 (이하 모든 REST API 동일)
-- Redis Stream: 분석 요청 스트림(발행), 상태 이벤트 스트림(소비). **스트림별 메시지 스키마의 정의 원천은 계약 record** — `ResumeParseRequestedMessage`(요청: resumeId, userId, bucket, objectKey), `ResumeStatusChangedMessage`(상태: resumeId, **userId**, status, message — userId는 SSE 사용자별 라우팅 근거로, Worker가 요청 메시지의 userId를 에코). Python Worker는 이 두 파일을 계약 문서로 참조
+- Redis Stream: 분석 요청 스트림(발행), 상태 이벤트 스트림(소비). **스트림별 메시지 스키마의 정의 원천은 계약 record** — `ResumeParseRequestedMessage`(요청: resumeId, userId, bucket, objectKey, **mode**[FULL|REINDEX] — 신규 업로드도 FULL로 발행하며, 5개 필드는 모드와 무관하게 전부 필수. REINDEX에서 bucket/objectKey는 무시됨), `ResumeStatusChangedMessage`(상태: resumeId, **userId**, status, message — userId는 SSE 사용자별 라우팅 근거로, Worker가 요청 메시지의 userId를 에코). Python Worker는 이 두 파일을 계약 문서로 참조
+- 분석 요청 스트림은 Consumer Group 기반 **at-least-once** — 동일 메시지가 중복 전달될 수 있으므로 Worker 처리는 **resumeId 기준 멱등**이어야 한다(이행 방법은 Worker 소관). **모든 분석 요청은 반드시 EMBEDDED 또는 FAILED로 끝난다** — Worker는 ACK 없이 오래 방치된 메시지를 회수(XAUTOCLAIM)해 DB 상태 기준 체크포인트에서 재개하고, 재전달 횟수가 임계를 넘은 메시지는 재처리 없이 FAILED로 끝낸다(상세는 Worker PRD)
 
 ### 제약사항
 
@@ -90,7 +91,11 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 
 ### 기타 요구사항
 
-- Worker 장애 시 재처리·멱등성·DLQ 정책: **미정** (Redis Stream Consumer Group 기반 재처리 방향만 합의됨)
+- **Worker 장애·재처리 정책 (2026-07-15 확정)**: 회수한 메시지는 DB 상태로 재개 지점을 정한다 — EMBEDDED=스킵 후 ACK / EMBEDDING=기존 청크 정리 후 재임베딩 / PARSED=임베딩부터 / 그 이전=처음부터(원문 미저장이므로). 포기 규칙: 처리 시작 전 delivery count가 임계를 넘으면 재처리 없이 FAILED 기록(error_message "재전달 임계 초과" + 당시 count) 후 XACK. idle time·임계값·내부 재시도 수치는 Worker PRD 소관.
+- **별도 DLQ 스트림은 두지 않는다** — 메시지는 모든 필드가 DB에서 재유도 가능한 포인터라 격리 보존할 고유 정보가 없고, 재처리는 재주입이 아니라 §4 재분석(DB에서 새 메시지 생성)으로 한다. 격리 건은 FAILED 레코드로 일반 실패와 구분·조회 가능.
+- 잔여 한계: Worker가 장기간 완전 정지하면 회수도 멈춰 상태가 진행 중에 머문다 — API가 아닌 운영(모니터링·알림)의 영역.
+- **계약 변경 권한은 백엔드** — 스트림·상태·structuredData 계약이 양 repo에서 어긋나면 이 문서와 계약 record가 우선한다. Worker PRD는 크로스 레포 참조가 불가하므로(리뷰·CI가 상대 repo를 못 봄) 계약 전문의 자기완결 사본을 유지하고, 표류는 Worker 측 골든 샘플 픽스처 테스트로 방어한다.
+- **임베딩 벡터 스키마 (2026-07-15 확정)**: `resume_chunks.embedding vector(1024)` — Cohere Embed Multilingual v3 기준. 모델 교체는 컬럼·인덱스 재생성 + 전량 재임베딩을 수반하므로 차원·모델명을 스키마 사실로 기록. 모델 선정·운용(구조화 LLM Claude Haiku 4.5, 색인/질의 입력 타입 비대칭 등)은 Worker PRD 소관 — 면접 도메인의 질의 벡터 생성도 Python 쪽이므로 백엔드가 이행할 규칙은 없음.
 - **Outbox 패턴은 MVP에서 도입하지 않기로 결정** (2026-07-14). 발행은 DB 트랜잭션 안에서 수행 — 발행 실패 시 롤백되어 사용자에게 실패가 보이는(시끄러운 실패) 쪽을 선택. 남는 구멍(발행 성공 후 커밋 실패 → 유령 이벤트)은 확률이 낮고, 사용자 재시도를 dedup이 흡수 + Worker의 "레코드 없으면 스킵" 계약으로 무해화됨. **도입 재검토 신호**: "성공했는데 분석이 시작 안 됨" 문의 발생, 요청 유실 제로 SLA 요구, 발행 지점이 여러 도메인으로 확대. 그 전 중간 단계로 "오래된 UPLOADED 재발행 배치"도 선택지.
 
 ---
@@ -206,7 +211,7 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 - 수정(`PATCH /api/v1/resumes/{resumeId}/parsed`): 사용자가 수정한 structuredData를 저장한다. 수정만으로는 재분석되지 않는다.
 - 재분석(`POST /api/v1/resumes/{resumeId}/reanalyze`): **엔드포인트는 하나, 현재 상태가 모드를 결정한다** (사용자가 모드를 고르지 않음). Worker에 보내는 분석 요청 이벤트에 `mode` 필드로 전달한다.
   - **EMBEDDED → 재색인 모드(REINDEX)**: 수정된 structuredData를 진실로 삼아 청킹·임베딩·색인만 재수행. 구조화(텍스트 추출~STRUCTURING)를 재수행하면 LLM이 사용자 수정을 덮어쓰므로 건너뛴다. 상태는 EMBEDDING → EMBEDDED로 진행.
-  - **FAILED → 전체 재분석 모드(FULL)**: S3 원본 PDF를 진실로 삼아 텍스트 추출부터 전부 재수행. FAILED의 유일한 복구 수단이다(§1). 상태는 UPLOADED부터 재시작.
+  - **FAILED → 전체 재분석 모드(FULL)**: S3 원본 PDF를 진실로 삼아 텍스트 추출부터 전부 재수행. FAILED의 유일한 복구 수단이다(§1). 상태는 UPLOADED부터 재시작. FAILED는 Worker가 재시도를 소진했거나 재전달 임계를 초과한 끝 상태이며, 서버는 자동 재시도하지 않는다 — 복구 주체는 항상 사용자.
 
 파싱 결과의 조회·수정은 **분석이 완전히 완료된 상태(EMBEDDED)에서만 가능하다.** 진행 중(UPLOADED~EMBEDDING)에는 완료를 기다려야 하고, FAILED 이력서는 조회·수정 대상이 아니다(파싱 산출물이 없으므로).
 
@@ -223,7 +228,9 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 - FAILED 이력서에 조회·수정 요청 시 409(RESUME_ANALYSIS_FAILED)가 반환되는지 확인
 - FAILED 이력서에 재분석 요청 시 mode=FULL로 분석 요청 이벤트가 발행되고 상태가 재시작되는지 확인
 - EMBEDDED 이력서에 재분석 요청 시 mode=REINDEX로 발행되고 수정된 structuredData가 보존되는지 확인
-- 형식이 잘못된 structuredData 수정 요청 시 400(INVALID_STRUCTURED_DATA)이 반환되는지 확인
+- 구조가 잘못된 structuredData(역직렬화 불가, 배열 내 null 요소) 수정 요청 시 400(INVALID_INPUT_VALUE + fieldErrors)이 반환되는지 확인 — 전용 코드(INVALID_STRUCTURED_DATA)는 폐기하고 표준 검증 응답으로 통일
+- 빈 배열·필드 누락(null)은 유효한 수정으로 허용되는지 확인 — 내용의 올바름은 시스템이 판정하지 않으며(부실하면 손해는 질문 품질로 사용자에게), 구조와 안전만 검증한다
+- structuredData 크기 상한 초과 시 400으로 거부되는지 확인
 - 수정 후 재분석을 요청해야만 청크·임베딩이 갱신되는지 확인 (수정만으로는 기존 색인 유지)
 - 진행 중인 면접에서 사용 중인 이력서에 수정·재분석 요청 시 409(RESUME_IN_USE)가 반환되는지 확인
 - 조회 응답에 rawText 필드가 없는지 확인
@@ -234,12 +241,16 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 
 ### 인터페이스 요구사항
 
-- `GET·PATCH /api/v1/resumes/{resumeId}/parsed` / `POST /api/v1/resumes/{resumeId}/reanalyze`
+- `GET·PATCH /api/v1/resumes/{resumeId}/parsed` / `POST /api/v1/resumes/{resumeId}/reanalyze`(바디 없음)
 - structuredData 스키마: profile(name, email), skills[](category, items[]), projects[](name, role, description, techStacks[]), experiences[](title, description)
+- **스키마의 정의 원천은 계약 record `StructuredData`** (jsonb ↔ record 매핑, 스트림 계약 record와 동일 철학) — Worker(쓰기: LLM 구조화 결과 저장 / 읽기: REINDEX 입력)와 공유하는 계약 문서. 읽기는 관대(unknown 필드 무시), 쓰기는 엄격(구조 검증)
+- **수정 요청(PATCH)에서도 스키마에 없는 필드는 에러 없이 무시된다 — 의도된 동작 (2026-07-16 확정)**: 클라이언트는 타입 명세를 공유하는 자사 프론트뿐이라 필드명 오류는 런타임 사용자 실수가 아니라 개발 중 잡힐 통합 버그이고, 수정 응답이 저장된 결과 전체를 되돌려주므로 무시된 필드는 응답에서 바로 드러난다. 엄격 거부를 위해 스키마 사본(PATCH 전용 DTO)을 두는 것은 정의 원천 단일화 원칙과 상충해 채택하지 않음
 
 ### 제약사항
 
-- 재분석 사유(reason)는 선택 입력, 기본값 USER_REQUESTED
+- 재분석 요청은 바디 없음 — reason 필드는 소비처가 없어 제거 (모드는 상태가 결정하므로 사유도 상태에서 유도 가능)
+- structuredData 크기 상한: 100KB — JSON 바디는 멀티파트와 달리 기본 크기 제한이 없어 대용량 주입(메모리·jsonb·청킹 입력) 방어 필요
+- `retry_count`는 Worker가 기록하고 서버는 읽기 전용 — 재분석 시에도 서버는 초기화하지 않는다(리셋 시점·의미는 Worker PRD 소관)
 
 ### 기타 요구사항
 

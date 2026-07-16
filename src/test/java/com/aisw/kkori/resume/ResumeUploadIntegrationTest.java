@@ -103,7 +103,8 @@ class ResumeUploadIntegrationTest {
         assertThat(records.get(0).getValue())
                 .containsEntry("resumeId", String.valueOf(resume.getId()))
                 .containsEntry("userId", String.valueOf(USER_ID))
-                .containsEntry("objectKey", resume.getOriginalFileKey());
+                .containsEntry("objectKey", resume.getOriginalFileKey())
+                .containsEntry("mode", "FULL");   // Worker 계약: 신규 업로드는 항상 FULL
     }
 
     @Test

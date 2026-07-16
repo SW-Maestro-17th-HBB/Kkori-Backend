@@ -1,6 +1,9 @@
 package com.aisw.kkori.resume.api;
 
 import com.aisw.kkori.global.response.ApiResponse;
+import com.aisw.kkori.resume.dto.ResumeParsedResponse;
+import com.aisw.kkori.resume.dto.ResumeParsedUpdateRequest;
+import com.aisw.kkori.resume.dto.ResumeReanalyzeResponse;
 import com.aisw.kkori.resume.dto.ResumeUploadResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -31,5 +34,62 @@ public interface ResumeApi {
             @Parameter(hidden = true) Long userId,
             @Parameter(description = "업로드할 PDF 파일", required = true) MultipartFile file,
             @Parameter(description = "이력서 표시 이름. 없으면 원본 파일명 사용") String title
+    );
+
+    @Operation(
+            summary = "파싱 결과 조회",
+            description = "AI 분석이 완료(EMBEDDED)된 이력서의 구조화 결과를 조회한다. 원문 텍스트(rawText)는 제공하지 않는다."
+    )
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "조회 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "타인의 이력서(R009)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "이력서 없음(R008)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "분석 진행 중(R010)·분석 실패 상태(R011 — 재분석 필요)"),
+    })
+    ResponseEntity<ApiResponse<ResumeParsedResponse>> getParsed(
+            @Parameter(hidden = true) Long userId,
+            @Parameter(description = "이력서 ID", required = true) Long resumeId
+    );
+
+    @Operation(
+            summary = "파싱 결과 수정",
+            description = """
+                    구조화 결과를 사용자가 수정한다. 저장만 하며 색인에는 반영되지 않는다 —
+                    면접 질문 생성에 반영하려면 재분석(POST /{resumeId}/reanalyze)을 호출해야 한다.
+                    검증은 형태만 엄격하다: 구조 오류·배열 내 null은 400, 필드 누락·빈 배열은 허용.
+                    """
+    )
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "수정 성공 — 저장된 결과 반환"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "구조 오류·배열 내 null·100KB 초과(C002)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "타인의 이력서(R009)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "이력서 없음(R008)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "분석 진행 중(R010)·분석 실패 상태(R011 — 재분석 필요)"),
+    })
+    ResponseEntity<ApiResponse<ResumeParsedResponse>> updateParsed(
+            @Parameter(hidden = true) Long userId,
+            @Parameter(description = "이력서 ID", required = true) Long resumeId,
+            ResumeParsedUpdateRequest request
+    );
+
+    @Operation(
+            summary = "재분석 요청",
+            description = """
+                    이력서를 다시 분석하도록 요청한다. 모드는 서버가 상태로 결정한다 —
+                    EMBEDDED(수정 반영)는 저장된 구조화 결과부터 재색인(REINDEX),
+                    FAILED(실패 복구)는 S3 원본부터 전체 파이프라인(FULL).
+                    진행 상태는 SSE(GET /sse/v1/resumes)로 전달된다.
+                    """
+    )
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "재분석 요청 접수 — 재시작된 상태 반환(REINDEX→EMBEDDING, FULL→UPLOADED)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "타인의 이력서(R009)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "이력서 없음(R008)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "분석 진행 중(R010)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "분석 요청 발행 실패(R007)"),
+    })
+    ResponseEntity<ApiResponse<ResumeReanalyzeResponse>> reanalyze(
+            @Parameter(hidden = true) Long userId,
+            @Parameter(description = "이력서 ID", required = true) Long resumeId
     );
 }

@@ -3,6 +3,7 @@ package com.aisw.kkori.resume.service;
 import com.aisw.kkori.global.config.S3Properties;
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
+import com.aisw.kkori.resume.domain.AnalysisMode;
 import com.aisw.kkori.resume.domain.AnalysisStatus;
 import com.aisw.kkori.resume.domain.Resume;
 import com.aisw.kkori.resume.domain.ResumeAnalysisStatus;
@@ -85,7 +86,7 @@ public class ResumeUploadService {
                 ResumeAnalysisStatus status = statusRepository.save(ResumeAnalysisStatus.init(resume));
 
                 analysisRequestPublisher.publish(new ResumeParseRequestedMessage(
-                        resume.getId(), userId, s3Properties.bucket(), objectKey));
+                        resume.getId(), userId, s3Properties.bucket(), objectKey, AnalysisMode.FULL));
 
                 return ResumeUploadResponse.created(resume, status.getParseStatus());
             });
