@@ -208,6 +208,25 @@ class SignupIntegrationTest extends AuthIntegrationTestSupport {
     }
 
     @Test
+    @DisplayName("형태 오류와 버전 불일치가 함께 있으면 409가 아닌 400 C002로 거부된다 — 형태 검증 최우선")
+    void shapeCheckPrecedesVersionCheck() throws Exception {
+        String signupToken = jwtTokenProvider.createSignupToken("kakao-5017", null, null);
+        String malformedAndStale = """
+                [
+                  {"type": "privacy", "version": 99},
+                  {"type": "audio_usage", "agreed": true, "version": 1},
+                  {"type": "resume_usage", "agreed": true, "version": 1}
+                ]""";
+
+        postJson(SIGNUP_URI, signupBody(signupToken, malformedAndStale))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("C002"));
+
+        assertThat(userRepository.count()).isZero();
+        assertThat(userConsentRepository.count()).isZero();
+    }
+
+    @Test
     @DisplayName("가입 동의 기록의 버전은 전 항목 제출·설정 버전(1)과 일치한다")
     void recordedVersionsFollowContract() throws Exception {
         String signupToken = jwtTokenProvider.createSignupToken("kakao-5015", null, null);

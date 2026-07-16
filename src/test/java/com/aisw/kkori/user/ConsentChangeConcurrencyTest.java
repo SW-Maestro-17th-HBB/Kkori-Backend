@@ -144,10 +144,14 @@ class ConsentChangeConcurrencyTest extends AuthIntegrationTestSupport {
     private void runConcurrently(Runnable first, Runnable second) throws Exception {
         ExecutorService pool = Executors.newFixedThreadPool(2);
         try {
+            CountDownLatch ready = new CountDownLatch(2);
             CountDownLatch start = new CountDownLatch(1);
             List<Future<?>> futures = List.of(
-                    pool.submit(() -> awaitAndRun(start, first)),
-                    pool.submit(() -> awaitAndRun(start, second)));
+                    pool.submit(() -> awaitAndRun(ready, start, first)),
+                    pool.submit(() -> awaitAndRun(ready, start, second)));
+            // 두 워커가 배리어에 도달한 것을 확인한 뒤 해제한다 — 스케줄링에 따라 한쪽이
+            // 전부 끝난 뒤 다른 쪽이 시작하는 무경합 실행으로 통과하는 것을 방지
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
             start.countDown();
             for (Future<?> future : futures) {
                 future.get(5, TimeUnit.SECONDS);
@@ -157,7 +161,8 @@ class ConsentChangeConcurrencyTest extends AuthIntegrationTestSupport {
         }
     }
 
-    private Object awaitAndRun(CountDownLatch start, Runnable task) {
+    private Object awaitAndRun(CountDownLatch ready, CountDownLatch start, Runnable task) {
+        ready.countDown();
         try {
             start.await();
         } catch (InterruptedException e) {

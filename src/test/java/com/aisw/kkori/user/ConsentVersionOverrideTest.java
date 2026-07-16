@@ -13,6 +13,7 @@ import org.springframework.http.MediaType;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Comparator;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -103,7 +104,10 @@ class ConsentVersionOverrideTest extends AuthIntegrationTestSupport {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.consents[3].version").value(2));
 
-        assertThat(userConsentRepository.findByUserId(user.getId()))
+        // findByUserId는 정렬을 보장하지 않으므로 id로 정렬 — append 순서(v1 → v2) 자체가 검증 대상
+        assertThat(userConsentRepository.findByUserId(user.getId()).stream()
+                .sorted(Comparator.comparing(UserConsent::getId))
+                .toList())
                 .hasSize(2)
                 .extracting(UserConsent::getVersion)
                 .containsExactly(1, 2);
