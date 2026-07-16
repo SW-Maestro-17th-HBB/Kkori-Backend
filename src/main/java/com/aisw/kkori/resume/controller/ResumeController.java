@@ -4,6 +4,7 @@ import com.aisw.kkori.global.response.ApiResponse;
 import com.aisw.kkori.resume.api.ResumeApi;
 import com.aisw.kkori.resume.dto.ResumeParsedResponse;
 import com.aisw.kkori.resume.dto.ResumeParsedUpdateRequest;
+import com.aisw.kkori.resume.dto.ResumeReanalyzeResponse;
 import com.aisw.kkori.resume.dto.ResumeUploadResponse;
 import com.aisw.kkori.resume.service.ResumeParsedService;
 import com.aisw.kkori.resume.service.ResumeUploadService;
@@ -63,4 +64,11 @@ public class ResumeController implements ResumeApi {
                 resumeParsedService.updateParsed(userId, resumeId, request.structuredData())));
     }
 
+    @PostMapping("/{resumeId}/reanalyze")
+    public ResponseEntity<ApiResponse<ResumeReanalyzeResponse>> reanalyze(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long resumeId
+    ) {
+        return ResponseEntity.ok(ApiResponse.success(resumeParsedService.reanalyze(userId, resumeId)));
+    }
 }

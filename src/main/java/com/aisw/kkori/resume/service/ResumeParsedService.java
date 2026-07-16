@@ -2,11 +2,14 @@ package com.aisw.kkori.resume.service;
 
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
+import com.aisw.kkori.resume.domain.AnalysisMode;
 import com.aisw.kkori.resume.domain.AnalysisStatus;
 import com.aisw.kkori.resume.domain.Resume;
 import com.aisw.kkori.resume.domain.ResumeAnalysisStatus;
 import com.aisw.kkori.resume.domain.StructuredData;
+import com.aisw.kkori.resume.dto.ResumeParseRequestedMessage;
 import com.aisw.kkori.resume.dto.ResumeParsedResponse;
+import com.aisw.kkori.resume.dto.ResumeReanalyzeResponse;
 import com.aisw.kkori.resume.repository.ResumeAnalysisStatusRepository;
 import com.aisw.kkori.resume.repository.ResumeRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -31,6 +34,7 @@ public class ResumeParsedService {
 
     private final ResumeRepository resumeRepository;
     private final ResumeAnalysisStatusRepository statusRepository;
+    private final ResumeAnalysisRequestPublisher analysisRequestPublisher;
     private final ObjectMapper objectMapper;
 
     @Transactional(readOnly = true)
@@ -50,6 +54,25 @@ public class ResumeParsedService {
         requireWithinSizeLimit(structuredData);
         resume.updateStructuredData(structuredData);
         return ResumeParsedResponse.of(resume, status.getParseStatus());
+    }
+
+    @Transactional
+    public ResumeReanalyzeResponse reanalyze(Long userId, Long resumeId) {
+        Resume resume = findAuthorized(userId, resumeId);
+        ResumeAnalysisStatus status = statusOf(resumeId);
+
+        AnalysisMode mode = switch (status.getParseStatus()) {
+            case EMBEDDED -> AnalysisMode.REINDEX;   // 수정 반영 — DB structuredData부터 청킹·색인
+            case FAILED -> AnalysisMode.FULL;        // 실패 복구 — S3 원본부터 전체 파이프라인
+            default -> throw new BusinessException(ErrorCode.RESUME_ANALYSIS_IN_PROGRESS);
+        };
+
+        // 상태 재설정과 발행은 같은 트랜잭션 — restartFor javadoc의 계약(Worker 회수 규칙 오인 방지) 참조
+        status.restartFor(mode);
+        analysisRequestPublisher.publish(new ResumeParseRequestedMessage(
+                resume.getId(), userId, resume.getOriginalFileBucket(), resume.getOriginalFileKey(), mode));
+
+        return new ResumeReanalyzeResponse(resume.getId(), status.getParseStatus());
     }
 
     /**

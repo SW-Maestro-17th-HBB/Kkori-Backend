@@ -3,6 +3,7 @@ package com.aisw.kkori.resume.api;
 import com.aisw.kkori.global.response.ApiResponse;
 import com.aisw.kkori.resume.dto.ResumeParsedResponse;
 import com.aisw.kkori.resume.dto.ResumeParsedUpdateRequest;
+import com.aisw.kkori.resume.dto.ResumeReanalyzeResponse;
 import com.aisw.kkori.resume.dto.ResumeUploadResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -69,5 +70,26 @@ public interface ResumeApi {
             @Parameter(hidden = true) Long userId,
             @Parameter(description = "이력서 ID", required = true) Long resumeId,
             ResumeParsedUpdateRequest request
+    );
+
+    @Operation(
+            summary = "재분석 요청",
+            description = """
+                    이력서를 다시 분석하도록 요청한다. 모드는 서버가 상태로 결정한다 —
+                    EMBEDDED(수정 반영)는 저장된 구조화 결과부터 재색인(REINDEX),
+                    FAILED(실패 복구)는 S3 원본부터 전체 파이프라인(FULL).
+                    진행 상태는 SSE(GET /sse/v1/resumes)로 전달된다.
+                    """
+    )
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "재분석 요청 접수 — 재시작된 상태 반환(REINDEX→EMBEDDING, FULL→UPLOADED)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "타인의 이력서(R009)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "이력서 없음(R008)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "분석 진행 중(R010)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "분석 요청 발행 실패(R007)"),
+    })
+    ResponseEntity<ApiResponse<ResumeReanalyzeResponse>> reanalyze(
+            @Parameter(hidden = true) Long userId,
+            @Parameter(description = "이력서 ID", required = true) Long resumeId
     );
 }
