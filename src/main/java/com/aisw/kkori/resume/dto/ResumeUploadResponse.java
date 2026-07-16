@@ -3,7 +3,7 @@ package com.aisw.kkori.resume.dto;
 import com.aisw.kkori.resume.domain.AnalysisStatus;
 import com.aisw.kkori.resume.domain.Resume;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 /**
  * 이력서 업로드 응답 (API 명세 4.1).
@@ -19,7 +19,7 @@ public record ResumeUploadResponse(
         String mimeType,
         Integer pageCount,
         AnalysisStatus analysisStatus,
-        LocalDateTime createdAt,
+        Instant createdAt,
         boolean duplicated
 ) {
 

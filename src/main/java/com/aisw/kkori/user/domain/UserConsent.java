@@ -2,7 +2,6 @@ package com.aisw.kkori.user.domain;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EntityListeners;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
@@ -13,17 +12,14 @@ import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import org.springframework.data.annotation.CreatedDate;
-import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 
 @Getter
 @Entity
 @Table(name = "user_consent",
         indexes = @Index(name = "ix_user_consent_user_id", columnList = "user_id"))
-@EntityListeners(AuditingEntityListener.class)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class UserConsent {
 
@@ -46,19 +42,24 @@ public class UserConsent {
     @Column(nullable = false)
     private int version;
 
-    @CreatedDate
+    /**
+     * append 시각. JPA Auditing이 아닌 트랜잭션 시각을 명시로 기록한다 —
+     * 탈퇴 트랜잭션의 WITHDRAWN은 {@code deletion_log.requested_at}과 동일 값이어야 하는데
+     * auditing은 persist 시점에 별도 시각을 찍기 때문(PRD 공통: 시각 처리).
+     */
     @Column(updatable = false, nullable = false)
-    private LocalDateTime createdAt;
+    private Instant createdAt;
 
-    private UserConsent(Long userId, ConsentType consentType, ConsentAction action, int version) {
+    private UserConsent(Long userId, ConsentType consentType, ConsentAction action, int version, Instant createdAt) {
         this.userId = userId;
         this.consentType = consentType;
         this.action = action;
         this.version = version;
+        this.createdAt = createdAt;
     }
 
     /** 동의 이력 한 건을 기록한다 — agreed 여부에 따라 AGREED/WITHDRAWN 행이 append된다. */
-    public static UserConsent create(Long userId, ConsentType consentType, boolean agreed, int version) {
-        return new UserConsent(userId, consentType, agreed ? ConsentAction.AGREED : ConsentAction.WITHDRAWN, version);
+    public static UserConsent create(Long userId, ConsentType consentType, boolean agreed, int version, Instant createdAt) {
+        return new UserConsent(userId, consentType, agreed ? ConsentAction.AGREED : ConsentAction.WITHDRAWN, version, createdAt);
     }
 }

@@ -23,6 +23,15 @@ jwt:
   refresh-token-ttl: ${JWT_REFRESH_TTL:14d}
   signup-token-ttl: ${JWT_SIGNUP_TTL:10m}
 
+# 계정 정책 — 탈퇴 후 파기 유예 기간
+account:
+  withdrawal-grace-period: ${WITHDRAWAL_GRACE_PERIOD:3d}
+
+# 로그 가명화 — 외부 계정 식별자(user_id 등)를 로그에 남길 때 쓰는 HMAC 전용 키.
+# 인증·서명 키와 공유 금지. 기본값은 로컬 개발 전용
+log-masking:
+  hmac-key: ${LOG_HMAC_KEY:kkori-local-dev-log-hmac-key-32bytes!}
+
 # 쉼표로 여러 오리진 허용 가능. 배포 시 프론트 도메인을 환경변수로 주입
 cors:
   allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
@@ -33,3 +42,6 @@ kakao:
   redirect-uri: ${KAKAO_REDIRECT_URI:http://localhost:3000/auth/kakao/callback}
   token-uri: https://kauth.kakao.com/oauth/token
   user-info-uri: https://kapi.kakao.com/v2/user/me
+  # 연결 해제 웹훅 검증용. app-id(숫자 앱 ID)는 client-id(REST API 키)와 다른 값
+  admin-key: ${KAKAO_ADMIN_KEY:local-dev-admin-key}
+  app-id: ${KAKAO_APP_ID:local-dev-app-id}
