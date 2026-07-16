@@ -25,6 +25,7 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import java.io.ByteArrayInputStream;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 
@@ -198,7 +199,7 @@ class ResumeUploadIntegrationTest {
                 .doesNotThrowAnyException();
 
         // soft delete 후에는 같은 사용자·같은 해시로 새 레코드 생성 가능 (부분 조건 WHERE deleted_at IS NULL)
-        first.softDelete();
+        first.softDelete(Instant.now());
         resumeRepository.saveAndFlush(first);
         assertThatCode(() -> resumeRepository.saveAndFlush(resumeWithHash(USER_ID, "samehash")))
                 .doesNotThrowAnyException();

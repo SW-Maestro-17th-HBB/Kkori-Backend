@@ -7,6 +7,8 @@ import com.aisw.kkori.user.domain.User;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -62,7 +64,7 @@ class TokenAuthIntegrationTest extends AuthIntegrationTestSupport {
     void deletedUserAccessTokenIsRejected() throws Exception {
         User user = saveUser("kakao-7003");
         TokenResponse tokens = tokenService.issueTokenPair(user.getId());
-        user.softDelete();
+        user.softDelete(Instant.now());
         userRepository.save(user);
 
         postJsonWithBearer(LOGOUT_URI, logoutBody(tokens.refreshToken()), tokens.accessToken())
