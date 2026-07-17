@@ -1,6 +1,7 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector 동봉 이미지 — 임베딩 벡터 스키마(resume_chunks.embedding vector, PRD resume.md §1) 지원
+    image: pgvector/pgvector:pg16
     container_name: kkori-postgres
     ports:
       - "5432:5432"
@@ -10,6 +11,8 @@ services:
       POSTGRES_PASSWORD: kkori
     volumes:
       - kkori-postgres-data:/var/lib/postgresql/data
+      # 최초 볼륨 생성 시에만 실행 — pgvector 확장 활성화
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U kkori -d kkori"]
       interval: 5s
