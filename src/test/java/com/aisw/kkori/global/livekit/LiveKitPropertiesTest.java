@@ -42,6 +42,17 @@ class LiveKitPropertiesTest {
     }
 
     @Test
+    void schemeWithoutHostIsRejected() {
+        // 접두사만 맞고 호스트가 없는 값 — 접두사 검사만으로는 통과하던 케이스
+        assertThatThrownBy(() -> new LiveKitProperties("wss://", KEY, SECRET, TTL))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new LiveKitProperties("ws://", KEY, SECRET, TTL))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new LiveKitProperties("wss:// invalid", KEY, SECRET, TTL))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void zeroOrNegativeTtlIsRejected() {
         assertThatThrownBy(() -> new LiveKitProperties(URL, KEY, SECRET, Duration.ZERO))
                 .isInstanceOf(IllegalArgumentException.class);

@@ -2,7 +2,10 @@ package com.aisw.kkori.global.livekit;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.Duration;
+import java.util.Set;
 
 /**
  * LiveKit 연동 설정 ({@code livekit.*}).
@@ -37,11 +40,22 @@ public record LiveKitProperties(
         }
     }
 
+    private static final Set<String> WS_SCHEMES = Set.of("ws", "wss");
+
     private static void requireWsUrl(String value, String name) {
         requireText(value, name);
-        if (!value.startsWith("wss://") && !value.startsWith("ws://")) {
+        URI uri;
+        try {
+            uri = new URI(value);
+        } catch (URISyntaxException e) {
+            throw new IllegalArgumentException("%s이(가) 올바른 URI가 아닙니다".formatted(name));
+        }
+        if (uri.getScheme() == null || !WS_SCHEMES.contains(uri.getScheme().toLowerCase())) {
             throw new IllegalArgumentException(
                     "%s은(는) wss:// 또는 ws:// 스킴이어야 합니다".formatted(name));
+        }
+        if (uri.getHost() == null || uri.getHost().isBlank()) {
+            throw new IllegalArgumentException("%s에 호스트가 없습니다".formatted(name));
         }
     }
 

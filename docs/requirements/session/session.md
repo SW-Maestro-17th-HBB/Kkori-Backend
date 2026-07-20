@@ -84,15 +84,15 @@ LiveKit 서버는 전 환경 **LiveKit Cloud**를 사용한다. 서버는 LiveKi
     token-ttl: ${LIVEKIT_TOKEN_TTL:1h}
   ```
 
-  > 주의: 현재 저장소 `.gitignore`에 `.env` 항목이 없다. `.env`를 도입한다면 `.gitignore`에 추가하는 것을 이 스토리 또는 선행 작업으로 포함해야 실수 커밋을 막을 수 있다.
+  `.env`는 `.gitignore`에 등록되어 있고, 키 이름만 담은 `.env.example` 템플릿을 커밋해 온보딩을 돕는다. `.env` 로딩은 `springboot3-dotenv`(Boot 3 전용, `developmentOnly` 스코프)가 담당한다.
 
   TTL을 프로퍼티로 분리해야 "향후 조정"과 "만료 토큰 테스트"가 현실적으로 가능하다(검증 방법은 검증 기준의 TTL 항목 참조).
 - **테스트 설정 계약 (CI 부팅 실패 방지 — 필수)**: `livekit.*`를 부팅 시 필수값으로 등록하면, 이 저장소의 LiveKit과 무관한 기존 `@SpringBootTest`들(auth·resume·user·pgvector 등)이 `LIVEKIT_*` 미주입 상태에서 Spring Context 로딩에 실패해 `./gradlew build`(CI 동일 명령) 전체가 깨진다. 현재 저장소엔 test 전용 프로파일이 없고 이 테스트들은 기본 프로파일로 부팅한다. 따라서:
   - 일반 단위·통합 테스트에는 Gradle `test` 태스크의 환경변수 또는 test 전용 프로파일(예: `application-test.yaml`)로 **안전한 더미 URL/Key/Secret**을 주입해 Context가 정상 부팅되게 한다.
   - 이 더미 값은 **토큰 구조·서명·TTL 검증에만** 쓰고, 실제 LiveKit Cloud 접속은 시도하지 않는다(더미 값으로는 접속 불가한 게 정상).
-  - 실제 Cloud 연결·오디오·만료 확인 테스트는 **별도 태그**(예: JUnit `@Tag("livekit-cloud")`)로 분리해 기본 `./gradlew build`에서는 제외하고, 실행 시에만 실제 `LIVEKIT_*`를 주입한다.
+  - 실제 Cloud 연결·오디오·만료 확인은 **JUnit으로 자동화하지 않는다** — `livekit-server`는 토큰 발급·서버 API용이고 WebRTC participant client가 아니라, 우리 토큰으로 실제 룸에 접속하는 검증을 서버 SDK만으로 짤 수 없다. 이 항목들은 실제 `LIVEKIT_*`(Cloud 프로젝트 값)를 주입한 상태에서 **LiveKit Meet(우리 API 토큰 직접 입력)와 LiveKit CLI(같은 룸의 별도 identity peer·오디오 publisher)로 수동 검증**한다(절차는 검증 기준 참조). 추후 JS `livekit-client` harness를 붙여 자동화한다면 별도 `cloudTest` Gradle 태스크로 분리한다.
 - 모든 응답은 공통 envelope `ApiResponse<T>`로 감싼다. 성공 `{ "success": true, "data": {...} }`, 실패 `{ "success": false, "data": null, "error": { "code", "message", "fieldErrors" } }`. HTTP 상태코드는 바디에 넣지 않는다(HTTP 상태줄이 유일 원천).
-- 에러는 `ErrorCode` enum(세션 도메인 접두사 `S` + 3자리)으로 정의한다: 설정 누락·서명 실패 등 서버 측 오류는 `SESSION_TOKEN_ISSUE_FAILED`(500, `S001`). 인증 실패는 공통 `UNAUTHORIZED`(401, C005)를 사용한다.
+- 에러는 `ErrorCode` enum(세션 도메인 접두사 `S` + 3자리)으로 정의한다: 런타임 토큰 서명 실패 등 서버 측 오류는 `SESSION_TOKEN_ISSUE_FAILED`(500, `S001`). 설정값(URL/Key/Secret) 누락·형식 오류는 이 에러가 아니라 **부팅 시점에 애플리케이션 기동을 실패**시킨다(fail-fast — 런타임 500이 아님). 인증 실패는 공통 `UNAUTHORIZED`(401, C005)를 사용한다.
 
 `POST /api/v1/sessions` 요청:
 

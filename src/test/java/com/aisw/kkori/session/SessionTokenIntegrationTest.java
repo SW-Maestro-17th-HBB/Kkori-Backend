@@ -4,6 +4,7 @@ import com.aisw.kkori.TestcontainersConfiguration;
 import com.aisw.kkori.global.jwt.JwtTokenProvider;
 import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.repository.UserRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -13,7 +14,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -41,9 +44,17 @@ class SessionTokenIntegrationTest {
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
 
+    @Autowired
+    private ObjectMapper objectMapper;
+
     @BeforeEach
     void cleanDatabase() {
         userRepository.deleteAll();
+    }
+
+    private String roomOf(ResultActions result) throws Exception {
+        String body = result.andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(body).path("data").path("livekitRoom").asText();
     }
 
     @Test
@@ -58,6 +69,24 @@ class SessionTokenIntegrationTest {
                 .andExpect(jsonPath("$.data.livekitToken").isNotEmpty())
                 .andExpect(jsonPath("$.data.livekitUrl").isNotEmpty())
                 .andExpect(jsonPath("$.data.livekitRoom").isNotEmpty());
+    }
+
+    @Test
+    @DisplayName("연속 두 요청은 서로 다른 roomName을 반환한다")
+    void eachRequestReturnsDistinctRoom() throws Exception {
+        User user = userRepository.save(User.create("kakao-9002", "d@example.com", "테스터"));
+        String accessToken = jwtTokenProvider.createAccessToken(user.getId());
+
+        String first = roomOf(mockMvc.perform(
+                post(SESSIONS_URI).header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken))
+                .andExpect(status().isCreated()));
+        String second = roomOf(mockMvc.perform(
+                post(SESSIONS_URI).header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken))
+                .andExpect(status().isCreated()));
+
+        assertThat(first).isNotBlank();
+        assertThat(second).isNotBlank();
+        assertThat(first).isNotEqualTo(second);
     }
 
     @Test
