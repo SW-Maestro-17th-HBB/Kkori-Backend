@@ -52,6 +52,9 @@ public enum ErrorCode {
     INVALID_CONSENT_TYPE(HttpStatus.BAD_REQUEST, "U003", "알 수 없는 동의 항목입니다."),
     CONSENT_NOT_CHANGEABLE(HttpStatus.BAD_REQUEST, "U004", "필수 동의 항목은 변경할 수 없습니다. 철회는 탈퇴로만 가능합니다."),
     CONSENT_VERSION_MISMATCH(HttpStatus.CONFLICT, "U005", "동의서 버전이 현재 버전과 일치하지 않습니다. 최신 동의서를 확인한 뒤 다시 제출해 주세요."),
+
+    // 세션 (S) — docs/requirements/session/session.md
+    SESSION_TOKEN_ISSUE_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "S001", "음성 세션 토큰 발급에 실패했습니다."),
     ;
 
     private final HttpStatus status;

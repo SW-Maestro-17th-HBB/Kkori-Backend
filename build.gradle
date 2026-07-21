@@ -29,6 +29,9 @@ dependencies {
     implementation platform('io.awspring.cloud:spring-cloud-aws-dependencies:3.4.2')
     implementation 'io.awspring.cloud:spring-cloud-aws-starter-s3'
     implementation 'org.apache.pdfbox:pdfbox:3.0.8'
+    implementation 'io.livekit:livekit-server:0.14.0'
+    // .env 로딩 — Boot 3 전용 아티팩트(자동 통합). local 개발 편의라 운영 산출물엔 제외
+    developmentOnly 'me.paulschwarz:springboot3-dotenv:5.1.0'
     implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
     runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.6'
     runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.6'
@@ -49,4 +52,9 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+    // LiveKit url/key/secret은 local 프로파일(테스트 기본 프로파일)에서도 기본값 없는 placeholder라, 미주입 시 Context 부팅 실패(fail-fast).
+    // 테스트는 연결 불가한 더미 값으로 부팅한다 — 토큰 서명/구조 검증용이며 실제 Cloud 접속은 하지 않는다.
+    environment 'LIVEKIT_URL', 'wss://test.invalid'
+    environment 'LIVEKIT_API_KEY', 'test-key'
+    environment 'LIVEKIT_API_SECRET', 'test-secret-at-least-thirty-two-bytes-long'
 }
