@@ -96,7 +96,7 @@ LiveKit 서버는 전 환경 **LiveKit Cloud**를 사용한다. 서버는 LiveKi
 
 `POST /api/v1/sessions` 요청:
 
-```
+```text
 (body 없음 — 룸 이름·신원은 서버가 결정. 면접 도메인 도입 시 resumeId·interviewType 등이 추가된다)
 ```
 
@@ -127,5 +127,4 @@ LiveKit 서버는 전 환경 **LiveKit Cloud**를 사용한다. 서버는 LiveKi
 - SDK의 `AccessToken#setTtl(long millis)`는 **밀리초 단위**다. 설정의 `livekit.token-ttl`(`Duration`)을 밀리초로 변환해 전달해야 한다(단위 혼동 시 만료가 1000배 어긋남).
 - LiveKit SDK 밀착 코드(토큰 서명, 설정 프로퍼티)는 벤더 어댑터로 `global.livekit`에 격리하고, 도메인 서비스는 "입장권 발급" 추상에만 의존한다 — 벤더 교체 시 도메인 코드를 건드리지 않도록 한다(카카오 연동이 `global.oauth`에 격리된 것과 동일한 구조).
 - 도메인 패키지는 면접 세션의 전신으로서 `session`을 사용한다(경로 `/api/v1/sessions`와 일관). 면접 도메인 확장 시 이 패키지가 세션 상태·라이프사이클을 흡수한다.
-- API Secret 등 민감 설정은 로그 마스킹 대상에 포함되어야 한다.
-```
+- API Secret 등 민감 설정은 응답·로그 어디에도 남기지 않는다(예외 메시지 포함).
