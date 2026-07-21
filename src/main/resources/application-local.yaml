@@ -26,3 +26,37 @@ spring:
 app:
   s3:
     bucket: kkori-resumes
+
+# ── 로컬 개발용 시크릿 ──
+# 아래 더미는 실제 자격증명이 아니라 커밋해도 무해함. 환경변수로 덮어쓸 수 있게 ${ENV:더미} 형태 유지
+# (예: 카카오 실연동 테스트 시 KAKAO_* 환경변수로 실값 임시 주입).
+jwt:
+  secret: ${JWT_SECRET:kkori-local-dev-jwt-secret-key-must-be-32bytes}
+  signup-secret: ${JWT_SIGNUP_SECRET:kkori-local-dev-signup-secret-key-32bytes!}
+  access-token-ttl: ${JWT_ACCESS_TTL:30m}
+  refresh-token-ttl: ${JWT_REFRESH_TTL:14d}
+  signup-token-ttl: ${JWT_SIGNUP_TTL:10m}
+
+# 계정 정책 — 탈퇴 후 파기 유예 기간
+account:
+  withdrawal-grace-period: ${WITHDRAWAL_GRACE_PERIOD:3d}
+
+log-masking:
+  hmac-key: ${LOG_HMAC_KEY:kkori-local-dev-log-hmac-key-32bytes!}
+
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+
+kakao:
+  client-id: ${KAKAO_CLIENT_ID:local-dev-client-id}
+  client-secret: ${KAKAO_CLIENT_SECRET:local-dev-client-secret}
+  redirect-uri: ${KAKAO_REDIRECT_URI:http://localhost:3000/auth/kakao/callback}
+  admin-key: ${KAKAO_ADMIN_KEY:local-dev-admin-key}
+  app-id: ${KAKAO_APP_ID:local-dev-app-id}
+
+# LiveKit은 로컬도 실제 Cloud 자격증명을 쓴다
+livekit:
+  url: ${LIVEKIT_URL}
+  api-key: ${LIVEKIT_API_KEY}
+  api-secret: ${LIVEKIT_API_SECRET}
+  token-ttl: ${LIVEKIT_TOKEN_TTL:1h}

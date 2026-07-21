@@ -52,7 +52,7 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
-    // LiveKit 프로퍼티는 공통 yaml에서 기본값 없는 placeholder라, 미주입 시 Context 부팅 실패(fail-fast).
+    // LiveKit url/key/secret은 local 프로파일(테스트 기본 프로파일)에서도 기본값 없는 placeholder라, 미주입 시 Context 부팅 실패(fail-fast).
     // 테스트는 연결 불가한 더미 값으로 부팅한다 — 토큰 서명/구조 검증용이며 실제 Cloud 접속은 하지 않는다.
     environment 'LIVEKIT_URL', 'wss://test.invalid'
     environment 'LIVEKIT_API_KEY', 'test-key'

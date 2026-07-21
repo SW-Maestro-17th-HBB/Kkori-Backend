@@ -20,3 +20,33 @@ spring:
 app:
   s3:
     bucket: ${S3_BUCKET}
+
+jwt:
+  secret: ${JWT_SECRET}
+  signup-secret: ${JWT_SIGNUP_SECRET}
+  access-token-ttl: ${JWT_ACCESS_TTL}
+  refresh-token-ttl: ${JWT_REFRESH_TTL}
+  signup-token-ttl: ${JWT_SIGNUP_TTL}
+
+account:
+  withdrawal-grace-period: ${WITHDRAWAL_GRACE_PERIOD}
+
+log-masking:
+  hmac-key: ${LOG_HMAC_KEY}
+
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS}
+
+kakao:
+  client-id: ${KAKAO_CLIENT_ID}
+  client-secret: ${KAKAO_CLIENT_SECRET}
+  redirect-uri: ${KAKAO_REDIRECT_URI}
+  admin-key: ${KAKAO_ADMIN_KEY}
+  app-id: ${KAKAO_APP_ID}
+
+# prod는 자체 호스팅 SFU로 전환 예정 — 전환 시 이 값들만 자체 SFU 주소·키로 교체
+livekit:
+  url: ${LIVEKIT_URL}
+  api-key: ${LIVEKIT_API_KEY}
+  api-secret: ${LIVEKIT_API_SECRET}
+  token-ttl: ${LIVEKIT_TOKEN_TTL}
