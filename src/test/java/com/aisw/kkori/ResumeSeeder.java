@@ -43,19 +43,32 @@ public class ResumeSeeder {
         return resume.getId();
     }
 
-    /** 분석 완료(EMBEDDED) 이력서. */
+    /**
+     * 기본 구조화 데이터 — 파이프라인상 구조화(STRUCTURING)는 EMBEDDED보다 앞 단계라
+     * "EMBEDDED ⇒ structured_data 존재"가 프로덕션 불변식이다. 시딩도 이를 지킨다
+     * (EMBEDDED인데 데이터가 NULL인, 실제로는 불가능한 상태를 만들지 않기 위함).
+     */
+    private static final String DEFAULT_STRUCTURED_DATA = """
+            {
+              "profile": {"name": "시더", "email": "seeder@example.com"},
+              "skills": [],
+              "projects": [],
+              "experiences": []
+            }
+            """;
+
+    /** 분석 완료(EMBEDDED) 이력서 — 불변식대로 구조화 데이터도 기본값으로 함께 채운다. */
     public long embedded(long userId) {
+        return embedded(userId, DEFAULT_STRUCTURED_DATA);
+    }
+
+    /** 분석 완료(EMBEDDED) 이력서 — 구조화 데이터를 지정 JSON으로 채운다(내용을 단언하는 테스트용). */
+    public long embedded(long userId, String structuredDataJson) {
         long resumeId = newResume(userId);
         jdbcTemplate.update("""
                 UPDATE resume_analysis_status
                 SET parse_status = 'EMBEDDED', completed_at = now()
                 WHERE resume_id = ?""", resumeId);
-        return resumeId;
-    }
-
-    /** 분석 완료(EMBEDDED) + 구조화 데이터까지 채운 이력서 — 파싱 결과 조회·수정 테스트용. */
-    public long embedded(long userId, String structuredDataJson) {
-        long resumeId = embedded(userId);
         jdbcTemplate.update("UPDATE resumes SET structured_data = ?::jsonb WHERE id = ?",
                 structuredDataJson, resumeId);
         return resumeId;
