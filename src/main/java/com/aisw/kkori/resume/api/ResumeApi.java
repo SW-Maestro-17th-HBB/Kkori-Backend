@@ -58,6 +58,23 @@ public interface ResumeApi {
     );
 
     @Operation(
+            summary = "이력서 삭제",
+            description = """
+                    이력서를 삭제한다(soft delete) — 즉시 목록·조회에서 사라진다.
+                    원본(S3)·구조화 데이터·청크·임베딩의 물리 삭제는 후속 배치가 수행한다.
+                    """
+    )
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "삭제 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "타인의 이력서(R009)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "이력서 없음·이미 삭제됨(R008)"),
+    })
+    ResponseEntity<ApiResponse<Void>> delete(
+            @Parameter(hidden = true) Long userId,
+            @Parameter(description = "이력서 ID", required = true) Long resumeId
+    );
+
+    @Operation(
             summary = "파싱 결과 조회",
             description = "AI 분석이 완료(EMBEDDED)된 이력서의 구조화 결과를 조회한다. 원문 텍스트(rawText)는 제공하지 않는다."
     )
