@@ -34,6 +34,7 @@ public enum ErrorCode {
     RESUME_FORBIDDEN(HttpStatus.FORBIDDEN, "R009", "해당 이력서에 접근할 권한이 없습니다."),
     RESUME_ANALYSIS_IN_PROGRESS(HttpStatus.CONFLICT, "R010", "이력서 분석이 진행 중입니다. 완료 후 다시 시도해 주세요."),
     RESUME_ANALYSIS_FAILED(HttpStatus.CONFLICT, "R011", "이력서 분석이 실패한 상태입니다. 재분석을 먼저 요청해 주세요."),
+    INVALID_STATUS(HttpStatus.BAD_REQUEST, "R012", "유효하지 않은 분석 상태 값입니다."),
 
     // 인증 (A)
     INVALID_CODE(HttpStatus.BAD_REQUEST, "A001", "카카오 인가 코드가 누락되었거나 형식이 올바르지 않습니다."),
