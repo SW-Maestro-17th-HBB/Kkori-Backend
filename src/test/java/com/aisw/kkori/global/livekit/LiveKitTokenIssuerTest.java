@@ -17,6 +17,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * LiveKit 토큰 발급의 페이로드/TTL/권한 검증 (서명 검증만, Cloud 접속 없음).
  *
+ * <p>grant·TTL 단언은 HBB1-256 검증 기준의 회귀 유지분이다. identity는 HBB1-18에서
+ * 세션 파생 신원({@code candidate-{sessionId}})으로 개정되어, 어댑터는 전달받은 값을
+ * 그대로 서명하는지만 확인한다.
+ *
  * <p>LiveKit JVM SDK 0.14.0의 {@code toJwt()}는 {@code iat}를 넣지 않고 {@code exp}만
  * {@code currentTimeMillis()+ttl}로 계산하므로, TTL은 발급 직전·직후 시각으로 범위 검증한다.
  */
@@ -27,7 +31,7 @@ class LiveKitTokenIssuerTest {
     private static final String URL = "wss://test.invalid";
 
     private LiveKitTokenIssuer issuer(Duration ttl) {
-        return new LiveKitTokenIssuer(new LiveKitProperties(URL, API_KEY, API_SECRET, ttl));
+        return new LiveKitTokenIssuer(new LiveKitProperties(URL, API_KEY, API_SECRET, ttl, Duration.ofSeconds(3)));
     }
 
     /** 발급된 JWT를 HS256 서명으로 파싱한다 (LiveKit AccessToken은 apiSecret으로 HS256 서명). */
@@ -42,18 +46,18 @@ class LiveKitTokenIssuerTest {
     }
 
     @Test
-    void identityIsUserId() {
-        SessionTicket ticket = issuer(Duration.ofHours(1)).issue(42L, "room-abc");
+    void identityIsPassedThroughVerbatim() {
+        SessionTicket ticket = issuer(Duration.ofHours(1)).issue("candidate-42", "room-abc");
 
         Claims claims = parse(ticket.token());
-        assertThat(claims.getSubject()).isEqualTo("42");
+        assertThat(claims.getSubject()).isEqualTo("candidate-42");
         assertThat(ticket.serverUrl()).isEqualTo(URL);
     }
 
     @SuppressWarnings("unchecked")
     @Test
     void grantsAudioOnlyPublish() {
-        SessionTicket ticket = issuer(Duration.ofHours(1)).issue(7L, "room-xyz");
+        SessionTicket ticket = issuer(Duration.ofHours(1)).issue("candidate-7", "room-xyz");
 
         Map<String, Object> video = videoGrant(parse(ticket.token()));
         assertThat(video.get("roomJoin")).isEqualTo(true);
@@ -69,7 +73,7 @@ class LiveKitTokenIssuerTest {
         Duration ttl = Duration.ofMinutes(30);
 
         Instant before = Instant.now();
-        SessionTicket ticket = issuer(ttl).issue(1L, "room-1");
+        SessionTicket ticket = issuer(ttl).issue("candidate-1", "room-1");
         Instant after = Instant.now();
 
         Instant exp = parse(ticket.token()).getExpiration().toInstant();
@@ -81,8 +85,8 @@ class LiveKitTokenIssuerTest {
     void eachIssueUsesGivenRoomName() {
         LiveKitTokenIssuer issuer = issuer(Duration.ofHours(1));
 
-        String roomA = (String) videoGrant(parse(issuer.issue(1L, "room-A").token())).get("room");
-        String roomB = (String) videoGrant(parse(issuer.issue(1L, "room-B").token())).get("room");
+        String roomA = (String) videoGrant(parse(issuer.issue("candidate-1", "room-A").token())).get("room");
+        String roomB = (String) videoGrant(parse(issuer.issue("candidate-1", "room-B").token())).get("room");
         assertThat(roomA).isEqualTo("room-A");
         assertThat(roomB).isEqualTo("room-B");
     }

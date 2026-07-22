@@ -60,3 +60,4 @@ livekit:
   api-key: ${LIVEKIT_API_KEY}
   api-secret: ${LIVEKIT_API_SECRET}
   token-ttl: ${LIVEKIT_TOKEN_TTL:1h}
+  api-timeout: ${LIVEKIT_API_TIMEOUT:3s}
