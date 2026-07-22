@@ -58,6 +58,8 @@ public interface ResumeApi {
     );
 
     @Operation(
+            // 메서드명 delete 는 JS 예약어라 FE 코드 생성(orval) 시 _delete 가 되므로 명시 지정
+            operationId = "deleteResume",
             summary = "이력서 삭제",
             description = """
                     이력서를 삭제한다(soft delete) — 즉시 목록·조회에서 사라진다.
