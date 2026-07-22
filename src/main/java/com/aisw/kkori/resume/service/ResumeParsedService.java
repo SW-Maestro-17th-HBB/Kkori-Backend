@@ -3,15 +3,16 @@ package com.aisw.kkori.resume.service;
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.resume.domain.AnalysisMode;
-import com.aisw.kkori.resume.domain.AnalysisStatus;
 import com.aisw.kkori.resume.domain.Resume;
 import com.aisw.kkori.resume.domain.ResumeAnalysisStatus;
 import com.aisw.kkori.resume.domain.StructuredData;
 import com.aisw.kkori.resume.dto.ResumeParseRequestedMessage;
 import com.aisw.kkori.resume.dto.ResumeParsedResponse;
 import com.aisw.kkori.resume.dto.ResumeReanalyzeResponse;
-import com.aisw.kkori.resume.repository.ResumeAnalysisStatusRepository;
 import com.aisw.kkori.resume.repository.ResumeRepository;
+import com.aisw.kkori.session.domain.SessionStatus;
+import com.aisw.kkori.session.repository.InterviewSessionRepository;
+import com.aisw.kkori.user.repository.UserRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -21,9 +22,14 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 파싱 결과 조회·수정·재분석 오케스트레이션 (docs/requirements/resume/resume.md §4).
  *
- * <p>세 API 모두 같은 접근 가드를 통과한다: 존재(404) → 소유(403) → 상태(409).
- * 조회·수정은 EMBEDDED에서만, 재분석은 EMBEDDED(REINDEX)·FAILED(FULL)에서만 허용된다.
- * 수정은 저장만 한다 — 색인 반영은 사용자가 재분석을 눌러야 일어난다 (수정 ≠ 재분석).
+ * <p>세 API 모두 같은 접근 가드({@link ResumeAccessGuard})를 통과한다: 존재(404) → 소유(403)
+ * → 상태(409). 조회·수정은 EMBEDDED에서만, 재분석은 EMBEDDED(REINDEX)·FAILED(FULL)에서만
+ * 허용된다. 수정은 저장만 한다 — 색인 반영은 사용자가 재분석을 눌러야 일어난다 (수정 ≠ 재분석).
+ *
+ * <p>수정·재분석은 <b>user 행 잠금을 먼저 획득</b>해 면접 세션 생성과 직렬화한다
+ * (interview-session-creation.md — 이력서 사용 중 차단): 잠금 없이 진행하면 세션 생성의
+ * EMBEDDED 확인과 이쪽의 상태 변경이 엇갈려 무효 이력서를 참조한 세션이 생길 수 있다.
+ * 잠금 순서는 user → resume_analysis_status.
  */
 @Service
 @RequiredArgsConstructor
@@ -33,24 +39,27 @@ public class ResumeParsedService {
     private static final int MAX_STRUCTURED_DATA_BYTES = 100 * 1024;
 
     private final ResumeRepository resumeRepository;
-    private final ResumeAnalysisStatusRepository statusRepository;
+    private final ResumeAccessGuard accessGuard;
+    private final UserRepository userRepository;
+    private final InterviewSessionRepository interviewSessionRepository;
     private final ResumeAnalysisRequestPublisher analysisRequestPublisher;
     private final ObjectMapper objectMapper;
 
     @Transactional(readOnly = true)
     public ResumeParsedResponse getParsed(Long userId, Long resumeId) {
-        Resume resume = findAuthorized(userId, resumeId);
-        ResumeAnalysisStatus status = statusOf(resumeId);
-        requireEmbedded(status);
+        Resume resume = accessGuard.findAuthorized(userId, resumeId);
+        ResumeAnalysisStatus status = accessGuard.statusOf(resumeId);
+        accessGuard.requireEmbedded(status);
         return ResumeParsedResponse.of(resume, status.getParseStatus());
     }
 
     @Transactional
     public ResumeParsedResponse updateParsed(Long userId, Long resumeId, StructuredData structuredData) {
-        Resume resume = findAuthorized(userId, resumeId);
-        ResumeAnalysisStatus status = lockedStatusOf(resumeId);
-        requireEmbedded(status);
-        // TODO(면접 도메인): 진행 중인 면접 세션에서 사용 중인 이력서는 수정 차단 (RESUME_IN_USE) — 세션 테이블 도입 시 구현
+        lockActiveUser(userId);
+        Resume resume = accessGuard.findAuthorized(userId, resumeId);
+        ResumeAnalysisStatus status = accessGuard.lockedStatusOf(resumeId);
+        requireNotInUse(resumeId);
+        accessGuard.requireEmbedded(status);
         requireWithinSizeLimit(structuredData);
         resume.updateStructuredData(structuredData);
         // updatedAt은 auditing이 flush 시점에 갱신한다 — 응답에 이번 저장 시각을 담으려면 DTO 생성 전에 flush 필요
@@ -60,8 +69,10 @@ public class ResumeParsedService {
 
     @Transactional
     public ResumeReanalyzeResponse reanalyze(Long userId, Long resumeId) {
-        Resume resume = findAuthorized(userId, resumeId);
-        ResumeAnalysisStatus status = lockedStatusOf(resumeId);
+        lockActiveUser(userId);
+        Resume resume = accessGuard.findAuthorized(userId, resumeId);
+        ResumeAnalysisStatus status = accessGuard.lockedStatusOf(resumeId);
+        requireNotInUse(resumeId);
 
         AnalysisMode mode = switch (status.getParseStatus()) {
             case EMBEDDED -> AnalysisMode.REINDEX;   // 수정 반영 — DB structuredData부터 청킹·색인
@@ -77,42 +88,18 @@ public class ResumeParsedService {
         return new ResumeReanalyzeResponse(resume.getId(), status.getParseStatus());
     }
 
-    /**
-     * 공통 접근 가드 전반부: 존재(404) → 소유(403). 타인 이력서에 404가 아닌 403을 주는 것은
-     * PRD §4 검증 기준이 명시한 계약이다.
-     */
-    private Resume findAuthorized(Long userId, Long resumeId) {
-        Resume resume = resumeRepository.findById(resumeId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND));
-        if (!resume.getUserId().equals(userId)) {
-            throw new BusinessException(ErrorCode.RESUME_FORBIDDEN);
+    /** 세션 생성과의 직렬화 지점 — user 행 잠금 + 활성 재확인 (유저 상태 경로 공통 관례). */
+    private void lockActiveUser(Long userId) {
+        userRepository.findWithLockById(userId)
+                .filter(user -> !user.isDeleted())
+                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
+    }
+
+    /** 진행 중 면접(non-terminal 세션)이 참조하는 이력서는 변경 불가 — R012 (면접이 검색할 청크 보호). */
+    private void requireNotInUse(Long resumeId) {
+        if (interviewSessionRepository.existsByResumeIdAndStatusIn(resumeId, SessionStatus.NON_TERMINAL)) {
+            throw new BusinessException(ErrorCode.RESUME_IN_USE);
         }
-        return resume;
-    }
-
-    /** 상태 행은 업로드 트랜잭션에서 Resume과 함께 생성되므로, 없다는 것은 데이터 정합성 깨짐(서버 결함)이다. */
-    private ResumeAnalysisStatus statusOf(Long resumeId) {
-        return statusRepository.findByResumeId(resumeId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR));
-    }
-
-    /**
-     * 상태 검사 후 행동(수정·재분석)하는 트랜잭션은 잠그고 읽는다 — 검사와 커밋 사이에 다른 요청이
-     * 상태를 바꾸면 낡은 판정으로 통과하기 때문(check-then-act). 읽기 전용인 조회는 잠그지 않는다.
-     */
-    private ResumeAnalysisStatus lockedStatusOf(Long resumeId) {
-        return statusRepository.findForUpdateByResumeId(resumeId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR));
-    }
-
-    /** 조회·수정 가드 후반부: EMBEDDED만 허용 — FAILED는 R011(재분석 유도), 그 외 진행 중은 R010(대기 유도). */
-    private void requireEmbedded(ResumeAnalysisStatus status) {
-        if (status.getParseStatus() == AnalysisStatus.EMBEDDED) {
-            return;
-        }
-        throw new BusinessException(status.getParseStatus() == AnalysisStatus.FAILED
-                ? ErrorCode.RESUME_ANALYSIS_FAILED
-                : ErrorCode.RESUME_ANALYSIS_IN_PROGRESS);
     }
 
     private void requireWithinSizeLimit(StructuredData structuredData) {
