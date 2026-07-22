@@ -74,6 +74,8 @@ class InterviewSessionCreationFailureTest extends InterviewSessionIntegrationTes
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.error.code").value("S001"));
 
+        // 보상 경로가 실제로 실행됐음을 보장 — 호출 자체가 없으면 doThrow가 발화하지 않아 공허하게 통과한다
+        verify(roomManager).deleteRoomQuietly(anyString());
         assertThat(sessionRepository.count()).isZero();
     }
 }

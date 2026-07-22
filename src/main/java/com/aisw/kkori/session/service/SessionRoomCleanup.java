@@ -39,7 +39,13 @@ class SessionRoomCleanup implements TransactionSynchronization {
     @Override
     public void afterCompletion(int status) {
         switch (status) {
-            case STATUS_COMMITTED -> abortedRooms.forEach(roomManager::deleteRoomQuietly);
+            case STATUS_COMMITTED -> abortedRooms.forEach(room -> {
+                try {
+                    roomManager.deleteRoomQuietly(room);
+                } catch (RuntimeException e) {
+                    log.warn("룸 삭제 보상 중 예외 발생 — quiet 계약 위반 가능성, 나머지 룸은 계속 정리 (room={})", room, e);
+                }
+            });
             case STATUS_ROLLED_BACK -> roomManager.deleteRoomQuietly(newRoom);
             default -> log.warn("세션 생성 트랜잭션 결과 불명 — 룸을 정리하지 않음 (newRoom={}, abortedRooms={})",
                     newRoom, abortedRooms);
