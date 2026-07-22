@@ -34,6 +34,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import static com.aisw.kkori.ConcurrencyTestSupport.runConcurrently;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -357,33 +358,6 @@ class KakaoUnlinkWebhookIntegrationTest extends AuthIntegrationTestSupport {
             request.param("referrer_type", referrerType);
         }
         return mockMvc.perform(request);
-    }
-
-    private void runConcurrently(Runnable first, Runnable second) throws Exception {
-        ExecutorService pool = Executors.newFixedThreadPool(2);
-        try {
-            CountDownLatch start = new CountDownLatch(1);
-            List<Future<?>> futures = List.of(
-                    pool.submit(() -> awaitAndRun(start, first)),
-                    pool.submit(() -> awaitAndRun(start, second)));
-            start.countDown();
-            for (Future<?> future : futures) {
-                future.get(5, TimeUnit.SECONDS);
-            }
-        } finally {
-            pool.shutdownNow();
-        }
-    }
-
-    private Object awaitAndRun(CountDownLatch start, Runnable task) {
-        try {
-            start.await();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException(e);
-        }
-        task.run();
-        return null;
     }
 
     /** 탈퇴 트랜잭션 1회 검증 — deletion_log 1건 + AGREED였던 동의 유형별 WITHDRAWN 각 1건. */

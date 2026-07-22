@@ -1,9 +1,8 @@
 package com.aisw.kkori.session;
 
+import com.aisw.kkori.ResumeSeeder;
 import com.aisw.kkori.TestcontainersConfiguration;
 import com.aisw.kkori.global.jwt.JwtTokenProvider;
-import com.aisw.kkori.resume.domain.Resume;
-import com.aisw.kkori.resume.domain.ResumeAnalysisStatus;
 import com.aisw.kkori.resume.dto.ResumeParseRequestedMessage;
 import com.aisw.kkori.resume.repository.ResumeAnalysisStatusRepository;
 import com.aisw.kkori.resume.repository.ResumeRepository;
@@ -91,51 +90,22 @@ abstract class InterviewSessionIntegrationTestSupport {
         return body.append("}").toString();
     }
 
-    // ─── Worker·상태 연기 헬퍼 ───
+    // ─── Worker·상태 연기 헬퍼 — 공용 픽스처({@link ResumeSeeder})에 위임 ───
 
-    /** 분석 완료(EMBEDDED) 이력서 생성 — 상태 쓰기 주체(Worker)를 SQL로 연기한다. */
+    private ResumeSeeder resumeSeeder() {
+        return new ResumeSeeder(resumeRepository, statusRepository, jdbcTemplate);
+    }
+
     long embeddedResume(long userId) {
-        long resumeId = newResume(userId);
-        jdbcTemplate.update("""
-                UPDATE resume_analysis_status
-                SET parse_status = 'EMBEDDED', completed_at = now()
-                WHERE resume_id = ?""", resumeId);
-        return resumeId;
+        return resumeSeeder().embedded(userId);
     }
 
     long failedResume(long userId) {
-        long resumeId = newResume(userId);
-        jdbcTemplate.update("""
-                UPDATE resume_analysis_status
-                SET parse_status = 'FAILED', error_message = 'LLM 타임아웃', failed_at = now(), retry_count = 3
-                WHERE resume_id = ?""", resumeId);
-        return resumeId;
+        return resumeSeeder().failed(userId);
     }
 
     long inProgressResume(long userId) {
-        long resumeId = newResume(userId);
-        jdbcTemplate.update("""
-                UPDATE resume_analysis_status
-                SET parse_status = 'EMBEDDING', started_at = now()
-                WHERE resume_id = ?""", resumeId);
-        return resumeId;
-    }
-
-    long newResume(long userId) {
-        Resume resume = resumeRepository.save(Resume.builder()
-                .userId(userId)
-                .title("이력서")
-                // (user_id, file_hash) 부분 유니크 제약 — 같은 유저로 여러 번 시딩해도 충돌하지 않게 매번 다른 해시
-                .fileHash("hash-" + userId + "-" + System.nanoTime())
-                .originalFileBucket(TestcontainersConfiguration.TEST_BUCKET)
-                .originalFileKey("resumes/" + userId + "/hash.pdf")
-                .originalFileName("resume.pdf")
-                .fileSize(1L)
-                .mimeType("application/pdf")
-                .pageCount(1)
-                .build());
-        statusRepository.save(ResumeAnalysisStatus.init(resume));
-        return resume.getId();
+        return resumeSeeder().inProgress(userId);
     }
 
     /** 세션을 원하는 상태로 시딩 — PENDING 저장 후 필요 시 SQL로 상태를 전이한다(전이 코드는 후속 스토리 소관). */

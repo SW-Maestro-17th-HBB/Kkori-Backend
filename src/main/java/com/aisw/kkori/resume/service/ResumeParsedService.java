@@ -10,8 +10,6 @@ import com.aisw.kkori.resume.dto.ResumeParseRequestedMessage;
 import com.aisw.kkori.resume.dto.ResumeParsedResponse;
 import com.aisw.kkori.resume.dto.ResumeReanalyzeResponse;
 import com.aisw.kkori.resume.repository.ResumeRepository;
-import com.aisw.kkori.session.domain.SessionStatus;
-import com.aisw.kkori.session.repository.InterviewSessionRepository;
 import com.aisw.kkori.user.repository.UserRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -41,7 +39,7 @@ public class ResumeParsedService {
     private final ResumeRepository resumeRepository;
     private final ResumeAccessGuard accessGuard;
     private final UserRepository userRepository;
-    private final InterviewSessionRepository interviewSessionRepository;
+    private final ResumeUsageChecker resumeUsageChecker;
     private final ResumeAnalysisRequestPublisher analysisRequestPublisher;
     private final ObjectMapper objectMapper;
 
@@ -92,14 +90,12 @@ public class ResumeParsedService {
 
     /** 세션 생성과의 직렬화 지점 — user 행 잠금 + 활성 재확인 (유저 상태 경로 공통 관례). */
     private void lockActiveUser(Long userId) {
-        userRepository.findWithLockById(userId)
-                .filter(user -> !user.isDeleted())
-                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
+        userRepository.findActiveWithLock(userId);
     }
 
-    /** 진행 중 면접(non-terminal 세션)이 참조하는 이력서는 변경 불가 — R012 (면접이 검색할 청크 보호). */
+    /** 진행 중 면접에서 사용 중인 이력서는 변경 불가 — R012 (면접이 검색할 청크 보호, 판정은 세션 도메인 구현). */
     private void requireNotInUse(Long resumeId) {
-        if (interviewSessionRepository.existsByResumeIdAndStatusIn(resumeId, SessionStatus.NON_TERMINAL)) {
+        if (resumeUsageChecker.isInUse(resumeId)) {
             throw new BusinessException(ErrorCode.RESUME_IN_USE);
         }
     }

@@ -1,9 +1,9 @@
 package com.aisw.kkori.resume;
 
+import com.aisw.kkori.ResumeSeeder;
 import com.aisw.kkori.TestcontainersConfiguration;
 import com.aisw.kkori.resume.domain.AnalysisStatus;
 import com.aisw.kkori.resume.domain.Resume;
-import com.aisw.kkori.resume.domain.ResumeAnalysisStatus;
 import com.aisw.kkori.resume.dto.ResumeParseRequestedMessage;
 import com.aisw.kkori.resume.repository.ResumeAnalysisStatusRepository;
 import com.aisw.kkori.resume.repository.ResumeRepository;
@@ -404,54 +404,23 @@ class ResumeParsedIntegrationTest {
                 "room-inuse-" + System.nanoTime())).getId();
     }
 
-    // ─── Worker 연기 헬퍼 ───
+    // ─── Worker 연기 헬퍼 — 공용 픽스처({@link ResumeSeeder})에 위임 ───
 
-    /** 분석 완료(EMBEDDED) 이력서 생성 — 상태·structured_data를 Worker처럼 SQL로 채운다. */
+    private ResumeSeeder resumeSeeder() {
+        return new ResumeSeeder(resumeRepository, statusRepository, jdbcTemplate);
+    }
+
+    /** 분석 완료(EMBEDDED) + structured_data까지 채운 이력서. */
     private long embeddedResume(long userId) {
-        long resumeId = newResume(userId);
-        jdbcTemplate.update("UPDATE resumes SET structured_data = ?::jsonb WHERE id = ?",
-                VALID_STRUCTURED_DATA, resumeId);
-        jdbcTemplate.update("""
-                UPDATE resume_analysis_status
-                SET parse_status = 'EMBEDDED', completed_at = now()
-                WHERE resume_id = ?""", resumeId);
-        return resumeId;
+        return resumeSeeder().embedded(userId, VALID_STRUCTURED_DATA);
     }
 
-    /** 분석 실패(FAILED) 이력서 생성 — 재시도 소진 후 포기한 Worker의 기록을 재현한다. */
     private long failedResume(long userId) {
-        long resumeId = newResume(userId);
-        jdbcTemplate.update("""
-                UPDATE resume_analysis_status
-                SET parse_status = 'FAILED', error_message = 'LLM 타임아웃', failed_at = now(), retry_count = 3
-                WHERE resume_id = ?""", resumeId);
-        return resumeId;
+        return resumeSeeder().failed(userId);
     }
 
-    /** 분석 진행 중(EMBEDDING) 이력서 생성. */
     private long inProgressResume(long userId) {
-        long resumeId = newResume(userId);
-        jdbcTemplate.update("""
-                UPDATE resume_analysis_status
-                SET parse_status = 'EMBEDDING', started_at = now()
-                WHERE resume_id = ?""", resumeId);
-        return resumeId;
-    }
-
-    private long newResume(long userId) {
-        Resume resume = resumeRepository.save(Resume.builder()
-                .userId(userId)
-                .title("이력서")
-                .fileHash("hash-" + userId)
-                .originalFileBucket(TestcontainersConfiguration.TEST_BUCKET)
-                .originalFileKey("resumes/" + userId + "/hash.pdf")
-                .originalFileName("resume.pdf")
-                .fileSize(1L)
-                .mimeType("application/pdf")
-                .pageCount(1)
-                .build());
-        statusRepository.save(ResumeAnalysisStatus.init(resume));
-        return resume.getId();
+        return resumeSeeder().inProgress(userId);
     }
 
     // ─── 요청·응답 헬퍼 ───

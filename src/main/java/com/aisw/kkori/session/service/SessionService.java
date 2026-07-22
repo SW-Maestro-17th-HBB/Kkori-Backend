@@ -52,9 +52,7 @@ public class SessionService {
     @Transactional
     public InterviewSessionCreateResponse create(Long userId, InterviewSessionCreateRequest request) {
         // 1) user 행 잠금 + 활성 재확인 — 탈퇴가 선점했으면 401. 잠금 순서는 user 선행(E1 계약과 무충돌)
-        userRepository.findWithLockById(userId)
-                .filter(user -> !user.isDeleted())
-                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
+        userRepository.findActiveWithLock(userId);
 
         // 2) 트랜잭션 시각 — 잠금 획득 후 취득 (공통: 시각 처리)
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);

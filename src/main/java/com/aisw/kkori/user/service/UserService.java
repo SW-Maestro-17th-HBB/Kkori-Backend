@@ -62,9 +62,7 @@ public class UserService {
     @Transactional
     public UserInfoResponse updateName(Long userId, String name) {
         String validated = validateName(name);
-        User user = userRepository.findWithLockById(userId)
-                .filter(u -> !u.isDeleted())
-                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
+        User user = userRepository.findActiveWithLock(userId);
         user.updateName(validated);
         return UserInfoResponse.from(user);
     }
