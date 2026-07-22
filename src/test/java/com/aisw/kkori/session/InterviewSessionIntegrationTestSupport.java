@@ -4,6 +4,7 @@ import com.aisw.kkori.TestcontainersConfiguration;
 import com.aisw.kkori.global.jwt.JwtTokenProvider;
 import com.aisw.kkori.resume.domain.Resume;
 import com.aisw.kkori.resume.domain.ResumeAnalysisStatus;
+import com.aisw.kkori.resume.dto.ResumeParseRequestedMessage;
 import com.aisw.kkori.resume.repository.ResumeAnalysisStatusRepository;
 import com.aisw.kkori.resume.repository.ResumeRepository;
 import com.aisw.kkori.session.domain.InterviewSession;
@@ -20,6 +21,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -50,6 +52,7 @@ abstract class InterviewSessionIntegrationTestSupport {
     @Autowired InterviewSessionRepository sessionRepository;
     @Autowired JdbcTemplate jdbcTemplate;
     @Autowired JwtTokenProvider jwtTokenProvider;
+    @Autowired StringRedisTemplate redisTemplate;
 
     @MockitoBean SessionRoomManager roomManager;
 
@@ -59,6 +62,8 @@ abstract class InterviewSessionIntegrationTestSupport {
         statusRepository.deleteAll();
         resumeRepository.deleteAll();
         userRepository.deleteAll();
+        // 동시성 테스트의 reanalyze 경로가 분석 요청을 발행한다 — resume 스위트와 공유하는 스트림이라 여기서도 정리
+        redisTemplate.delete(ResumeParseRequestedMessage.STREAM_KEY);
     }
 
     long saveUser(String providerId) {

@@ -58,8 +58,9 @@ public class ResumeParsedService {
         lockActiveUser(userId);
         Resume resume = accessGuard.findAuthorized(userId, resumeId);
         ResumeAnalysisStatus status = accessGuard.lockedStatusOf(resumeId);
-        requireNotInUse(resumeId);
+        // 상태 검사(이미 조회한 값)를 먼저 — 세션 존재 검사는 인덱스 없는 스캔이라 통과 요청에만 수행한다
         accessGuard.requireEmbedded(status);
+        requireNotInUse(resumeId);
         requireWithinSizeLimit(structuredData);
         resume.updateStructuredData(structuredData);
         // updatedAt은 auditing이 flush 시점에 갱신한다 — 응답에 이번 저장 시각을 담으려면 DTO 생성 전에 flush 필요
@@ -72,13 +73,14 @@ public class ResumeParsedService {
         lockActiveUser(userId);
         Resume resume = accessGuard.findAuthorized(userId, resumeId);
         ResumeAnalysisStatus status = accessGuard.lockedStatusOf(resumeId);
-        requireNotInUse(resumeId);
 
         AnalysisMode mode = switch (status.getParseStatus()) {
             case EMBEDDED -> AnalysisMode.REINDEX;   // 수정 반영 — DB structuredData부터 청킹·색인
             case FAILED -> AnalysisMode.FULL;        // 실패 복구 — S3 원본부터 전체 파이프라인
             default -> throw new BusinessException(ErrorCode.RESUME_ANALYSIS_IN_PROGRESS);
         };
+        // 상태 게이트(switch) 통과 후에만 세션 존재 검사 — updateParsed와 동일한 순서 원칙
+        requireNotInUse(resumeId);
 
         // 상태 재설정과 발행은 같은 트랜잭션 — restartFor javadoc의 계약(Worker 회수 규칙 오인 방지) 참조
         status.restartFor(mode);

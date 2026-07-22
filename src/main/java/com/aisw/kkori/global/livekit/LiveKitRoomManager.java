@@ -16,8 +16,9 @@ import java.io.IOException;
  *
  * <p>호출에는 짧은 타임아웃({@code livekit.api-timeout})을 걸고 재시도하지 않는다 — 룸 생성은
  * user 행 잠금을 보유한 채 일어나는 외부 왕복이므로 타임아웃이 잠금 보유 시간의 상한이다.
- * SDK 로깅은 끈다(Authorization 헤더 — API Secret 파생 — 유출 방지). 실패 예외의 원인을
- * 감싸지 않는 것도 같은 이유다({@link LiveKitTokenIssuer}와 동일 방침).
+ * 로깅 인터셉터 없는 OkHttp를 직접 공급하므로 SDK가 요청(Authorization 헤더 — API Secret
+ * 파생)을 로그에 남기지 않는다. 실패 예외의 원인을 감싸지 않는 것도 같은 유출 방지
+ * 방침이다({@link LiveKitTokenIssuer}와 동일).
  */
 @Slf4j
 @Component
@@ -32,8 +33,9 @@ public class LiveKitRoomManager implements SessionRoomManager {
                 .writeTimeout(properties.apiTimeout())
                 .callTimeout(properties.apiTimeout())
                 .build();
+        // 마지막 boolean은 로깅이 아니라 리전 failover 스위치다 — 기본값(true) 오버로드를 써서 Cloud failover를 유지한다
         this.client = RoomServiceClient.createClient(
-                properties.httpApiUrl(), properties.apiKey(), properties.apiSecret(), () -> okHttp, false);
+                properties.httpApiUrl(), properties.apiKey(), properties.apiSecret(), () -> okHttp);
     }
 
     @Override

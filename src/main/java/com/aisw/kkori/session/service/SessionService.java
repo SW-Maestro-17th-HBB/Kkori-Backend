@@ -9,6 +9,7 @@ import com.aisw.kkori.session.dto.InterviewSessionCreateRequest;
 import com.aisw.kkori.session.dto.InterviewSessionCreateResponse;
 import com.aisw.kkori.session.repository.InterviewSessionRepository;
 import com.aisw.kkori.user.repository.UserRepository;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,6 +35,7 @@ import java.util.UUID;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class SessionService {
 
     private static final String ROOM_PREFIX = "room-";
@@ -45,17 +47,6 @@ public class SessionService {
     private final SessionRoomManager roomManager;
     private final SessionTicketIssuer ticketIssuer;
     private final Clock clock;
-
-    public SessionService(UserRepository userRepository, InterviewSessionRepository sessionRepository,
-                          ResumeAccessGuard resumeAccessGuard, SessionRoomManager roomManager,
-                          SessionTicketIssuer ticketIssuer, Clock clock) {
-        this.userRepository = userRepository;
-        this.sessionRepository = sessionRepository;
-        this.resumeAccessGuard = resumeAccessGuard;
-        this.roomManager = roomManager;
-        this.ticketIssuer = ticketIssuer;
-        this.clock = clock;
-    }
 
     /** 면접 유형·직무·대상 이력서를 검증하고 PENDING 세션을 생성해 룸·토큰과 함께 반환한다. */
     @Transactional
@@ -83,6 +74,9 @@ public class SessionService {
         List<Long> pendingIds = existing.stream().map(InterviewSession::getId).toList();
         List<String> abortedRooms = existing.stream().map(InterviewSession::getLivekitRoom).toList();
         if (!pendingIds.isEmpty()) {
+            // 주의: 이 벌크 UPDATE는 clearAutomatically로 영속성 컨텍스트를 비운다 — 1)에서 잠근 User를
+            // 포함해 앞서 조회한 엔티티가 전부 detach되므로, 이 지점 이후 그 엔티티들을 변이하면 안 된다
+            // (dirty checking 유실 — cancelPendingPurge의 clearAutomatically 관련 javadoc 참조).
             int aborted = sessionRepository.abortPendingByIds(pendingIds, now);
             if (aborted != pendingIds.size()) {
                 // user 잠금 하에서는 도달 불가한 상태 — 잠금을 공유하지 않는 전이 경로(예: 후속 webhook)가
