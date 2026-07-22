@@ -85,8 +85,12 @@ public class SessionService {
         if (!pendingIds.isEmpty()) {
             int aborted = sessionRepository.abortPendingByIds(pendingIds, now);
             if (aborted != pendingIds.size()) {
-                // user 잠금 하에서는 일어날 수 없는 상태 — 방어적 감지만 하고 진행한다
-                log.warn("PENDING 교체 대상과 실제 전이 수 불일치 (expected={}, aborted={})", pendingIds.size(), aborted);
+                // user 잠금 하에서는 도달 불가한 상태 — 잠금을 공유하지 않는 전이 경로(예: 후속 webhook)가
+                // 조회~전이 사이에 PENDING을 다른 상태로 바꿨다는 신호다. 계속 진행하면 ACTIVE와 신규
+                // PENDING이 공존할 수 있으므로 생성을 중단한다(불변식의 최후 방어선, 전체 롤백).
+                log.warn("PENDING 교체 대상과 실제 전이 수 불일치 — 생성 중단 (expected={}, aborted={})",
+                        pendingIds.size(), aborted);
+                throw new BusinessException(ErrorCode.SESSION_ALREADY_IN_PROGRESS);
             }
         }
 
