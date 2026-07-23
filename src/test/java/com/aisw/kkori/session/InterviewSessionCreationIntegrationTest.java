@@ -21,6 +21,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -196,7 +197,7 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
     // ─── 이력서 검증 (404/403/409) ───
 
     @Test
-    @DisplayName("미존재·soft delete된 이력서는 404 R008 — FIVE_MIN이 무효 resumeId를 낸 경우 포함")
+    @DisplayName("미존재·soft delete된 이력서는 404 R008 — 선생성 룸은 모두 보상 삭제된다")
     void missingOrDeletedResumeIsRejected() throws Exception {
         long userId = saveUser("kakao-s-20");
 
@@ -215,10 +216,12 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
                         .content(createBody(deletedResumeId, "FIVE_MIN", "BACKEND")))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("R008"));
+
+        assertProvisionedRoomsCompensated(2);
     }
 
     @Test
-    @DisplayName("타인의 이력서는 403 R009")
+    @DisplayName("타인의 이력서는 403 R009 — 선생성 룸은 보상 삭제된다")
     void othersResumeIsRejected() throws Exception {
         long userId = saveUser("kakao-s-21");
         long otherUserId = saveUser("kakao-s-22");
@@ -230,10 +233,12 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
                         .content(createBody(othersResumeId, "THIRTY_MIN", "BACKEND")))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error.code").value("R009"));
+
+        assertProvisionedRoomsCompensated(1);
     }
 
     @Test
-    @DisplayName("분석 진행 중 이력서는 409 R010, FAILED 이력서는 409 R011")
+    @DisplayName("분석 진행 중 이력서는 409 R010, FAILED 이력서는 409 R011 — 선생성 룸은 모두 보상 삭제된다")
     void notEmbeddedResumeIsRejected() throws Exception {
         long userId = saveUser("kakao-s-23");
 
@@ -250,6 +255,17 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
                         .content(createBody(failedResume(userId), "THIRTY_MIN", "BACKEND")))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("R011"));
+
+        assertProvisionedRoomsCompensated(2);
+    }
+
+    /** 거부 경로 공통 검증 — 선생성된 룸 전부가 같은 이름으로 보상 삭제됐는지 확인한다. */
+    private void assertProvisionedRoomsCompensated(int expectedProvisioned) {
+        ArgumentCaptor<String> room = ArgumentCaptor.forClass(String.class);
+        verify(roomManager, times(expectedProvisioned)).createRoom(room.capture());
+        for (String provisioned : room.getAllValues()) {
+            verify(roomManager).deleteRoomQuietly(provisioned);
+        }
     }
 
     @Test
