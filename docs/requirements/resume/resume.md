@@ -107,7 +107,11 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 
 사용자는 본인이 업로드한 이력서를 조회할 수 있다.
 
-- 목록(`GET /api/v1/resumes`): 페이지네이션(기본 page=0, size=20), 분석 상태 필터(`status`) 지원. 면접 시작 전 이력서 선택 화면, 대시보드에서 사용. 각 항목에 분석 상태(analysisStatus)를 포함해 FAILED 여부까지 표시한다.
+- 목록(`GET /api/v1/resumes`): 페이지네이션(기본 page=0, size=20, size 상한 100), 분석 상태 필터(`status`) 지원. 면접 시작 전 이력서 선택 화면, 대시보드에서 사용. 각 항목에 분석 상태(analysisStatus)를 포함해 FAILED 여부까지 표시한다.
+  - 항목 필드는 UI가 소비하는 최소만 내려준다: `resumeId, title, analysisStatus, createdAt, fileSize`. 분석 결과 미리보기(structuredData)는 목록에 싣지 않는다 — 행 펼침 시점에 `GET /{resumeId}/parsed`로 조회한다(payload 경량화).
+  - 정렬: `createdAt` 내림차순 고정. 정렬 파라미터는 MVP 미지원.
+  - 페이지 엔벨로프: `{ content, page, size, totalElements, hasNext }` — totalPages는 유도 가능하므로 제외. 다른 도메인의 목록 API도 이 엔벨로프를 재사용한다.
+  - 파라미터 검증: `page < 0`, `size < 1`, `size > 100`은 400(INVALID_INPUT_VALUE, C002). 잘못된 `status` 값은 400(INVALID_STATUS, R012).
 - 상세(`GET /api/v1/resumes/{resumeId}`): 파일 메타데이터와 현재 분석 상태를 반환한다.
 - 원본 다운로드(`GET /api/v1/resumes/{resumeId}/download-url`): S3 Presigned URL을 발급한다(만료 300초). 클라이언트는 S3에 직접 접근하지 않고 항상 이 URL을 통한다.
 
@@ -120,7 +124,10 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 - 다른 사용자의 이력서 접근 시 403(RESUME_FORBIDDEN)이 반환되는지 확인
 - 존재하지 않는 resumeId 조회 시 404(RESUME_NOT_FOUND)가 반환되는지 확인
 - 목록이 page/size 파라미터대로 페이지네이션되는지 확인
+- 목록이 createdAt 내림차순으로 정렬되는지 확인
+- 범위를 벗어난 page/size(음수, 0, 상한 초과)는 400(INVALID_INPUT_VALUE)인지 확인
 - status 필터 지정 시 해당 상태의 이력서만 반환되고, 잘못된 상태값은 400(INVALID_STATUS)인지 확인
+- 삭제된(soft delete) 이력서는 목록에서 제외되는지 확인
 - FAILED 상태 이력서도 목록·상세에서 정상 조회되는지 확인
 - 발급된 Presigned URL로 원본 PDF가 다운로드되고, 만료 시간 이후에는 접근이 거부되는지 확인
 
