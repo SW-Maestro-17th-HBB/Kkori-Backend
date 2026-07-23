@@ -61,7 +61,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 - **트리거 범위**: 세션 종료 이벤트는 정상 종료 세션에 대해서만 발행된다(발행 조건은 발행자인 세션 도메인 소관 — 중도 이탈 세션의 종료 확정 정책은 면접 도메인 확정 후 재검토). Worker는 소비 시점에 세션 대본(`INTERVIEW_TRANSCRIPTS` — 세션당 1행, 발화 배열 JSON)을 확인해 **사용자 발화가 0건이면 리포트를 생성하지 않고 ACK만 한다**(평가할 대상이 없음). **대본 행 자체가 없으면 스킵이 아니라 처리 실패로 취급**해 ACK하지 않는다 — "아직 저장 전"과 "답변 없음"을 구별하기 위함이며, 대본 저장이 세션 종료 이벤트 발행보다 선행된다는 순서 보장은 면접 도메인에 요구사항으로 전달한다(**미정**).
 - **시작 신호는 이벤트 2개다 (2026-07-23 확정)**: 세션 도메인은 ①세션이 정상 종료될 때 **세션 종료 이벤트**를, ②녹음 파일이 S3에 올라간 뒤 **음성 업로드 이벤트**를 각각 발행하며, **둘 다 Worker가 직접 소비한다.** 텍스트 분석은 ①로 바로 시작하므로 리포트 생성이 녹음 업로드를 기다리지 않고, 음성 분석은 ②가 와야 시작한다.
 - **세션:리포트 = 1:1, 소비 멱등**: 같은 세션에 리포트는 1개만 존재한다. 세션 종료 이벤트 스트림은 Consumer Group 기반 **at-least-once**라 동일 이벤트가 중복 전달될 수 있으므로 Worker의 소비 처리는 **sessionId 기준 멱등**이어야 한다 — `interview_session_id` 유니크 제약으로 중복 생성을 방어하고, 이미 완결(COMPLETED/FAILED)된 리포트가 있으면 아무것도 하지 않고 ACK한다.
-- **스냅샷 컬럼**: Worker가 리포트 로우 생성(PENDING) 시점에 목록 조회용 값을 복사한다 — `resume_file_name_snapshot`(이력서 원본 파일명), `interview_type_snapshot`(면접 유형), `interview_duration_minutes`(`ended_at - started_at`, 분). 이후 원본이 변경·삭제되어도 목록 표시는 스냅샷으로 성립한다.
+- **스냅샷 컬럼**: Worker가 리포트 로우 생성(PENDING) 시점에 목록 조회용 값을 복사한다 — `resume_file_name_snapshot`(이력서 원본 파일명), `interview_duration_minutes`(**면접 유형 선택이 정한 시간(분) 숫자. 세션 도메인이 세션에 기록한 값을 가공 없이 그대로 복사** — 현재 30·5 두 값). 유형 구분은 시간과 1:1이므로 별도 유형 컬럼은 두지 않고, "실전/빠른" 표시 라벨은 프론트가 시간값으로 구성한다(화면 카피 소관). 이후 원본이 변경·삭제되어도 목록 표시는 스냅샷으로 성립한다.
 - **Worker 파이프라인 (2단계)**:
   - **1단계 텍스트 분석** (세션 종료 이벤트로 시작): 대본 확인 → **리포트(PENDING)·Job·스냅샷 생성** → transcripts·이력서 데이터 로드 → 답변별 평가(텍스트 3축 점수 + 피드백 + 약점 태그 + **개선 과제** + 이력서 근거) → 영역 점수 산정 → 총평 생성 → 약점 태그 요약 집계 → 산출물을 한 트랜잭션으로 저장하고 `text_analyzed_at`을 기록. 재시도하면 1단계를 처음부터 다시 수행한다(저장 전 기존 산출물이 있으면 지우고 다시 저장).
   - **2단계 음성 분석** (음성 업로드 이벤트로 시작): 녹음 파일 다운로드 → 사용자 음성의 말 속도·멈춤 계산 → `REPORTS.delivery_score` 갱신 + `audio_analyzed_at` 기록.
@@ -94,7 +94,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 - 정상 종료 후 유예 시간이 지나도 리포트 로우가 없는 세션을 조정 배치가 감지해 세션 종료 이벤트 소비와 동일한 처리(생성·분석)를 수행하는지 확인
 - 조정 배치가 PENDING/PROCESSING/FAILED 리포트가 존재하는 세션을 건드리지 않는지 확인 (로우 부재 기준)
 - 조정 배치와 지연된 이벤트 소비가 겹쳐도 리포트가 1개만 생성되는지 확인
-- 리포트 생성 시점에 스냅샷 컬럼(파일명·면접 유형·소요 시간)이 채워지는지 확인
+- 리포트 생성 시점에 스냅샷 컬럼(파일명·면접 시간)이 세션 값 그대로 채워지는지 확인
 - 생성 완료 시 REPORT_SCORES 1건과 답변 수만큼의 REPORT_FEEDBACKS가 존재하고 상태가 COMPLETED가 되는지 확인
 - 영역 점수·overall_score가 산식(텍스트 3축은 답변별 평균, 전달력은 세션 측정 → overall은 평가된 축 평균, 반올림)과 일치하는지 확인
 - 전달력 미평가 리포트에서 delivery_score가 null이고 overall_score가 3축 평균으로 계산되는지 확인
@@ -139,7 +139,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 
 - **평가·조인 단위는 질문 단위(questionNumber)로 확정 (2026-07-23)** — 대본이 세션당 1행 JSON으로 변경되면서 발화 행 FK가 성립하지 않으므로, `REPORT_FEEDBACKS.transcript_id`는 **`question_number`(int) 컬럼으로 대체**한다(ERD 갱신 필요). Worker는 질문당 피드백 1건을 question_number와 함께 저장하고, 타임라인(§4)은 같은 키로 대본과 평가를 결합한다.
 - **대본 JSON의 스키마는 면접 도메인·Worker 소유의 계약** — 발화 요소: {questionNumber, speaker, content, questionType, spokenAt}. 리포트 도메인은 읽기 전용 소비자로서 questionNumber는 정수, speaker·questionType은 고정 값 집합(예: INTERVIEWER/USER, MAIN/TAIL), spokenAt은 ISO-8601 타임스탬프를 전제한다 — 값 집합·직렬화 형식 확정은 면접 도메인·Worker와 합의(**미정**).
-- **`interview_type_snapshot`의 원천인 세션의 면접 유형 컬럼이 현재 ERD의 `INTERVIEW_SESSIONS`에 없다** — 면접 유형 선택(HBB1-18)을 설계하는 면접 도메인에서 도입 예정. 도입 전까지 스냅샷 채움 규칙은 미정.
+- **스냅샷의 원천인 세션의 면접 시간 컬럼이 현재 ERD의 `INTERVIEW_SESSIONS`에 없다** — 면접 유형 선택(HBB1-18)을 설계하는 면접 도메인에서 도입 예정(유형 선택이 정한 시간(분)을 세션에 기록). 도입 전까지 스냅샷 채움 규칙은 미정.
 - **녹음·음성 분석의 남은 확정 사항** — 자체 호스팅 LiveKit의 Egress 설정(사용자 트랙 분리 녹음), 음성 업로드 이벤트의 발행 시점·필드(세션 도메인 소관), 음성 유예 시간 값, audio_usage 동의와 녹음의 연결. 확정 전까지 Worker는 텍스트 3축으로만 동작하고 delivery_score는 null이다.
 - **계약 변경 권한은 백엔드** — 스트림·상태·점수 산식·jsonb 계약이 양 repo에서 어긋나면 본 문서와 계약 record가 우선한다(이력서와 동일). Worker PRD는 계약 전문의 자기완결 사본을 유지한다.
 - **알려진 한계 (수용)**: 세션 종료~COMPLETED 사이에 사용자가 해당 이력서의 파싱 결과 수정·재분석을 실행하면 평가가 최신 파싱 결과 기준이 될 수 있다. 파싱 결과 수정은 면접 전 보정 단계의 행동이라 이 창구간에 겹칠 확률이 낮고 피해도 경미하므로 잠금 없이 수용한다.
@@ -154,12 +154,12 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 
 사용자는 본인의 리포트 목록을 조회할 수 있다(`GET /api/v1/reports`).
 
-- 목록 항목은 **REPORTS 단독으로 구성한다**(조인 없음) — overall_score, 상태, 스냅샷 컬럼(이력서 파일명·면접 유형·소요 시간), weakness_tag_summary, 생성·완료 시각. 스냅샷 비정규화가 이 요구를 위한 설계다.
+- 목록 항목은 **REPORTS 단독으로 구성한다**(조인 없음) — overall_score, 상태, 스냅샷 컬럼(이력서 파일명·면접 시간), weakness_tag_summary, 생성·완료 시각. 스냅샷 비정규화가 이 요구를 위한 설계다.
 - 페이지네이션: 기본 page=0, size=20.
 - 정렬(`sort`): `createdAt`(기본, 내림차순) 또는 `overallScore`. `order`: `desc`(기본)/`asc`. **overallScore 정렬 시 값이 null인 리포트(미완성)는 order와 무관하게 항상 뒤에 두고, 동점·동시각은 생성 시각 내림차순 → id 내림차순으로 순서를 고정한다** — DB나 페이지에 따라 목록 순서가 흔들리지 않게.
-- 필터: `status`(생성 상태), `interviewType`(면접 유형 스냅샷). 생성 중(PENDING/PROCESSING)·FAILED 리포트도 목록에 노출된다(상태 표시는 프론트 소관).
+- 필터: `status`(생성 상태), `durationMinutes`(면접 시간 — 유형 구분과 1:1). 생성 중(PENDING/PROCESSING)·FAILED 리포트도 목록에 노출된다(상태 표시는 프론트 소관).
 - 목록 화면의 KPI·추이·약점 분포는 목록 응답이 아니라 통계 API(§6)가 담당한다.
-- 프론트가 표시하는 "제목"(예: "백엔드 개발자 · 기술 면접")과 날짜·시간 포맷은 서버 필드(면접 유형·이력서 파일명·시각)로 프론트가 구성한다 — 서버는 title 필드를 제공하지 않는다. 모든 시각 필드는 ISO-8601이다.
+- 프론트가 표시하는 "제목"(예: "백엔드 개발자 · 기술 면접")과 날짜·시간 포맷은 서버 필드(면접 유형·이력서 파일명·시각)로 프론트가 구성한다 — 서버는 title 필드를 제공하지 않는다. **면접 시간은 `durationMinutes`(분, 숫자)로 세션에서 받은 값을 가공 없이 그대로 반환한다 — "실전 30분"/"빠른 5분" 라벨은 프론트가 시간값으로 구성한다.** 모든 시각 필드는 ISO-8601이다.
 
 ### 실행 조건
 
@@ -170,7 +170,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 - 목록이 page/size 파라미터대로 페이지네이션되는지 확인
 - 기본 정렬이 생성 시각 내림차순인지, sort=overallScore 지정 시 점수순으로 정렬되는지 확인
 - overallScore 정렬에서 null인 리포트가 항상 뒤에 오고, 동점 시 생성 시각·id 순서로 고정되는지 확인
-- status·interviewType 필터 지정 시 해당 리포트만 반환되고, 잘못된 값은 400(INVALID_INPUT_VALUE)인지 확인
+- status·durationMinutes 필터 지정 시 해당 리포트만 반환되는지 확인 — 잘못된 status 값과 숫자가 아닌 durationMinutes는 400(INVALID_INPUT_VALUE), 일치하는 리포트가 없으면 빈 목록
 - PENDING/PROCESSING/FAILED 리포트도 목록에 노출되는지 확인 (미완성 리포트의 overallScore·weaknessTagSummary는 null)
 - 다른 사용자의 리포트가 목록에 포함되지 않는지 확인
 
@@ -180,7 +180,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 
 ### 인터페이스 요구사항
 
-- `GET /api/v1/reports?status=&interviewType=&sort=&order=&page=&size=`
+- `GET /api/v1/reports?status=&durationMinutes=&sort=&order=&page=&size=`
 
 목록 항목 예시:
 
@@ -190,7 +190,6 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
   "status": "COMPLETED",
   "overallScore": 82,
   "resumeFileName": "백엔드_개발자_이력서.pdf",
-  "interviewType": "REAL",
   "durationMinutes": 30,
   "weaknessTagSummary": [
     { "tag": "두괄식 부족", "count": 3 },
@@ -207,7 +206,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 
 ### 기타 요구사항
 
-- `interviewType`의 값 집합(예: REAL/QUICK)은 면접 도메인의 면접 유형 확정에 따른다 (**면접 도메인 의존**).
+- `durationMinutes`의 값 집합(현재 30·5)은 면접 도메인의 면접 유형 확정에 따르며, 리포트는 값을 정의하지 않고 세션에서 받은 숫자를 그대로 전달만 한다 (**면접 도메인 의존**).
 
 ---
 
@@ -251,7 +250,6 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 {
   "reportId": 7,
   "resumeFileName": "백엔드_개발자_이력서.pdf",
-  "interviewType": "REAL",
   "durationMinutes": 30,
   "completedAt": "2026-06-03T14:24:31Z",
   "overallScore": 82,
