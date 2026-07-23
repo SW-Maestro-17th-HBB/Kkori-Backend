@@ -8,6 +8,7 @@ import com.aisw.kkori.resume.dto.ResumeParsedUpdateRequest;
 import com.aisw.kkori.resume.dto.ResumeReanalyzeResponse;
 import com.aisw.kkori.resume.dto.ResumeSummaryResponse;
 import com.aisw.kkori.resume.dto.ResumeUploadResponse;
+import com.aisw.kkori.resume.service.ResumeDeleteService;
 import com.aisw.kkori.resume.service.ResumeParsedService;
 import com.aisw.kkori.resume.service.ResumeQueryService;
 import com.aisw.kkori.resume.service.ResumeUploadService;
@@ -17,6 +18,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -35,6 +37,16 @@ public class ResumeController implements ResumeApi {
     private final ResumeUploadService resumeUploadService;
     private final ResumeParsedService resumeParsedService;
     private final ResumeQueryService resumeQueryService;
+    private final ResumeDeleteService resumeDeleteService;
+
+    @DeleteMapping("/{resumeId}")
+    public ResponseEntity<ApiResponse<Void>> delete(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long resumeId
+    ) {
+        resumeDeleteService.delete(userId, resumeId);
+        return ResponseEntity.ok(ApiResponse.success());
+    }
 
     @GetMapping
     public ResponseEntity<ApiResponse<PageResponse<ResumeSummaryResponse>>> getList(
