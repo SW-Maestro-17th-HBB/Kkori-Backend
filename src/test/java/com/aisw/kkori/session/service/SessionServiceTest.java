@@ -14,6 +14,7 @@ import com.aisw.kkori.user.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -77,7 +78,11 @@ class SessionServiceTest {
                         .isEqualTo(ErrorCode.SESSION_ALREADY_IN_PROGRESS));
 
         verify(sessionRepository, never()).save(any());
-        verifyNoInteractions(roomManager, ticketIssuer);
+        // 룸은 트랜잭션 전에 선생성됐다가 롤백과 함께 보상 삭제되어야 한다
+        ArgumentCaptor<String> room = ArgumentCaptor.forClass(String.class);
+        verify(roomManager).createRoom(room.capture());
+        verify(roomManager).deleteRoomQuietly(room.getValue());
+        verifyNoInteractions(ticketIssuer);
     }
 
     @Test
@@ -96,7 +101,10 @@ class SessionServiceTest {
                         .isEqualTo(ErrorCode.SESSION_ALREADY_IN_PROGRESS));
 
         verify(sessionRepository, never()).abortPendingByIds(anyCollection(), any());
-        verifyNoInteractions(roomManager, ticketIssuer);
+        ArgumentCaptor<String> room = ArgumentCaptor.forClass(String.class);
+        verify(roomManager).createRoom(room.capture());
+        verify(roomManager).deleteRoomQuietly(room.getValue());
+        verifyNoInteractions(ticketIssuer);
     }
 
     /** 상태 전이 메서드는 후속 스토리 소관이라 엔티티에 없다 — 테스트는 리플렉션으로 상태를 주입한다. */

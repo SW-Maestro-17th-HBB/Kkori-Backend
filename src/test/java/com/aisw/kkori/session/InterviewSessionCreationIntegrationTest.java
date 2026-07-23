@@ -253,8 +253,8 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
     }
 
     @Test
-    @DisplayName("거부된 요청은 세션을 만들지도, 기존 세션을 정리하지도, 룸을 만지지도 않는다")
-    void rejectedRequestsHaveNoSideEffects() throws Exception {
+    @DisplayName("형식 오류(400)는 컨트롤러에서 차단되어 룸 선생성조차 일어나지 않는다")
+    void validationRejectionSkipsRoomProvisioning() throws Exception {
         long userId = saveUser("kakao-s-24");
         long pendingId = sessionInStatus(userId, null, SessionStatus.PENDING, "room-existing");
 
@@ -263,15 +263,32 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody(null, "THIRTY_MIN", "BACKEND")))
                 .andExpect(status().isBadRequest());
-        mockMvc.perform(post(SESSIONS_URI)
-                        .header(HttpHeaders.AUTHORIZATION, bearerOf(userId))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(createBody(failedResume(userId), "THIRTY_MIN", "BACKEND")))
-                .andExpect(status().isConflict());
 
         assertThat(sessionRepository.count()).isEqualTo(1);
         assertThat(statusOfSession(pendingId)).isEqualTo("PENDING");
         verifyNoInteractions(roomManager);
+    }
+
+    @Test
+    @DisplayName("이력서 검증 거부(409)는 DB 무변화 + 선생성된 룸이 보상 삭제된다")
+    void resumeRejectionRollsBackAndCompensatesPreProvisionedRoom() throws Exception {
+        long userId = saveUser("kakao-s-25");
+        long pendingId = sessionInStatus(userId, null, SessionStatus.PENDING, "room-existing-2");
+
+        mockMvc.perform(post(SESSIONS_URI)
+                        .header(HttpHeaders.AUTHORIZATION, bearerOf(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createBody(failedResume(userId), "THIRTY_MIN", "BACKEND")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("R011"));
+
+        assertThat(sessionRepository.count()).isEqualTo(1);
+        assertThat(statusOfSession(pendingId)).isEqualTo("PENDING");
+        // 룸은 트랜잭션 전에 선생성됐다가 거부(롤백)와 함께 보상 삭제된다 — 기존 룸은 미접촉
+        ArgumentCaptor<String> room = ArgumentCaptor.forClass(String.class);
+        verify(roomManager).createRoom(room.capture());
+        verify(roomManager).deleteRoomQuietly(room.getValue());
+        verify(roomManager, never()).deleteRoomQuietly("room-existing-2");
     }
 
     // ─── 기존 세션 정리 ───
@@ -316,11 +333,12 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
 
     @ParameterizedTest
     @EnumSource(value = SessionStatus.class, names = {"ACTIVE", "INTERRUPTED", "AGENT_LOST"})
-    @DisplayName("진행 중 세션이 있으면 409 S003으로 거부되고 아무것도 변하지 않는다")
+    @DisplayName("진행 중 세션이 있으면 409 S003 — DB 무변화, 선생성 룸만 보상 삭제되고 진행 중 룸은 미접촉")
     void inProgressSessionBlocksCreation(SessionStatus inProgress) throws Exception {
         long userId = saveUser("kakao-s-32-" + inProgress.name());
         long resumeId = embeddedResume(userId);
-        long sessionId = sessionInStatus(userId, resumeId, inProgress, "room-live-" + inProgress.name());
+        String liveRoom = "room-live-" + inProgress.name();
+        long sessionId = sessionInStatus(userId, resumeId, inProgress, liveRoom);
 
         mockMvc.perform(post(SESSIONS_URI)
                         .header(HttpHeaders.AUTHORIZATION, bearerOf(userId))
@@ -331,7 +349,11 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
 
         assertThat(statusOfSession(sessionId)).isEqualTo(inProgress.name());
         assertThat(sessionRepository.count()).isEqualTo(1);
-        verifyNoInteractions(roomManager);
+        // 선생성된 룸은 거부(롤백)와 함께 보상 삭제되고, 진행 중 면접의 룸은 건드리지 않는다
+        ArgumentCaptor<String> room = ArgumentCaptor.forClass(String.class);
+        verify(roomManager).createRoom(room.capture());
+        verify(roomManager).deleteRoomQuietly(room.getValue());
+        verify(roomManager, never()).deleteRoomQuietly(liveRoom);
     }
 
     @Test
@@ -357,8 +379,8 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
     // ─── 룸 생성 실패 (S002) ───
 
     @Test
-    @DisplayName("룸 생성 실패는 500 S002 — 커밋된 PENDING 잔존·기존 세션 ABORTED 확정·신규 룸 보상 삭제 시도")
-    void roomCreateFailureLeavesCommittedPendingAndCompensates() throws Exception {
+    @DisplayName("룸 선생성 실패는 500 S002 — DB 무접촉(레코드·교체 없음), 시도한 룸만 보상 삭제")
+    void roomCreateFailureLeavesNoTraceAndCompensates() throws Exception {
         long userId = saveUser("kakao-s-40");
         long resumeId = embeddedResume(userId);
         long oldPendingId = sessionInStatus(userId, resumeId, SessionStatus.PENDING, "room-old-s002");
@@ -372,19 +394,15 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.error.code").value("S002"));
 
-        // 커밋은 룸 생성보다 먼저다 — 신규 PENDING이 남고, 기존 세션의 교체(ABORTED)도 확정된다.
-        // 잔여물은 다음 생성의 자동 교체가 수렴시킨다 (PRD 기능 2 — 실패 시 처리)
-        assertThat(sessionRepository.count()).isEqualTo(2);
-        assertThat(statusOfSession(oldPendingId)).isEqualTo("ABORTED");
-        assertThat(sessionRepository.findByUserIdAndStatusIn(userId, java.util.Set.of(SessionStatus.PENDING)))
-                .hasSize(1);
+        // 룸 선생성은 DB 접촉 전이다 — 세션도, 기존 PENDING의 교체도 일어나지 않는다 (PRD 기능 2)
+        assertThat(sessionRepository.count()).isEqualTo(1);
+        assertThat(statusOfSession(oldPendingId)).isEqualTo("PENDING");
 
-        // 보상 — 타임아웃은 룸이 실제로 만들어졌을 수 있으므로 생성 시도한 이름으로 삭제를 시도하고,
-        // 확정된 교체의 기존 룸도 성공·실패와 무관하게 정리를 시도한다
+        // 보상 — 타임아웃은 룸이 실제로 만들어졌을 수 있으므로 시도한 이름으로 삭제한다. 기존 룸은 미접촉
         ArgumentCaptor<String> room = ArgumentCaptor.forClass(String.class);
         verify(roomManager).createRoom(room.capture());
         verify(roomManager).deleteRoomQuietly(room.getValue());
-        verify(roomManager).deleteRoomQuietly("room-old-s002");
+        verify(roomManager, never()).deleteRoomQuietly("room-old-s002");
     }
 
     @Test

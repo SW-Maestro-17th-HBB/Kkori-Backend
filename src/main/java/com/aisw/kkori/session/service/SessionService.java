@@ -23,11 +23,15 @@ import java.util.UUID;
 /**
  * 면접 세션 생성 오케스트레이션 (docs/requirements/session/interview-session-creation.md).
  *
- * <p><b>트랜잭션 경계</b>: DB 작업(검증·교체·INSERT)만 트랜잭션으로 묶고, LiveKit 왕복(룸
- * 생성·삭제)과 토큰 발급은 <b>커밋 후 트랜잭션 밖</b>에서 수행한다 — 외부 응답을 기다리는
- * 동안 DB 커넥션과 user 행 잠금을 들지 않기 위함이다(직렬화가 실제로 필요한 구간은 순수 DB
- * 작업뿐). 그 대가로 룸 생성·토큰 발급이 실패하면 <b>룸 없는 PENDING 세션이 커밋된 채
- * 남는데</b>, 이는 다음 생성 요청의 PENDING 자동 교체가 정리한다(재시도로 자연 복구).
+ * <p><b>트랜잭션 경계</b>: LiveKit 룸을 <b>트랜잭션 전에 선생성</b>하고, DB 작업(검증·교체·INSERT)만
+ * 트랜잭션으로 묶은 뒤, 토큰 발급(로컬 서명)·기존 룸 정리는 커밋 후에 한다 — 외부 응답을
+ * 기다리는 동안 DB 커넥션과 user 행 잠금을 들지 않기 위함이다(직렬화가 필요한 구간은 순수 DB
+ * 작업뿐). 선생성 덕에 <b>"세션 행이 존재하면 룸은 이미 존재한다"는 불변식</b>이 성립해,
+ * 동시 생성이 이 세션을 교체(ABORTED)하며 수행하는 룸 삭제가 항상 실효적이다(생성 중 세션을
+ * 교체가 앞질러 삭제가 헛도는 경합 차단). 실패 모델: 룸 생성 실패(S002)는 DB 접촉 전이라
+ * 무흔적, 트랜잭션 실패는 롤백 + 선생성 룸 보상 삭제, 토큰 서명 실패(S001)만 커밋된 PENDING이
+ * 잔존하며 다음 생성의 자동 교체가 수렴시킨다. 대가로 검증 거부(403/404/409)될 요청도 룸을
+ * 선생성·즉시 삭제하는 왕복 낭비가 있으나 빈도가 낮아 수용한다(PRD 기능 2).
  *
  * <p>동일 유저의 세션 생성과 이력서 상태 변경(수정·재분석)은 <b>user 행 잠금을 직렬화
  * 지점으로 공유</b>한다 — 이력서 검증(EMBEDDED)과 세션 생성 사이에 삭제·재분석이 끼어들어
@@ -56,32 +60,48 @@ public class SessionService {
 
     /** 면접 유형·직무·대상 이력서를 검증하고 PENDING 세션을 생성해 룸·토큰과 함께 반환한다. */
     public InterviewSessionCreateResponse create(Long userId, InterviewSessionCreateRequest request) {
-        // [트랜잭션] 검증~레코드 생성 — 커밋과 함께 user 잠금·커넥션이 해제된다
-        CreationPlan plan = transactionTemplate.execute(status -> planInTransaction(userId, request));
-
-        // [트랜잭션 밖] LiveKit 왕복·토큰 발급 — 실패해도 커밋된 PENDING은 남으며(룸 미보장),
-        // 다음 생성의 자동 교체가 정리한다. 어떤 결과든 교체된 기존 세션의 룸은 정리를 시도한다.
+        // [트랜잭션 전] 룸 선생성 — 실패(S002)는 DB 접촉 전이라 아무 흔적도 남기지 않는다.
+        // 세션 행보다 룸이 먼저 존재해야, 동시 생성의 교체가 수행하는 룸 삭제가 항상 실효적이다.
+        String roomName = ROOM_PREFIX + UUID.randomUUID();
         try {
-            roomManager.createRoom(plan.roomName());
-            SessionTicket ticket = ticketIssuer.issue(IDENTITY_PREFIX + plan.sessionId(), plan.roomName());
-            return new InterviewSessionCreateResponse(
-                    plan.sessionId(), ticket.token(), ticket.serverUrl(), plan.roomName());
+            roomManager.createRoom(roomName);
         } catch (RuntimeException e) {
-            // 룸 생성 타임아웃은 "룸이 안 만들어졌다"가 아니라 "응답을 못 받았다"일 수 있고,
-            // 토큰 실패 시엔 룸이 실제로 존재한다 — 두 경우 모두 신규 룸을 best-effort로 보상 삭제한다.
-            deleteQuietly(plan.roomName());
+            // 타임아웃은 룸이 실제로 만들어졌을 수 있다(응답만 유실) — 시도한 이름으로 보상 삭제한다
+            deleteQuietly(roomName);
+            throw e;
+        }
+
+        // [트랜잭션] 검증~레코드 생성 — 커밋과 함께 user 잠금·커넥션이 해제된다.
+        // 실패(검증 거부·경합 중단)는 전체 롤백이므로 선생성한 룸을 보상 삭제한다.
+        CreationPlan plan;
+        try {
+            plan = transactionTemplate.execute(status -> planInTransaction(userId, request, roomName));
+        } catch (RuntimeException e) {
+            deleteQuietly(roomName);
+            throw e;
+        }
+
+        // [커밋 후] 토큰 발급(로컬 서명) — 실패(S001)해도 커밋된 PENDING은 남으며 다음 생성의
+        // 자동 교체가 수렴시킨다. 어떤 결과든 교체된 기존 세션의 룸은 정리를 시도한다.
+        try {
+            SessionTicket ticket = ticketIssuer.issue(IDENTITY_PREFIX + plan.sessionId(), roomName);
+            return new InterviewSessionCreateResponse(
+                    plan.sessionId(), ticket.token(), ticket.serverUrl(), roomName);
+        } catch (RuntimeException e) {
+            deleteQuietly(roomName);
             throw e;
         } finally {
-            // 교체(ABORTED)는 이미 커밋으로 확정됐으므로 성공·실패와 무관하게 기존 룸을 정리한다
+            // 교체(ABORTED)는 커밋으로 확정됐고, 선생성 불변식 덕에 그 룸들은 반드시 실존한다
             plan.abortedRooms().forEach(this::deleteQuietly);
         }
     }
 
     /**
      * 트랜잭션 내부: user 잠금 → 이력서 검증 → 기존 세션 판정·교체 → PENDING INSERT.
-     * 여기서 던지는 예외는 전부 롤백으로 이어져 아무 흔적도 남기지 않는다(시끄러운 실패).
+     * 여기서 던지는 예외는 전부 롤백으로 이어져 DB에는 아무 흔적도 남기지 않는다(선생성 룸은
+     * 호출측이 보상 삭제).
      */
-    private CreationPlan planInTransaction(Long userId, InterviewSessionCreateRequest request) {
+    private CreationPlan planInTransaction(Long userId, InterviewSessionCreateRequest request, String roomName) {
         // 1) user 행 잠금 + 활성 재확인 — 탈퇴가 선점했으면 401. 잠금 순서는 user 선행(E1 계약과 무충돌)
         userRepository.findActiveWithLock(userId);
 
@@ -118,10 +138,9 @@ public class SessionService {
         }
 
         // 5) 신규 세션 저장 — IDENTITY 전략이라 저장 즉시 id가 확보된다 (identity 파생에 필요)
-        String roomName = ROOM_PREFIX + UUID.randomUUID();
         InterviewSession session = sessionRepository.save(InterviewSession.pending(
                 userId, request.resumeId(), request.interviewType(), request.position(), roomName));
-        return new CreationPlan(session.getId(), roomName, abortedRooms);
+        return new CreationPlan(session.getId(), abortedRooms);
     }
 
     /** 룸 삭제는 quiet 계약이지만, 구현 결함으로 던져도 응답·다른 정리에 전파되지 않게 항목별로 격리한다. */
@@ -133,7 +152,7 @@ public class SessionService {
         }
     }
 
-    /** 트랜잭션이 커밋한 결과 중 트랜잭션 밖 단계가 필요로 하는 것들. */
-    private record CreationPlan(long sessionId, String roomName, List<String> abortedRooms) {
+    /** 트랜잭션이 커밋한 결과 중 커밋 후 단계가 필요로 하는 것들. */
+    private record CreationPlan(long sessionId, List<String> abortedRooms) {
     }
 }
