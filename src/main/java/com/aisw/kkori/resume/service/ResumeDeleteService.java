@@ -1,9 +1,6 @@
 package com.aisw.kkori.resume.service;
 
-import com.aisw.kkori.global.exception.BusinessException;
-import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.resume.domain.Resume;
-import com.aisw.kkori.resume.repository.ResumeRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,17 +18,13 @@ import java.time.Clock;
 @RequiredArgsConstructor
 public class ResumeDeleteService {
 
-    private final ResumeRepository resumeRepository;
+    private final ResumeAccessGuard accessGuard;
     private final Clock clock;
 
     @Transactional
     public void delete(Long userId, Long resumeId) {
-        // 접근 가드는 파싱 API와 동일한 순서: 존재(404) → 소유(403). 이미 삭제된 이력서는 @SQLRestriction으로 404.
-        Resume resume = resumeRepository.findById(resumeId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND));
-        if (!resume.getUserId().equals(userId)) {
-            throw new BusinessException(ErrorCode.RESUME_FORBIDDEN);
-        }
+        // 존재(404) → 소유(403) — 이미 삭제된 이력서는 @SQLRestriction으로 404에 수렴한다
+        Resume resume = accessGuard.findAuthorized(userId, resumeId);
         // TODO(면접 도메인): 진행 중인 면접 세션에서 사용 중인 이력서는 삭제 차단 (RESUME_IN_USE) — 세션 테이블 도입 시 구현
         resume.softDelete(clock.instant());
     }
