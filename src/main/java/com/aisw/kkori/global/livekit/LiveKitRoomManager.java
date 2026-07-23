@@ -14,8 +14,9 @@ import java.io.IOException;
 /**
  * LiveKit Server API로 룸을 생성·삭제하는 벤더 어댑터.
  *
- * <p>호출에는 짧은 타임아웃({@code livekit.api-timeout})을 걸고 재시도하지 않는다 — 룸 생성은
- * user 행 잠금을 보유한 채 일어나는 외부 왕복이므로 타임아웃이 잠금 보유 시간의 상한이다.
+ * <p>호출에는 짧은 타임아웃({@code livekit.api-timeout})을 걸고 재시도하지 않는다 — 호출은
+ * 트랜잭션·잠금 밖(커밋 후)에서 일어나며, 타임아웃은 요청 스레드가 LiveKit 지연에 붙잡히는
+ * 시간의 상한이다.
  * 로깅 인터셉터 없는 OkHttp를 직접 공급하므로 SDK가 요청(Authorization 헤더 — API Secret
  * 파생)을 로그에 남기지 않는다. 실패 예외의 원인을 감싸지 않는 것도 같은 유출 방지
  * 방침이다({@link LiveKitTokenIssuer}와 동일).

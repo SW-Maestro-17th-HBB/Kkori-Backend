@@ -12,8 +12,7 @@ import com.aisw.kkori.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -23,6 +22,12 @@ import java.util.UUID;
 
 /**
  * 면접 세션 생성 오케스트레이션 (docs/requirements/session/interview-session-creation.md).
+ *
+ * <p><b>트랜잭션 경계</b>: DB 작업(검증·교체·INSERT)만 트랜잭션으로 묶고, LiveKit 왕복(룸
+ * 생성·삭제)과 토큰 발급은 <b>커밋 후 트랜잭션 밖</b>에서 수행한다 — 외부 응답을 기다리는
+ * 동안 DB 커넥션과 user 행 잠금을 들지 않기 위함이다(직렬화가 실제로 필요한 구간은 순수 DB
+ * 작업뿐). 그 대가로 룸 생성·토큰 발급이 실패하면 <b>룸 없는 PENDING 세션이 커밋된 채
+ * 남는데</b>, 이는 다음 생성 요청의 PENDING 자동 교체가 정리한다(재시도로 자연 복구).
  *
  * <p>동일 유저의 세션 생성과 이력서 상태 변경(수정·재분석)은 <b>user 행 잠금을 직렬화
  * 지점으로 공유</b>한다 — 이력서 검증(EMBEDDED)과 세션 생성 사이에 삭제·재분석이 끼어들어
@@ -46,11 +51,37 @@ public class SessionService {
     private final ResumeAccessGuard resumeAccessGuard;
     private final SessionRoomManager roomManager;
     private final SessionTicketIssuer ticketIssuer;
+    private final TransactionTemplate transactionTemplate;
     private final Clock clock;
 
     /** 면접 유형·직무·대상 이력서를 검증하고 PENDING 세션을 생성해 룸·토큰과 함께 반환한다. */
-    @Transactional
     public InterviewSessionCreateResponse create(Long userId, InterviewSessionCreateRequest request) {
+        // [트랜잭션] 검증~레코드 생성 — 커밋과 함께 user 잠금·커넥션이 해제된다
+        CreationPlan plan = transactionTemplate.execute(status -> planInTransaction(userId, request));
+
+        // [트랜잭션 밖] LiveKit 왕복·토큰 발급 — 실패해도 커밋된 PENDING은 남으며(룸 미보장),
+        // 다음 생성의 자동 교체가 정리한다. 어떤 결과든 교체된 기존 세션의 룸은 정리를 시도한다.
+        try {
+            roomManager.createRoom(plan.roomName());
+            SessionTicket ticket = ticketIssuer.issue(IDENTITY_PREFIX + plan.sessionId(), plan.roomName());
+            return new InterviewSessionCreateResponse(
+                    plan.sessionId(), ticket.token(), ticket.serverUrl(), plan.roomName());
+        } catch (RuntimeException e) {
+            // 룸 생성 타임아웃은 "룸이 안 만들어졌다"가 아니라 "응답을 못 받았다"일 수 있고,
+            // 토큰 실패 시엔 룸이 실제로 존재한다 — 두 경우 모두 신규 룸을 best-effort로 보상 삭제한다.
+            deleteQuietly(plan.roomName());
+            throw e;
+        } finally {
+            // 교체(ABORTED)는 이미 커밋으로 확정됐으므로 성공·실패와 무관하게 기존 룸을 정리한다
+            plan.abortedRooms().forEach(this::deleteQuietly);
+        }
+    }
+
+    /**
+     * 트랜잭션 내부: user 잠금 → 이력서 검증 → 기존 세션 판정·교체 → PENDING INSERT.
+     * 여기서 던지는 예외는 전부 롤백으로 이어져 아무 흔적도 남기지 않는다(시끄러운 실패).
+     */
+    private CreationPlan planInTransaction(Long userId, InterviewSessionCreateRequest request) {
         // 1) user 행 잠금 + 활성 재확인 — 탈퇴가 선점했으면 401. 잠금 순서는 user 선행(E1 계약과 무충돌)
         userRepository.findActiveWithLock(userId);
 
@@ -90,17 +121,19 @@ public class SessionService {
         String roomName = ROOM_PREFIX + UUID.randomUUID();
         InterviewSession session = sessionRepository.save(InterviewSession.pending(
                 userId, request.resumeId(), request.interviewType(), request.position(), roomName));
+        return new CreationPlan(session.getId(), roomName, abortedRooms);
+    }
 
-        // 6) 정리·보상 동기화 등록 — 반드시 createRoom 전에. 타임아웃은 룸이 실제로 만들어졌을 수
-        //    있으므로(응답만 유실) 룸 생성 실패 경로에서도 보상 삭제가 시도되어야 한다.
-        TransactionSynchronizationManager.registerSynchronization(
-                new SessionRoomCleanup(roomManager, roomName, abortedRooms));
+    /** 룸 삭제는 quiet 계약이지만, 구현 결함으로 던져도 응답·다른 정리에 전파되지 않게 항목별로 격리한다. */
+    private void deleteQuietly(String roomName) {
+        try {
+            roomManager.deleteRoomQuietly(roomName);
+        } catch (RuntimeException e) {
+            log.warn("룸 삭제 중 예외 — quiet 계약 위반 가능성, 무시하고 진행 (room={})", roomName, e);
+        }
+    }
 
-        // 7) 룸 명시 생성 — 실패 시 S002로 전체 롤백 (기존 세션 교체도 함께 되돌아간다)
-        roomManager.createRoom(roomName);
-
-        // 8) 토큰 발급 — 세션 파생 신원(candidate-{sessionId}, 저장 없음), 실패 시 S001로 전체 롤백
-        SessionTicket ticket = ticketIssuer.issue(IDENTITY_PREFIX + session.getId(), roomName);
-        return new InterviewSessionCreateResponse(session.getId(), ticket.token(), ticket.serverUrl(), roomName);
+    /** 트랜잭션이 커밋한 결과 중 트랜잭션 밖 단계가 필요로 하는 것들. */
+    private record CreationPlan(long sessionId, String roomName, List<String> abortedRooms) {
     }
 }

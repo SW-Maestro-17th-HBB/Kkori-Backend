@@ -18,6 +18,7 @@ import java.util.Base64;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -356,11 +357,11 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
     // ─── 룸 생성 실패 (S002) ───
 
     @Test
-    @DisplayName("룸 생성 실패는 500 S002 — 레코드 롤백·기존 PENDING 보존·신규 룸 보상 삭제 시도")
-    void roomCreateFailureRollsBackAndCompensates() throws Exception {
+    @DisplayName("룸 생성 실패는 500 S002 — 커밋된 PENDING 잔존·기존 세션 ABORTED 확정·신규 룸 보상 삭제 시도")
+    void roomCreateFailureLeavesCommittedPendingAndCompensates() throws Exception {
         long userId = saveUser("kakao-s-40");
         long resumeId = embeddedResume(userId);
-        long pendingId = sessionInStatus(userId, resumeId, SessionStatus.PENDING, "room-keep");
+        long oldPendingId = sessionInStatus(userId, resumeId, SessionStatus.PENDING, "room-old-s002");
         doThrow(new BusinessException(ErrorCode.SESSION_ROOM_CREATE_FAILED))
                 .when(roomManager).createRoom(anyString());
 
@@ -371,15 +372,45 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.error.code").value("S002"));
 
-        // 롤백 — 신규 레코드 없음, 기존 PENDING의 교체도 되돌아감
-        assertThat(sessionRepository.count()).isEqualTo(1);
-        assertThat(statusOfSession(pendingId)).isEqualTo("PENDING");
+        // 커밋은 룸 생성보다 먼저다 — 신규 PENDING이 남고, 기존 세션의 교체(ABORTED)도 확정된다.
+        // 잔여물은 다음 생성의 자동 교체가 수렴시킨다 (PRD 기능 2 — 실패 시 처리)
+        assertThat(sessionRepository.count()).isEqualTo(2);
+        assertThat(statusOfSession(oldPendingId)).isEqualTo("ABORTED");
+        assertThat(sessionRepository.findByUserIdAndStatusIn(userId, java.util.Set.of(SessionStatus.PENDING)))
+                .hasSize(1);
 
-        // 보상 — 타임아웃은 룸이 실제로 만들어졌을 수 있으므로 생성 시도한 이름으로 삭제를 시도한다
+        // 보상 — 타임아웃은 룸이 실제로 만들어졌을 수 있으므로 생성 시도한 이름으로 삭제를 시도하고,
+        // 확정된 교체의 기존 룸도 성공·실패와 무관하게 정리를 시도한다
         ArgumentCaptor<String> room = ArgumentCaptor.forClass(String.class);
         verify(roomManager).createRoom(room.capture());
         verify(roomManager).deleteRoomQuietly(room.getValue());
-        verify(roomManager, never()).deleteRoomQuietly("room-keep");
+        verify(roomManager).deleteRoomQuietly("room-old-s002");
+    }
+
+    @Test
+    @DisplayName("룸 생성 실패 후 재시도는 잔존 PENDING을 자동 교체하고 정상 생성된다 (실패 잔여물의 수렴 경로)")
+    void retryAfterRoomFailureConvergesViaReplacement() throws Exception {
+        long userId = saveUser("kakao-s-42");
+        long resumeId = embeddedResume(userId);
+        doThrow(new BusinessException(ErrorCode.SESSION_ROOM_CREATE_FAILED))
+                .when(roomManager).createRoom(anyString());
+        mockMvc.perform(post(SESSIONS_URI)
+                        .header(HttpHeaders.AUTHORIZATION, bearerOf(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createBody(resumeId, "THIRTY_MIN", "BACKEND")))
+                .andExpect(status().isInternalServerError());
+
+        doNothing().when(roomManager).createRoom(anyString());
+        ResultActions retry = mockMvc.perform(post(SESSIONS_URI)
+                        .header(HttpHeaders.AUTHORIZATION, bearerOf(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createBody(resumeId, "THIRTY_MIN", "BACKEND")))
+                .andExpect(status().isCreated());
+
+        assertThat(sessionRepository.findByUserIdAndStatusIn(userId, SessionStatus.NON_TERMINAL))
+                .hasSize(1)
+                .first()
+                .satisfies(s -> assertThat(s.getId()).isEqualTo(dataLong(retry, "id")));
     }
 
     // ─── 인증 ───
