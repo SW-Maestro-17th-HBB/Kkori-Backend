@@ -138,7 +138,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 ### 기타 요구사항
 
 - **평가·조인 단위는 질문 단위(questionNumber)로 확정 (2026-07-23)** — 대본이 세션당 1행 JSON으로 변경되면서 발화 행 FK가 성립하지 않으므로, `REPORT_FEEDBACKS.transcript_id`는 **`question_number`(int) 컬럼으로 대체**한다(ERD 갱신 필요). Worker는 질문당 피드백 1건을 question_number와 함께 저장하고, 타임라인(§4)은 같은 키로 대본과 평가를 결합한다.
-- **대본 JSON의 스키마는 면접 도메인·Worker 소유의 계약** — 발화 요소: {questionNumber, speaker, content, questionType, spokenAt}. 리포트 도메인은 읽기 전용 소비자로서 questionNumber는 정수, speaker·questionType은 고정 값 집합(예: INTERVIEWER/USER, MAIN/TAIL), spokenAt은 ISO-8601 타임스탬프를 전제한다 — 값 집합·직렬화 형식 확정은 면접 도메인·Worker와 합의(**미정**).
+- **대본 JSON의 스키마는 면접 도메인·Worker 소유의 계약** — 발화 요소: {questionNumber, parentQuestionNumber, speaker, content, questionType, spokenAt}. **questionNumber는 질문-답변 쌍의 전체 순번이다(꼬리 포함 연속 증가, 항상 유일 — 2026-07-24 확정)**: 질문-답변 매칭(같은 번호 + speaker)과 답변별 평가 조인의 키. **parentQuestionNumber는 소속 본질문의 번호다(본질문은 자기 번호와 동일 — 2026-07-24 채택)**: 에이전트의 세션 중 주제 맥락 조회용이며, 리포트는 꼬리 소속 표시에 그대로 전달만 한다. 리포트 도메인은 읽기 전용 소비자로서 번호는 정수, speaker·questionType은 고정 값 집합(예: INTERVIEWER/USER, MAIN/TAIL), spokenAt은 ISO-8601 타임스탬프를 전제한다 — 값 집합·직렬화 형식 확정은 면접 도메인·Worker와 합의(**미정**).
 - **스냅샷의 원천인 세션의 면접 시간 컬럼이 현재 ERD의 `INTERVIEW_SESSIONS`에 없다** — 면접 유형 선택(HBB1-18)을 설계하는 면접 도메인에서 도입 예정(유형 선택이 정한 시간(분)을 세션에 기록). 도입 전까지 스냅샷 채움 규칙은 미정.
 - **녹음·음성 분석의 남은 확정 사항** — 자체 호스팅 LiveKit의 Egress 설정(사용자 트랙 분리 녹음), 음성 업로드 이벤트의 발행 시점·필드(세션 도메인 소관), 음성 유예 시간 값, audio_usage 동의와 녹음의 연결. 확정 전까지 Worker는 텍스트 3축으로만 동작하고 delivery_score는 null이다.
 - **계약 변경 권한은 백엔드** — 스트림·상태·점수 산식·jsonb 계약이 양 repo에서 어긋나면 본 문서와 계약 record가 우선한다(이력서와 동일). Worker PRD는 계약 전문의 자기완결 사본을 유지한다.
@@ -292,7 +292,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 
 사용자는 리포트에서 면접의 질문-답변 흐름을 복기할 수 있다(`GET /api/v1/reports/{reportId}/timeline`).
 
-- 해당 세션의 대본(`INTERVIEW_TRANSCRIPTS` — 세션당 1행, 발화 배열 JSON)을 **질문 단위(questionNumber)로 그룹핑**해 반환한다 — 항목: 질문 번호, 꼬리 질문 여부(questionType에서 유도), 질문 텍스트(면접관 발화), 답변 텍스트(같은 questionNumber의 사용자 발화를 시간순으로 연결), 답변 평가(축별 점수·피드백·약점 태그 — `question_number`로 REPORT_FEEDBACKS와 결합). 항목 순서는 발화 spokenAt 오름차순 기준이다.
+- 해당 세션의 대본(`INTERVIEW_TRANSCRIPTS` — 세션당 1행, 발화 배열 JSON)을 **질문 단위(questionNumber)로 그룹핑**해 반환한다 — 항목: 질문 번호, 꼬리 질문 여부(questionType에서 유도), 소속 본질문 번호(`parentQuestionNumber` — 대본 값 그대로 전달), 질문 텍스트(면접관 발화), 답변 텍스트(같은 questionNumber의 사용자 발화를 시간순으로 연결), 답변 평가(축별 점수·피드백·약점 태그 — `question_number`로 REPORT_FEEDBACKS와 결합). 항목 순서는 발화 spokenAt 오름차순 기준이다.
 - 답변 평가는 REPORT_FEEDBACKS를 결합한다. 평가 인용 근거(`resume_context`)의 노출 여부·형태는 화면 설계 확정 후 결정한다(**미정** — 현재 응답에 포함하지 않는다).
 - 타임라인은 리포트 복기 화면의 일부이므로 상세와 동일하게 **COMPLETED에서만** 조회 가능하다.
 - transcripts는 면접 도메인 소유 테이블이다 — 리포트 도메인은 **읽기 전용으로만 접근**하며, 스키마 변경 권한은 면접 도메인에 있다.
@@ -305,7 +305,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 ### 검증 기준
 
 - 타임라인이 질문 단위로 그룹핑되어 spoken_at 오름차순으로 반환되는지 확인
-- 꼬리 질문이 isTailQuestion=true로 표시되는지 확인
+- 꼬리 질문이 isTailQuestion=true로 표시되고 parentQuestionNumber가 대본 값 그대로 반환되는지 확인
 - 각 항목에 질문·답변 텍스트와 축별 점수·피드백·약점 태그가 결합되어 반환되는지 확인
 - 응답에 resume_context가 포함되지 않는지 확인
 - 접근 권한·상태 규칙이 §3과 동일하게 적용되는지 확인 (403/404/409)
@@ -326,6 +326,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
     {
       "questionNumber": 1,
       "isTailQuestion": false,
+      "parentQuestionNumber": 1,
       "question": "자기소개를 부탁드려요.",
       "answer": "안녕하세요, 3년차 백엔드 개발자 ...",
       "evaluation": {
@@ -339,6 +340,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
     {
       "questionNumber": 2,
       "isTailQuestion": true,
+      "parentQuestionNumber": 1,
       "question": "그 결정에서 가장 어려웠던 점은?",
       "answer": "가장 어려웠던 부분은 ...",
       "evaluation": {
@@ -359,7 +361,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 
 ### 기타 요구사항
 
-- 질문-답변 그룹핑의 유일 키는 questionNumber다(같은 번호의 면접관 발화=질문, 사용자 발화=답변). speaker·questionType 값 집합 등 대본 JSON 스키마는 §1 기타의 대본 계약 항목을 따른다.
+- 질문-답변 그룹핑의 유일 키는 questionNumber다(같은 번호의 면접관 발화=질문, 사용자 발화=답변). 꼬리의 소속 표시("꼬리 Q1")는 parentQuestionNumber를 그대로 전달받아 프론트가 쓴다 — 별도 유도 규칙 없음. speaker·questionType 값 집합 등 대본 JSON 스키마는 §1 기타의 대본 계약 항목을 따른다.
 - 세션 soft delete(`INTERVIEW_SESSIONS.deleted_at`)·transcripts 삭제와 리포트 조회의 관계는 면접 도메인의 삭제 정책 확정 시 정합을 재확인한다(**면접 도메인 의존**).
 
 ---
