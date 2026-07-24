@@ -76,7 +76,10 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 - **발행 측(세션 도메인) 요구사항** — 면접 도메인 설계에 전달: 세션 종료 기록과 이벤트 발행을 한 처리 단위로 묶고, 처리 실패 시 5xx 응답으로 LiveKit 웹훅 재전송을 유도한다. `WEBHOOK_EVENTS` 멱등 기록은 처리 성공 시에만 `processed_at`을 남겨 재전송이 안전하게 재처리되게 한다.
 - **조정 배치 (최후 안전망, Worker 소유)**: "정상 종료(`ended_at` 존재) + **리포트 로우 부재** + 유예 시간 경과" 세션을 주기적으로 찾아 세션 종료 이벤트 소비와 동일한 처리를 수행한다. **판정 기준은 로우 부재이며, 상태(COMPLETED 여부) 기준을 쓰지 않는다** — 상태 기준이면 오래 걸리는 생성·FAILED를 재생성하는 오탐이 생긴다. Worker는 소비 초반에 PENDING 로우를 만들므로 생성 소요 시간은 판정에 영향이 없다. 지연 소비와의 레이스는 `interview_session_id` 유니크가 무해화한다. **PENDING/PROCESSING 정체는 메시지 회수(XAUTOCLAIM) 소관, FAILED 복구는 사용자의 재생성 API 소관** — 배치는 이들을 건드리지 않는다. 단 하나의 예외로, **텍스트 분석은 끝났는데 음성 분석이 유예 시간을 넘긴 리포트를 delivery null로 완성(COMPLETED) 처리하는 규칙**도 이 배치가 함께 수행한다.
 - **실패·재시도**: Worker가 소비하는 스트림(세션 종료·음성 업로드·재생성 요청)은 모두 Consumer Group 기반 at-least-once이며, 처리는 sessionId(또는 reportId) 기준 멱등이어야 한다. **모든 세션 종료 이벤트는 반드시 COMPLETED/FAILED로 끝나거나 스킵 ACK된다** — Worker는 ACK 없이 방치된 메시지를 회수(XAUTOCLAIM)해 재평가하고, 재전달 횟수가 임계를 넘으면 FAILED로 종결한다(`failed_reason` 기록). idle time·임계값·내부 재시도 수치는 Worker PRD 소관. 이력서와 달리 트리거가 시스템이므로 **자동 재시도를 허용**하되, FAILED 종결 후의 복구 주체는 사용자다(아래 재생성).
-- **FAILED 재생성**(`POST /api/v1/reports/{reportId}/retry`): **본인 리포트에만** 가능하다(타인 리포트 403 REPORT_FORBIDDEN, 없는 리포트 404 REPORT_NOT_FOUND). FAILED 리포트에 한해 Spring이 기존 산출물 무효화·PENDING 전환·**재생성 요청 발행**을 **한 트랜잭션으로** 처리하고(발행도 트랜잭션 안 — 실패하면 전부 되돌아가 FAILED 유지), Worker가 재생성 요청을 소비해 1단계부터 다시 수행한다. 발행만 실패해서 다시 시도할 길이 없는 PENDING에 갇히는 경우가 없고, 발행 성공 후 커밋만 실패해 남는 메시지는 Worker가 소비해도 무해하다(FAILED 리포트의 재평가는 사용자가 의도한 결과와 같음). Job의 `requested_at`을 갱신한다(`retry_count`는 Worker 소관 — 서버는 초기화하지 않는다).
+- **FAILED 재생성**(`POST /api/v1/reports/{reportId}/retry`): **본인 리포트에만** 가능하다(타인 리포트 403 REPORT_FORBIDDEN, 없는 리포트 404 REPORT_NOT_FOUND). FAILED 리포트에 한해 Spring이 이전 런 흔적 초기화·PENDING 전환·**재생성 요청 발행**을 **한 트랜잭션으로** 처리하고(발행도 트랜잭션 안 — 실패하면 전부 되돌아가 FAILED 유지), Worker가 재생성 요청을 소비해 1단계부터 다시 수행한다. 이력서 재분석과 같은 구조이며, 세부 규칙도 동일하게 맞춘다:
+  - **이전 런 흔적 초기화 (Spring)**: REPORTS의 결과 컬럼을 지운다 — `failed_reason`, `completed_at`, `text_analyzed_at`, `audio_analyzed_at`, `overall_score`, `delivery_score`, `summary`, `weakness_tag_summary`. REPORT_SCORES·REPORT_FEEDBACKS 행의 정리는 Worker가 재저장 시 수행한다(1단계의 "저장 전 기존 산출물이 있으면 지우고 다시 저장" 규칙 — 이력서에서 청크 정리가 Worker 몫인 것과 동일한 분담).
+  - **검사와 전환 사이의 잠금**: 상태 검사(FAILED인지) 후 전환하는 트랜잭션은 리포트 행을 잠그고 읽는다 — 검사와 커밋 사이에 다른 요청(연속 클릭 등)이 상태를 바꾸면 낡은 판정으로 통과하기 때문(이력서 재분석의 선례).
+  - 발행만 실패해서 다시 시도할 길이 없는 PENDING에 갇히는 경우가 없고, 발행 성공 후 커밋만 실패해 남는 메시지는 Worker가 소비해도 무해하다(FAILED 리포트의 재평가는 사용자가 의도한 결과와 같음). Job의 `requested_at`을 갱신한다(`retry_count`는 Worker 소관 — 서버는 초기화하지 않는다).
 
 ### 실행 조건
 
@@ -111,6 +114,8 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 - FAILED가 아닌 리포트에 재생성 요청 시 409(진행 중이면 REPORT_GENERATION_IN_PROGRESS, COMPLETED면 REPORT_RETRY_NOT_ALLOWED)로 거부되는지 확인
 - 다른 사용자의 리포트에 재생성 요청 시 403(REPORT_FORBIDDEN)이 반환되는지 확인
 - 재생성 처리 도중 실패하면 리포트가 FAILED로 유지되는지 확인 (다시 시도할 길 없는 PENDING에 갇히지 않음)
+- 재생성 시 이전 런의 결과 컬럼(실패 사유·점수·총평·태그 요약·완료 시각들)이 초기화되는지 확인
+- 같은 리포트에 재생성 요청이 거의 동시에 들어와도 한 번만 처리되고 나머지는 409로 거부되는지 확인
 - 재생성 후 완료 시 이전 산출물(점수·피드백)이 새 결과로 대체되는지 확인 (중복 누적 없음)
 
 ### 성능 요구사항
