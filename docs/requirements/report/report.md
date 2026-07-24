@@ -292,7 +292,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 
 사용자는 리포트에서 면접의 질문-답변 흐름을 복기할 수 있다(`GET /api/v1/reports/{reportId}/timeline`).
 
-- 해당 세션의 대본(`INTERVIEW_TRANSCRIPTS` — 세션당 1행, 발화 배열 JSON)을 **질문 단위(questionNumber)로 그룹핑**해 반환한다 — 항목: 질문 번호, 꼬리 질문 여부(questionType에서 유도), 소속 본질문 번호(`parentQuestionNumber` — 대본 값 그대로 전달), 질문 텍스트(면접관 발화), 답변 텍스트(같은 questionNumber의 사용자 발화를 시간순으로 연결), 답변 평가(축별 점수·피드백·약점 태그 — `question_number`로 REPORT_FEEDBACKS와 결합). 항목 순서는 발화 spokenAt 오름차순 기준이다.
+- 해당 세션의 대본(`INTERVIEW_TRANSCRIPTS` — 세션당 1행, 발화 배열 JSON)을 **질문 단위(questionNumber)로 그룹핑**해 반환한다 — 항목: 질문 번호, 질문 유형(`questionType` — 대본 값 그대로 전달, 본질문/꼬리 구별), 소속 본질문 번호(`parentQuestionNumber` — 대본 값 그대로 전달), 질문 텍스트(면접관 발화), 답변 텍스트(같은 questionNumber의 사용자 발화를 시간순으로 연결), 답변 평가(축별 점수·피드백·약점 태그 — `question_number`로 REPORT_FEEDBACKS와 결합). 항목 순서는 발화 spokenAt 오름차순 기준이다.
 - 답변 평가는 REPORT_FEEDBACKS를 결합한다. 평가 인용 근거(`resume_context`)의 노출 여부·형태는 화면 설계 확정 후 결정한다(**미정** — 현재 응답에 포함하지 않는다).
 - 타임라인은 리포트 복기 화면의 일부이므로 상세와 동일하게 **COMPLETED에서만** 조회 가능하다.
 - transcripts는 면접 도메인 소유 테이블이다 — 리포트 도메인은 **읽기 전용으로만 접근**하며, 스키마 변경 권한은 면접 도메인에 있다.
@@ -305,7 +305,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 ### 검증 기준
 
 - 타임라인이 질문 단위로 그룹핑되어 spoken_at 오름차순으로 반환되는지 확인
-- 꼬리 질문이 isTailQuestion=true로 표시되고 parentQuestionNumber가 대본 값 그대로 반환되는지 확인
+- questionType·parentQuestionNumber가 대본 값 그대로 반환되는지 확인 (꼬리 질문 구별은 questionType으로)
 - 각 항목에 질문·답변 텍스트와 축별 점수·피드백·약점 태그가 결합되어 반환되는지 확인
 - 응답에 resume_context가 포함되지 않는지 확인
 - 접근 권한·상태 규칙이 §3과 동일하게 적용되는지 확인 (403/404/409)
@@ -325,7 +325,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
   "items": [
     {
       "questionNumber": 1,
-      "isTailQuestion": false,
+      "questionType": "MAIN",
       "parentQuestionNumber": 1,
       "question": "자기소개를 부탁드려요.",
       "answer": "안녕하세요, 3년차 백엔드 개발자 ...",
@@ -339,7 +339,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
     },
     {
       "questionNumber": 2,
-      "isTailQuestion": true,
+      "questionType": "TAIL",
       "parentQuestionNumber": 1,
       "question": "그 결정에서 가장 어려웠던 점은?",
       "answer": "가장 어려웠던 부분은 ...",
