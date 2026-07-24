@@ -7,8 +7,8 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -26,8 +26,11 @@ import java.util.List;
  * 타임라인 API가 대본의 같은 questionNumber와 결합해 반환한다.
  */
 @Entity
-@Table(name = "report_feedbacks", indexes = {
-        @Index(name = "idx_report_feedbacks_report_id", columnList = "report_id")
+// 질문당 피드백 1건(PRD 계약)을 DB가 강제한다. report_id 단독 조회는 이 복합 인덱스의
+// 첫 컬럼으로 커버되므로 별도 인덱스를 두지 않는다.
+@Table(name = "report_feedbacks", uniqueConstraints = {
+        @UniqueConstraint(name = "uk_report_feedbacks_report_id_question_number",
+                columnNames = {"report_id", "question_number"})
 })
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)

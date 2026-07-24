@@ -83,7 +83,10 @@ public class Report extends BaseEntity {
     @Column(name = "failed_reason", columnDefinition = "text")
     private String failedReason;
 
-    /** 텍스트 분석(1단계) 완료 시각 — 음성과 함께 둘 다 채워져야 COMPLETED. */
+    /**
+     * 텍스트 분석(1단계) 완료 시각. 음성 분석 완료 시각과 둘 다 채워지면 COMPLETED로 전환된다.
+     * 단, 음성 분석이 유예 시간을 넘기면 음성 없이(delivery null) 완성 처리될 수 있다.
+     */
     @Column(name = "text_analyzed_at")
     private Instant textAnalyzedAt;
 

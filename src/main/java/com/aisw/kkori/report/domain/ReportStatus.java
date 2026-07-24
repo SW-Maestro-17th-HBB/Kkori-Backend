@@ -3,8 +3,9 @@ package com.aisw.kkori.report.domain;
 /**
  * 리포트 생성 상태 (docs/requirements/report/report.md §Overview 상태 표).
  *
- * <p>상태의 진실 원천은 REPORTS.status이며, 전이는 전부 Worker가 수행한다.
- * Spring은 조회 시 판정에만 사용한다 — COMPLETED 전에는 상세·타임라인을 열지 않는다.
+ * <p>상태의 진실 원천은 REPORTS.status이며, 생성 파이프라인의 전이는 Worker가 수행한다.
+ * 단 하나의 예외로, FAILED 재생성 시 FAILED → PENDING 전환은 Spring(재생성 API)이 수행한다.
+ * 조회 시에는 판정에만 사용한다 — COMPLETED 전에는 상세·타임라인을 열지 않는다.
  */
 public enum ReportStatus {
     /** 세션 종료로 리포트가 생성되어 평가 대기 중 */
