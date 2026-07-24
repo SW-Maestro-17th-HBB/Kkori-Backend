@@ -55,6 +55,12 @@ public enum ErrorCode {
 
     // 세션 (S) — docs/requirements/session/session.md
     SESSION_TOKEN_ISSUE_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "S001", "음성 세션 토큰 발급에 실패했습니다."),
+
+    // 리포트 (RP) — docs/requirements/report/report.md (R은 이력서가 사용 중이라 두 글자 접두사)
+    REPORT_NOT_FOUND(HttpStatus.NOT_FOUND, "RP001", "리포트를 찾을 수 없습니다."),
+    REPORT_FORBIDDEN(HttpStatus.FORBIDDEN, "RP002", "해당 리포트에 접근할 권한이 없습니다."),
+    REPORT_GENERATION_IN_PROGRESS(HttpStatus.CONFLICT, "RP003", "리포트 생성이 진행 중입니다. 완료 후 다시 시도해 주세요."),
+    REPORT_GENERATION_FAILED(HttpStatus.CONFLICT, "RP004", "리포트 생성이 실패한 상태입니다. 재생성을 요청해 주세요."),
     ;
 
     private final HttpStatus status;
