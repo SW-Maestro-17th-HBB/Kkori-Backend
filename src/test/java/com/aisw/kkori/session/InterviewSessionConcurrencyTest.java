@@ -64,7 +64,7 @@ class InterviewSessionConcurrencyTest extends InterviewSessionIntegrationTestSup
     }
 
     @Test
-    @DisplayName("생성과 재분석이 경합해도 무효 이력서를 참조하는 세션은 생기지 않는다 (R010 xor R012)")
+    @DisplayName("생성과 재분석이 경합해도 무효 이력서를 참조하는 세션은 생기지 않는다 (R010 xor R013)")
     void createVersusReanalyzeConverges() throws Exception {
         for (int i = 0; i < ITERATIONS; i++) {
             long userId = saveUser("kakao-c-2-" + i);
@@ -95,7 +95,7 @@ class InterviewSessionConcurrencyTest extends InterviewSessionIntegrationTestSup
                     .orElseThrow().getParseStatus();
 
             if (createError.get() == null) {
-                // 생성 선점 — 재분석은 사용 중 차단(R012), 이력서는 EMBEDDED 그대로
+                // 생성 선점 — 재분석은 사용 중 차단(R013), 이력서는 EMBEDDED 그대로
                 assertThat(reanalyzeError.get()).isEqualTo(ErrorCode.RESUME_IN_USE);
                 assertThat(sessionReferencing).isTrue();
                 assertThat(parseStatus).isEqualTo(AnalysisStatus.EMBEDDED);

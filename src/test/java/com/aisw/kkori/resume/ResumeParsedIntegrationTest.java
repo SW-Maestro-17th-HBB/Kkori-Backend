@@ -336,10 +336,10 @@ class ResumeParsedIntegrationTest {
         assertThat(streamRecords()).isEmpty();
     }
 
-    // ─── 사용 중 차단 (R012 — interview-session-creation.md 기능 1) ───
+    // ─── 사용 중 차단 (R013 — interview-session-creation.md 기능 1) ───
 
     @Test
-    @DisplayName("non-terminal 세션(PENDING)이 참조하는 이력서는 수정이 409 R012로 거부된다")
+    @DisplayName("non-terminal 세션(PENDING)이 참조하는 이력서는 수정이 409 R013로 거부된다")
     void updateParsed_resumeInUse_returns409() throws Exception {
         long resumeId = embeddedResume(userId);
         referencingSession(resumeId);
@@ -349,11 +349,11 @@ class ResumeParsedIntegrationTest {
                         .content(updateBody(VALID_STRUCTURED_DATA))
                         .with(authOf(userId)))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.error.code").value("R012"));
+                .andExpect(jsonPath("$.error.code").value("R013"));
     }
 
     @Test
-    @DisplayName("ACTIVE 세션이 참조하는 이력서도 동일하게 R012로 차단된다")
+    @DisplayName("ACTIVE 세션이 참조하는 이력서도 동일하게 R013로 차단된다")
     void updateParsed_activeSessionInUse_returns409() throws Exception {
         long resumeId = embeddedResume(userId);
         long sessionId = referencingSession(resumeId);
@@ -364,18 +364,18 @@ class ResumeParsedIntegrationTest {
                         .content(updateBody(VALID_STRUCTURED_DATA))
                         .with(authOf(userId)))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.error.code").value("R012"));
+                .andExpect(jsonPath("$.error.code").value("R013"));
     }
 
     @Test
-    @DisplayName("사용 중 이력서는 재분석도 409 R012로 거부되고 아무것도 발행되지 않는다")
+    @DisplayName("사용 중 이력서는 재분석도 409 R013로 거부되고 아무것도 발행되지 않는다")
     void reanalyze_resumeInUse_returns409WithoutPublishing() throws Exception {
         long resumeId = embeddedResume(userId);
         referencingSession(resumeId);
 
         mockMvc.perform(post("/api/v1/resumes/{resumeId}/reanalyze", resumeId).with(authOf(userId)))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.error.code").value("R012"));
+                .andExpect(jsonPath("$.error.code").value("R013"));
 
         assertThat(streamRecords()).isEmpty();
     }

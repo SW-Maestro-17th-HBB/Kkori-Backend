@@ -93,12 +93,13 @@ public class ResumeParsedService {
         userRepository.findActiveWithLock(userId);
     }
 
-    /** 진행 중 면접에서 사용 중인 이력서는 변경 불가 — R012 (면접이 검색할 청크 보호, 판정은 세션 도메인 구현). */
+    /** 진행 중 면접에서 사용 중인 이력서는 변경 불가 — R013 (면접이 검색할 청크 보호, 판정은 세션 도메인 구현). */
     private void requireNotInUse(Long resumeId) {
         if (resumeUsageChecker.isInUse(resumeId)) {
             throw new BusinessException(ErrorCode.RESUME_IN_USE);
         }
     }
+
 
     private void requireWithinSizeLimit(StructuredData structuredData) {
         try {
