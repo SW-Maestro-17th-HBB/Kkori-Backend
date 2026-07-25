@@ -64,12 +64,14 @@ public interface ResumeApi {
             description = """
                     이력서를 삭제한다(soft delete) — 즉시 목록·조회에서 사라진다.
                     원본(S3)·구조화 데이터·청크·임베딩의 물리 삭제는 후속 배치가 수행한다.
+                    진행 중인 면접에서 사용 중인 이력서는 삭제할 수 없다.
                     """
     )
     @ApiResponses({
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "삭제 성공"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "타인의 이력서(R009)"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "이력서 없음·이미 삭제됨(R008)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "진행 중 면접에서 사용 중(R013)"),
     })
     ResponseEntity<ApiResponse<Void>> delete(
             @Parameter(hidden = true) Long userId,
