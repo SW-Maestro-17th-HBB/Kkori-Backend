@@ -10,6 +10,7 @@ import com.aisw.kkori.resume.dto.ResumeParseRequestedMessage;
 import com.aisw.kkori.resume.dto.ResumeParsedResponse;
 import com.aisw.kkori.resume.dto.ResumeReanalyzeResponse;
 import com.aisw.kkori.resume.repository.ResumeRepository;
+import com.aisw.kkori.user.repository.UserRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,11 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>세 API 모두 같은 접근 가드({@link ResumeAccessGuard})를 통과한다: 존재(404) → 소유(403)
  * → 상태(409). 조회·수정은 EMBEDDED에서만, 재분석은 EMBEDDED(REINDEX)·FAILED(FULL)에서만
  * 허용된다. 수정은 저장만 한다 — 색인 반영은 사용자가 재분석을 눌러야 일어난다 (수정 ≠ 재분석).
+ *
+ * <p>수정·재분석은 <b>user 행 잠금을 먼저 획득</b>해 면접 세션 생성과 직렬화한다
+ * (interview-session-creation.md — 이력서 사용 중 차단): 잠금 없이 진행하면 세션 생성의
+ * EMBEDDED 확인과 이쪽의 상태 변경이 엇갈려 무효 이력서를 참조한 세션이 생길 수 있다.
+ * 잠금 순서는 user → resume_analysis_status.
  */
 @Service
 @RequiredArgsConstructor
@@ -32,6 +38,8 @@ public class ResumeParsedService {
 
     private final ResumeRepository resumeRepository;
     private final ResumeAccessGuard accessGuard;
+    private final UserRepository userRepository;
+    private final ResumeUsageChecker resumeUsageChecker;
     private final ResumeAnalysisRequestPublisher analysisRequestPublisher;
     private final ObjectMapper objectMapper;
 
@@ -45,10 +53,12 @@ public class ResumeParsedService {
 
     @Transactional
     public ResumeParsedResponse updateParsed(Long userId, Long resumeId, StructuredData structuredData) {
+        lockActiveUser(userId);
         Resume resume = accessGuard.findAuthorized(userId, resumeId);
         ResumeAnalysisStatus status = accessGuard.lockedStatusOf(resumeId);
+        // 상태 검사(이미 조회한 값)를 먼저 — 세션 존재 검사는 인덱스 없는 스캔이라 통과 요청에만 수행한다
         accessGuard.requireEmbedded(status);
-        // TODO(면접 도메인): 진행 중인 면접 세션에서 사용 중인 이력서는 수정 차단 (RESUME_IN_USE) — 세션 테이블 도입 시 구현
+        requireNotInUse(resumeId);
         requireWithinSizeLimit(structuredData);
         resume.updateStructuredData(structuredData);
         // updatedAt은 auditing이 flush 시점에 갱신한다 — 응답에 이번 저장 시각을 담으려면 DTO 생성 전에 flush 필요
@@ -58,6 +68,7 @@ public class ResumeParsedService {
 
     @Transactional
     public ResumeReanalyzeResponse reanalyze(Long userId, Long resumeId) {
+        lockActiveUser(userId);
         Resume resume = accessGuard.findAuthorized(userId, resumeId);
         ResumeAnalysisStatus status = accessGuard.lockedStatusOf(resumeId);
 
@@ -66,6 +77,8 @@ public class ResumeParsedService {
             case FAILED -> AnalysisMode.FULL;        // 실패 복구 — S3 원본부터 전체 파이프라인
             default -> throw new BusinessException(ErrorCode.RESUME_ANALYSIS_IN_PROGRESS);
         };
+        // 상태 게이트(switch) 통과 후에만 세션 존재 검사 — updateParsed와 동일한 순서 원칙
+        requireNotInUse(resumeId);
 
         // 상태 재설정과 발행은 같은 트랜잭션 — restartFor javadoc의 계약(Worker 회수 규칙 오인 방지) 참조
         status.restartFor(mode);
@@ -74,6 +87,19 @@ public class ResumeParsedService {
 
         return new ResumeReanalyzeResponse(resume.getId(), status.getParseStatus());
     }
+
+    /** 세션 생성과의 직렬화 지점 — user 행 잠금 + 활성 재확인 (유저 상태 경로 공통 관례). */
+    private void lockActiveUser(Long userId) {
+        userRepository.findActiveWithLock(userId);
+    }
+
+    /** 진행 중 면접에서 사용 중인 이력서는 변경 불가 — R013 (면접이 검색할 청크 보호, 판정은 세션 도메인 구현). */
+    private void requireNotInUse(Long resumeId) {
+        if (resumeUsageChecker.isInUse(resumeId)) {
+            throw new BusinessException(ErrorCode.RESUME_IN_USE);
+        }
+    }
+
 
     private void requireWithinSizeLimit(StructuredData structuredData) {
         try {

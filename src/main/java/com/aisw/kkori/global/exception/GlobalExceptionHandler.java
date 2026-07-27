@@ -3,6 +3,7 @@ package com.aisw.kkori.global.exception;
 import com.aisw.kkori.global.response.ApiResponse;
 import com.aisw.kkori.global.response.ErrorResponse;
 import com.aisw.kkori.global.response.ErrorResponse.FieldError;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -56,12 +57,42 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(ErrorResponse.of(ErrorCode.INVALID_INPUT_VALUE, fieldErrors)));
     }
 
-    /** 파싱 불가능한(잘못된 형식의) 요청 바디. */
+    /**
+     * 파싱 불가능한(잘못된 형식의) 요청 바디. 특정 필드의 값 문제(미정의 enum 값, 타입 불일치 등
+     * — Jackson {@link JsonMappingException} 계열, 경로 정보 보유)는 fieldErrors로 어떤 필드가
+     * 문제인지 알려주고, 경로가 없는 순수 구문 오류(깨진 JSON 토큰)는 fieldErrors 없이 응답한다.
+     */
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiResponse<Void>> handleHttpMessageNotReadable(HttpMessageNotReadableException e) {
         log.warn("Malformed request body: {}", e.getMessage());
+        List<FieldError> fieldErrors = jacksonFieldErrors(e);
+        ErrorResponse body = fieldErrors.isEmpty()
+                ? ErrorResponse.of(ErrorCode.INVALID_INPUT_VALUE)
+                : ErrorResponse.of(ErrorCode.INVALID_INPUT_VALUE, fieldErrors);
         return ResponseEntity.status(ErrorCode.INVALID_INPUT_VALUE.getStatus())
-                .body(ApiResponse.error(ErrorResponse.of(ErrorCode.INVALID_INPUT_VALUE)));
+                .body(ApiResponse.error(body));
+    }
+
+    /** Jackson 경로를 필드명으로 조립한다 — 배열 요소는 인덱스를 보존한다(예: {@code skills[2].category}). */
+    private List<FieldError> jacksonFieldErrors(HttpMessageNotReadableException e) {
+        if (!(e.getCause() instanceof JsonMappingException cause)) {
+            return List.of();
+        }
+        StringBuilder field = new StringBuilder();
+        for (JsonMappingException.Reference reference : cause.getPath()) {
+            if (reference.getFieldName() != null) {
+                if (!field.isEmpty()) {
+                    field.append('.');
+                }
+                field.append(reference.getFieldName());
+            } else if (reference.getIndex() >= 0) {
+                field.append('[').append(reference.getIndex()).append(']');
+            }
+        }
+        if (field.isEmpty()) {
+            return List.of();
+        }
+        return List.of(FieldError.of(field.toString(), "허용되지 않는 값입니다"));
     }
 
     /** 멀티파트 업로드 한도 초과 — 컨테이너(Tomcat) 레벨에서 발생해도 동일 엔벨로프로 변환한다. */

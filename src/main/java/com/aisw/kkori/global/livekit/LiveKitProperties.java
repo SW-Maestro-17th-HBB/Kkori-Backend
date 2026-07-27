@@ -17,14 +17,19 @@ import java.util.Set;
  * <p>{@code url}은 클라이언트가 접속할 LiveKit 서버 주소로 {@code wss://}(또는 개발용 {@code ws://})
  * 스킴이어야 한다. {@code tokenTtl}은 발급 토큰의 만료 기간이다.
  *
- * <p>잘못된 설정(빈 값, 스킴 오류, 0 이하 TTL)은 토큰 발급 시점이 아니라 부팅 시점에 실패시킨다(fail-fast).
+ * <p>{@code apiTimeout}은 서버가 LiveKit Server API(룸 생성·삭제)를 호출할 때의 연결·응답
+ * 타임아웃이다. 호출은 트랜잭션·잠금 밖(커밋 후)에서 일어나므로 이 값은 요청 스레드가 LiveKit
+ * 지연에 붙잡히는 시간의 상한이다 — 장애를 빠르게 실패로 확정하기 위해 짧게 유지한다.
+ *
+ * <p>잘못된 설정(빈 값, 스킴 오류, 0 이하 기간)은 사용 시점이 아니라 부팅 시점에 실패시킨다(fail-fast).
  */
 @ConfigurationProperties(prefix = "livekit")
 public record LiveKitProperties(
         String url,
         String apiKey,
         String apiSecret,
-        Duration tokenTtl
+        Duration tokenTtl,
+        Duration apiTimeout
 ) {
 
     public LiveKitProperties {
@@ -32,6 +37,17 @@ public record LiveKitProperties(
         requireText(apiKey, "livekit.api-key");
         requireText(apiSecret, "livekit.api-secret");
         requirePositive(tokenTtl, "livekit.token-ttl");
+        requirePositive(apiTimeout, "livekit.api-timeout");
+    }
+
+    /**
+     * Server API(REST)용 HTTP 엔드포인트 — 클라이언트 접속 URL({@code wss://})에서 파생한다
+     * ({@code wss→https}, {@code ws→http}). LiveKit Cloud·self-host 모두 같은 호스트에서 두
+     * 프로토콜을 서비스하므로 별도 설정값을 두지 않는다. 포트·경로는 보존한다(self-host 대비).
+     */
+    public String httpApiUrl() {
+        String scheme = url.toLowerCase().startsWith("wss") ? "https" : "http";
+        return scheme + url.substring(url.indexOf("://"));
     }
 
     private static void requireText(String value, String name) {
@@ -59,8 +75,8 @@ public record LiveKitProperties(
         }
     }
 
-    private static void requirePositive(Duration ttl, String name) {
-        if (ttl == null || ttl.isZero() || ttl.isNegative()) {
+    private static void requirePositive(Duration duration, String name) {
+        if (duration == null || duration.isZero() || duration.isNegative()) {
             throw new IllegalArgumentException("%s은(는) 0보다 큰 기간이어야 합니다".formatted(name));
         }
     }

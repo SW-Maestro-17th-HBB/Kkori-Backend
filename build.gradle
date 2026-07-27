@@ -45,6 +45,8 @@ dependencies {
     testImplementation 'org.testcontainers:junit-jupiter'
     testImplementation 'org.testcontainers:postgresql'
     testImplementation 'org.testcontainers:minio'
+    // LiveKit 룸 어댑터의 HTTP 실패 매핑(S002)·타임아웃 검증용 — 버전은 livekit-server의 okhttp-bom이 정렬
+    testImplementation 'com.squareup.okhttp3:mockwebserver'
     testCompileOnly 'org.projectlombok:lombok'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testAnnotationProcessor 'org.projectlombok:lombok'

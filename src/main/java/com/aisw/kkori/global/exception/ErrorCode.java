@@ -35,6 +35,7 @@ public enum ErrorCode {
     RESUME_ANALYSIS_IN_PROGRESS(HttpStatus.CONFLICT, "R010", "이력서 분석이 진행 중입니다. 완료 후 다시 시도해 주세요."),
     RESUME_ANALYSIS_FAILED(HttpStatus.CONFLICT, "R011", "이력서 분석이 실패한 상태입니다. 재분석을 먼저 요청해 주세요."),
     INVALID_STATUS(HttpStatus.BAD_REQUEST, "R012", "유효하지 않은 분석 상태 값입니다."),
+    RESUME_IN_USE(HttpStatus.CONFLICT, "R013", "진행 중인 면접에서 사용 중인 이력서입니다. 면접 종료 후 다시 시도해 주세요."),
 
     // 인증 (A)
     INVALID_CODE(HttpStatus.BAD_REQUEST, "A001", "카카오 인가 코드가 누락되었거나 형식이 올바르지 않습니다."),
@@ -54,8 +55,10 @@ public enum ErrorCode {
     CONSENT_NOT_CHANGEABLE(HttpStatus.BAD_REQUEST, "U004", "필수 동의 항목은 변경할 수 없습니다. 철회는 탈퇴로만 가능합니다."),
     CONSENT_VERSION_MISMATCH(HttpStatus.CONFLICT, "U005", "동의서 버전이 현재 버전과 일치하지 않습니다. 최신 동의서를 확인한 뒤 다시 제출해 주세요."),
 
-    // 세션 (S) — docs/requirements/session/session.md
+    // 세션 (S) — docs/requirements/session/interview-session-creation.md
     SESSION_TOKEN_ISSUE_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "S001", "음성 세션 토큰 발급에 실패했습니다."),
+    SESSION_ROOM_CREATE_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "S002", "면접 룸 생성에 실패했습니다. 잠시 후 다시 시도해 주세요."),
+    SESSION_ALREADY_IN_PROGRESS(HttpStatus.CONFLICT, "S003", "진행 중인 면접 세션이 있습니다. 기존 면접을 종료한 뒤 다시 시작해 주세요."),
     ;
 
     private final HttpStatus status;
