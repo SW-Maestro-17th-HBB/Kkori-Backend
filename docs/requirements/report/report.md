@@ -186,6 +186,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 ### 인터페이스 요구사항
 
 - `GET /api/v1/reports?status=&sort=&order=&page=&size=`
+- 응답은 공용 페이지 엔벨로프 `PageResponse`(`{content, page, size, totalElements, hasNext}`)를 따른다 — 이력서 목록과 동일.
 
 목록 항목 예시:
 
@@ -207,6 +208,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 ### 제약사항
 
 - 정렬 키는 createdAt·overallScore 2종만 지원 (확장은 화면 요구 발생 시)
+- 페이지 크기 상한: 100 (이력서 목록과 동일 — 초과 시 400)
 
 ### 기타 요구사항
 
