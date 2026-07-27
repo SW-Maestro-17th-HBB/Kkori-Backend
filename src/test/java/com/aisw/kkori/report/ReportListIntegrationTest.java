@@ -8,6 +8,8 @@ import com.aisw.kkori.report.repository.ReportRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -150,7 +152,7 @@ class ReportListIntegrationTest {
     }
 
     @Test
-    @DisplayName("status 필터가 해당 상태만 반환하고, 잘못된 값은 400(C002)이다")
+    @DisplayName("status 필터가 해당 상태의 리포트만 반환한다")
     void statusFilter() throws Exception {
         long completed = completedReport(USER_ID, 80, BASE.plusSeconds(10));
         report(USER_ID, ReportStatus.FAILED, null, BASE.plusSeconds(20));
@@ -159,28 +161,20 @@ class ReportListIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.content.length()").value(1))
                 .andExpect(jsonPath("$.data.content[0].reportId").value(completed));
-
-        mockMvc.perform(get("/api/v1/reports?status=WRONG").with(authOf(USER_ID)))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("C002"));
     }
 
-    @Test
-    @DisplayName("size가 상한(100)을 넘으면 400(C002)이다")
-    void sizeOverLimit() throws Exception {
-        mockMvc.perform(get("/api/v1/reports?size=101").with(authOf(USER_ID)))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("C002"));
-    }
-
-    @Test
-    @DisplayName("잘못된 sort·order 값은 400(C002)이다")
-    void invalidSortOrOrder() throws Exception {
-        mockMvc.perform(get("/api/v1/reports?sort=unknown").with(authOf(USER_ID)))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("C002"));
-
-        mockMvc.perform(get("/api/v1/reports?order=upward").with(authOf(USER_ID)))
+    @ParameterizedTest(name = "{0} 이면 400 C002")
+    @ValueSource(strings = {
+            "status=WRONG",   // enum에 없는 상태값
+            "sort=unknown",   // 지원하지 않는 정렬 키
+            "order=upward",   // 지원하지 않는 정렬 방향
+            "page=-1",        // 음수 페이지
+            "size=0",         // 1 미만 크기
+            "size=101",       // 상한(100) 초과
+    })
+    @DisplayName("잘못된 조회 파라미터는 400(C002)이다")
+    void invalidParamsReturn400(String queryString) throws Exception {
+        mockMvc.perform(get("/api/v1/reports?" + queryString).with(authOf(USER_ID)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("C002"));
     }

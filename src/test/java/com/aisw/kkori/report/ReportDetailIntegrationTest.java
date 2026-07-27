@@ -13,6 +13,8 @@ import com.aisw.kkori.report.repository.ReportScoreRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -188,33 +190,18 @@ class ReportDetailIntegrationTest {
                 .andExpect(jsonPath("$.error.code").value("RP001"));
     }
 
-    @Test
-    @DisplayName("PENDING 리포트 조회는 409 RP003 (생성 진행 중)")
-    void conflictWhenPending() throws Exception {
-        long reportId = reportWithStatus(USER_ID, ReportStatus.PENDING);
+    @ParameterizedTest(name = "{0} 리포트 조회는 409 {1}")
+    @CsvSource({
+            "PENDING, RP003",     // 생성 진행 중
+            "PROCESSING, RP003",  // 생성 진행 중
+            "FAILED, RP004",      // 생성 실패 — 복구는 재생성의 몫
+    })
+    @DisplayName("완성되지 않은 리포트 조회는 409로 거부된다")
+    void conflictWhenNotCompleted(ReportStatus status, String errorCode) throws Exception {
+        long reportId = reportWithStatus(USER_ID, status);
 
         mockMvc.perform(get("/api/v1/reports/{reportId}", reportId).with(authOf(USER_ID)))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.error.code").value("RP003"));
-    }
-
-    @Test
-    @DisplayName("PROCESSING 리포트 조회는 409 RP003 (생성 진행 중)")
-    void conflictWhenProcessing() throws Exception {
-        long reportId = reportWithStatus(USER_ID, ReportStatus.PROCESSING);
-
-        mockMvc.perform(get("/api/v1/reports/{reportId}", reportId).with(authOf(USER_ID)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.error.code").value("RP003"));
-    }
-
-    @Test
-    @DisplayName("FAILED 리포트 조회는 409 RP004 (복구는 재생성의 몫)")
-    void conflictWhenFailed() throws Exception {
-        long reportId = reportWithStatus(USER_ID, ReportStatus.FAILED);
-
-        mockMvc.perform(get("/api/v1/reports/{reportId}", reportId).with(authOf(USER_ID)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.error.code").value("RP004"));
+                .andExpect(jsonPath("$.error.code").value(errorCode));
     }
 }
