@@ -1,9 +1,11 @@
 package com.aisw.kkori.resume.api;
 
 import com.aisw.kkori.global.response.ApiResponse;
+import com.aisw.kkori.global.response.PageResponse;
 import com.aisw.kkori.resume.dto.ResumeParsedResponse;
 import com.aisw.kkori.resume.dto.ResumeParsedUpdateRequest;
 import com.aisw.kkori.resume.dto.ResumeReanalyzeResponse;
+import com.aisw.kkori.resume.dto.ResumeSummaryResponse;
 import com.aisw.kkori.resume.dto.ResumeUploadResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -34,6 +36,44 @@ public interface ResumeApi {
             @Parameter(hidden = true) Long userId,
             @Parameter(description = "업로드할 PDF 파일", required = true) MultipartFile file,
             @Parameter(description = "이력서 표시 이름. 없으면 원본 파일명 사용") String title
+    );
+
+    @Operation(
+            summary = "이력서 목록 조회",
+            description = """
+                    본인 이력서 목록을 createdAt 내림차순으로 조회한다. 항목은 UI 소비 최소 필드만 내려주며
+                    분석 결과 미리보기는 포함하지 않는다 — 행 펼침 시 GET /{resumeId}/parsed로 조회한다.
+                    status 파라미터로 분석 상태 필터링이 가능하다(예: EMBEDDED — 면접 시작 전 선택 화면).
+                    """
+    )
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "조회 성공 — 페이지 엔벨로프 { content, page, size, totalElements, hasNext }"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "범위를 벗어난 page/size(C002)·잘못된 status 값(R012)"),
+    })
+    ResponseEntity<ApiResponse<PageResponse<ResumeSummaryResponse>>> getList(
+            @Parameter(hidden = true) Long userId,
+            @Parameter(description = "분석 상태 필터. 미지정 시 전체 조회") String status,
+            @Parameter(description = "페이지 번호 (0부터, 기본 0)") int page,
+            @Parameter(description = "페이지 크기 (기본 20, 최대 100)") int size
+    );
+
+    @Operation(
+            // 메서드명 delete 는 JS 예약어라 FE 코드 생성(orval) 시 _delete 가 되므로 명시 지정
+            operationId = "deleteResume",
+            summary = "이력서 삭제",
+            description = """
+                    이력서를 삭제한다(soft delete) — 즉시 목록·조회에서 사라진다.
+                    원본(S3)·구조화 데이터·청크·임베딩의 물리 삭제는 후속 배치가 수행한다.
+                    """
+    )
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "삭제 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "타인의 이력서(R009)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "이력서 없음·이미 삭제됨(R008)"),
+    })
+    ResponseEntity<ApiResponse<Void>> delete(
+            @Parameter(hidden = true) Long userId,
+            @Parameter(description = "이력서 ID", required = true) Long resumeId
     );
 
     @Operation(
