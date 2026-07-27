@@ -6,11 +6,17 @@ import com.aisw.kkori.report.domain.Report;
 import com.aisw.kkori.report.domain.ReportFeedback;
 import com.aisw.kkori.report.domain.ReportScore;
 import com.aisw.kkori.report.domain.ReportStatus;
+import com.aisw.kkori.global.response.PageResponse;
 import com.aisw.kkori.report.dto.ReportDetailResponse;
+import com.aisw.kkori.report.dto.ReportSummaryResponse;
 import com.aisw.kkori.report.repository.ReportFeedbackRepository;
 import com.aisw.kkori.report.repository.ReportRepository;
 import com.aisw.kkori.report.repository.ReportScoreRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +39,44 @@ public class ReportService {
     private final ReportRepository reportRepository;
     private final ReportScoreRepository reportScoreRepository;
     private final ReportFeedbackRepository reportFeedbackRepository;
+
+    /** 이력서 목록과 동일한 상한 (ResumeQueryService 선례). */
+    private static final int MAX_PAGE_SIZE = 100;
+
+    /**
+     * 목록 조회 (PRD §2). 목록 항목은 REPORTS 단독으로 구성한다 — 생성 중·실패 리포트도 노출.
+     * sort·order·페이지 값의 검증 실패는 400(INVALID_INPUT_VALUE)이다.
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<ReportSummaryResponse> getList(Long userId, ReportStatus status,
+                                                       String sort, String order, int page, int size) {
+        if (page < 0 || size < 1 || size > MAX_PAGE_SIZE) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
+        }
+        boolean descending = switch (order) {
+            case "desc" -> true;
+            case "asc" -> false;
+            default -> throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
+        };
+        Page<Report> reports = switch (sort) {
+            case "createdAt" -> {
+                Sort.Direction direction = descending ? Sort.Direction.DESC : Sort.Direction.ASC;
+                // 동시각 동점은 id로 순서를 고정한다 — 페이지 경계에서 항목이 흔들리지 않게
+                Pageable pageable = PageRequest.of(page, size,
+                        Sort.by(direction, "createdAt").and(Sort.by(direction, "id")));
+                yield reportRepository.findPage(userId, status, pageable);
+            }
+            case "overallScore" -> {
+                // null을 항상 뒤로 보내는 정렬은 쿼리에 고정되어 있어 Pageable에는 정렬을 싣지 않는다
+                Pageable pageable = PageRequest.of(page, size);
+                yield descending
+                        ? reportRepository.findPageOrderByOverallScoreDesc(userId, status, pageable)
+                        : reportRepository.findPageOrderByOverallScoreAsc(userId, status, pageable);
+            }
+            default -> throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
+        };
+        return PageResponse.from(reports.map(ReportSummaryResponse::from));
+    }
 
     @Transactional(readOnly = true)
     public ReportDetailResponse getDetail(Long userId, Long reportId) {
