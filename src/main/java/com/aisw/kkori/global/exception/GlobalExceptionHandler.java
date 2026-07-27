@@ -11,6 +11,7 @@ import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.util.List;
@@ -62,6 +63,16 @@ public class GlobalExceptionHandler {
         log.warn("Malformed request body: {}", e.getMessage());
         return ResponseEntity.status(ErrorCode.INVALID_INPUT_VALUE.getStatus())
                 .body(ApiResponse.error(ErrorResponse.of(ErrorCode.INVALID_INPUT_VALUE)));
+    }
+
+    /** 경로/쿼리 파라미터의 타입 변환 실패 (예: enum에 없는 값, 숫자 자리에 문자) — 500이 아니라 400이다. */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
+        List<FieldError> fieldErrors = List.of(
+                FieldError.of(e.getName(), "지원하지 않는 값입니다: " + e.getValue()));
+        log.warn("Parameter type mismatch: {}", fieldErrors);
+        return ResponseEntity.status(ErrorCode.INVALID_INPUT_VALUE.getStatus())
+                .body(ApiResponse.error(ErrorResponse.of(ErrorCode.INVALID_INPUT_VALUE, fieldErrors)));
     }
 
     /** 멀티파트 업로드 한도 초과 — 컨테이너(Tomcat) 레벨에서 발생해도 동일 엔벨로프로 변환한다. */
