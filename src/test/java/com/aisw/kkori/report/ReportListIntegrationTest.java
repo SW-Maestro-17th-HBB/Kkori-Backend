@@ -93,13 +93,13 @@ class ReportListIntegrationTest {
 
         mockMvc.perform(get("/api/v1/reports?page=0&size=2").with(authOf(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.reports.length()").value(2))
+                .andExpect(jsonPath("$.data.content.length()").value(2))
                 .andExpect(jsonPath("$.data.totalElements").value(3))
                 .andExpect(jsonPath("$.data.hasNext").value(true));
 
         mockMvc.perform(get("/api/v1/reports?page=1&size=2").with(authOf(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.reports.length()").value(1))
+                .andExpect(jsonPath("$.data.content.length()").value(1))
                 .andExpect(jsonPath("$.data.hasNext").value(false));
     }
 
@@ -112,9 +112,9 @@ class ReportListIntegrationTest {
 
         mockMvc.perform(get("/api/v1/reports").with(authOf(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.reports[0].reportId").value(newest))
-                .andExpect(jsonPath("$.data.reports[1].reportId").value(middle))
-                .andExpect(jsonPath("$.data.reports[2].reportId").value(oldest));
+                .andExpect(jsonPath("$.data.content[0].reportId").value(newest))
+                .andExpect(jsonPath("$.data.content[1].reportId").value(middle))
+                .andExpect(jsonPath("$.data.content[2].reportId").value(oldest));
     }
 
     @Test
@@ -126,15 +126,15 @@ class ReportListIntegrationTest {
 
         mockMvc.perform(get("/api/v1/reports?sort=overallScore").with(authOf(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.reports[0].reportId").value(high))
-                .andExpect(jsonPath("$.data.reports[1].reportId").value(low))
-                .andExpect(jsonPath("$.data.reports[2].reportId").value(pending));
+                .andExpect(jsonPath("$.data.content[0].reportId").value(high))
+                .andExpect(jsonPath("$.data.content[1].reportId").value(low))
+                .andExpect(jsonPath("$.data.content[2].reportId").value(pending));
 
         mockMvc.perform(get("/api/v1/reports?sort=overallScore&order=asc").with(authOf(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.reports[0].reportId").value(low))
-                .andExpect(jsonPath("$.data.reports[1].reportId").value(high))
-                .andExpect(jsonPath("$.data.reports[2].reportId").value(pending));
+                .andExpect(jsonPath("$.data.content[0].reportId").value(low))
+                .andExpect(jsonPath("$.data.content[1].reportId").value(high))
+                .andExpect(jsonPath("$.data.content[2].reportId").value(pending));
     }
 
     @Test
@@ -145,8 +145,8 @@ class ReportListIntegrationTest {
 
         mockMvc.perform(get("/api/v1/reports?sort=overallScore").with(authOf(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.reports[0].reportId").value(later))
-                .andExpect(jsonPath("$.data.reports[1].reportId").value(earlier));
+                .andExpect(jsonPath("$.data.content[0].reportId").value(later))
+                .andExpect(jsonPath("$.data.content[1].reportId").value(earlier));
     }
 
     @Test
@@ -157,10 +157,18 @@ class ReportListIntegrationTest {
 
         mockMvc.perform(get("/api/v1/reports?status=COMPLETED").with(authOf(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.reports.length()").value(1))
-                .andExpect(jsonPath("$.data.reports[0].reportId").value(completed));
+                .andExpect(jsonPath("$.data.content.length()").value(1))
+                .andExpect(jsonPath("$.data.content[0].reportId").value(completed));
 
         mockMvc.perform(get("/api/v1/reports?status=WRONG").with(authOf(USER_ID)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("C002"));
+    }
+
+    @Test
+    @DisplayName("size가 상한(100)을 넘으면 400(C002)이다")
+    void sizeOverLimit() throws Exception {
+        mockMvc.perform(get("/api/v1/reports?size=101").with(authOf(USER_ID)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("C002"));
     }
@@ -184,12 +192,12 @@ class ReportListIntegrationTest {
 
         mockMvc.perform(get("/api/v1/reports").with(authOf(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.reports.length()").value(1))
-                .andExpect(jsonPath("$.data.reports[0].status").value("PROCESSING"))
-                .andExpect(jsonPath("$.data.reports[0].overallScore").value(nullValue()))
-                .andExpect(jsonPath("$.data.reports[0].weaknessTagSummary").value(nullValue()))
-                .andExpect(jsonPath("$.data.reports[0].completedAt").value(nullValue()))
-                .andExpect(jsonPath("$.data.reports[0].resumeFileName").value("백엔드_개발자_이력서.pdf"));
+                .andExpect(jsonPath("$.data.content.length()").value(1))
+                .andExpect(jsonPath("$.data.content[0].status").value("PROCESSING"))
+                .andExpect(jsonPath("$.data.content[0].overallScore").value(nullValue()))
+                .andExpect(jsonPath("$.data.content[0].weaknessTagSummary").value(nullValue()))
+                .andExpect(jsonPath("$.data.content[0].completedAt").value(nullValue()))
+                .andExpect(jsonPath("$.data.content[0].resumeFileName").value("백엔드_개발자_이력서.pdf"));
     }
 
     @Test
@@ -200,7 +208,7 @@ class ReportListIntegrationTest {
 
         mockMvc.perform(get("/api/v1/reports").with(authOf(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.reports.length()").value(1))
-                .andExpect(jsonPath("$.data.reports[0].reportId").value(mine));
+                .andExpect(jsonPath("$.data.content.length()").value(1))
+                .andExpect(jsonPath("$.data.content[0].reportId").value(mine));
     }
 }

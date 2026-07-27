@@ -6,8 +6,9 @@ import com.aisw.kkori.report.domain.Report;
 import com.aisw.kkori.report.domain.ReportFeedback;
 import com.aisw.kkori.report.domain.ReportScore;
 import com.aisw.kkori.report.domain.ReportStatus;
+import com.aisw.kkori.global.response.PageResponse;
 import com.aisw.kkori.report.dto.ReportDetailResponse;
-import com.aisw.kkori.report.dto.ReportListResponse;
+import com.aisw.kkori.report.dto.ReportSummaryResponse;
 import com.aisw.kkori.report.repository.ReportFeedbackRepository;
 import com.aisw.kkori.report.repository.ReportRepository;
 import com.aisw.kkori.report.repository.ReportScoreRepository;
@@ -39,14 +40,17 @@ public class ReportService {
     private final ReportScoreRepository reportScoreRepository;
     private final ReportFeedbackRepository reportFeedbackRepository;
 
+    /** 이력서 목록과 동일한 상한 (ResumeQueryService 선례). */
+    private static final int MAX_PAGE_SIZE = 100;
+
     /**
      * 목록 조회 (PRD §2). 목록 항목은 REPORTS 단독으로 구성한다 — 생성 중·실패 리포트도 노출.
      * sort·order·페이지 값의 검증 실패는 400(INVALID_INPUT_VALUE)이다.
      */
     @Transactional(readOnly = true)
-    public ReportListResponse getList(Long userId, ReportStatus status, String sort, String order,
-                                      int page, int size) {
-        if (page < 0 || size < 1) {
+    public PageResponse<ReportSummaryResponse> getList(Long userId, ReportStatus status,
+                                                       String sort, String order, int page, int size) {
+        if (page < 0 || size < 1 || size > MAX_PAGE_SIZE) {
             throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
         }
         boolean descending = switch (order) {
@@ -71,7 +75,7 @@ public class ReportService {
             }
             default -> throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
         };
-        return ReportListResponse.from(reports);
+        return PageResponse.from(reports.map(ReportSummaryResponse::from));
     }
 
     @Transactional(readOnly = true)

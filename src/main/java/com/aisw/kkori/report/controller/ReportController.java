@@ -4,7 +4,8 @@ import com.aisw.kkori.global.response.ApiResponse;
 import com.aisw.kkori.report.api.ReportApi;
 import com.aisw.kkori.report.domain.ReportStatus;
 import com.aisw.kkori.report.dto.ReportDetailResponse;
-import com.aisw.kkori.report.dto.ReportListResponse;
+import com.aisw.kkori.global.response.PageResponse;
+import com.aisw.kkori.report.dto.ReportSummaryResponse;
 import com.aisw.kkori.report.service.ReportService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -23,7 +24,7 @@ public class ReportController implements ReportApi {
     private final ReportService reportService;
 
     @GetMapping
-    public ResponseEntity<ApiResponse<ReportListResponse>> getList(
+    public ResponseEntity<ApiResponse<PageResponse<ReportSummaryResponse>>> getList(
             @AuthenticationPrincipal Long userId,
             // enum 변환 실패는 GlobalExceptionHandler의 타입 불일치 핸들러가 400(C002)으로 변환한다
             @RequestParam(required = false) ReportStatus status,

@@ -3,7 +3,8 @@ package com.aisw.kkori.report.api;
 import com.aisw.kkori.global.response.ApiResponse;
 import com.aisw.kkori.report.domain.ReportStatus;
 import com.aisw.kkori.report.dto.ReportDetailResponse;
-import com.aisw.kkori.report.dto.ReportListResponse;
+import com.aisw.kkori.global.response.PageResponse;
+import com.aisw.kkori.report.dto.ReportSummaryResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -27,7 +28,7 @@ public interface ReportApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "조회 성공"),
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "잘못된 status·sort·order·페이지 값(C002)"),
     })
-    ResponseEntity<ApiResponse<ReportListResponse>> getList(
+    ResponseEntity<ApiResponse<PageResponse<ReportSummaryResponse>>> getList(
             @Parameter(hidden = true) Long userId,
             @Parameter(description = "생성 상태 필터 (PENDING/PROCESSING/COMPLETED/FAILED)") ReportStatus status,
             @Parameter(description = "정렬 키: createdAt(기본) 또는 overallScore") String sort,
