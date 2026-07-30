@@ -60,6 +60,7 @@ public enum ErrorCode {
     SESSION_ROOM_CREATE_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "S002", "면접 룸 생성에 실패했습니다. 잠시 후 다시 시도해 주세요."),
     SESSION_ALREADY_IN_PROGRESS(HttpStatus.CONFLICT, "S003", "진행 중인 면접 세션이 있습니다. 기존 면접을 종료한 뒤 다시 시작해 주세요."),
     SESSION_DISPATCH_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "S004", "면접관 연결에 실패했습니다. 잠시 후 다시 시도해 주세요."),
+    SESSION_SUPERSEDED(HttpStatus.CONFLICT, "S005", "다른 세션 생성 요청이 이 요청을 대체했습니다. 최신 세션을 사용해 주세요."),
     ;
 
     private final HttpStatus status;

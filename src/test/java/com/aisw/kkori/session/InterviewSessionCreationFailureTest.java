@@ -2,6 +2,7 @@ package com.aisw.kkori.session;
 
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
+import com.aisw.kkori.session.domain.InterviewSession;
 import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.service.SessionTicket;
 import com.aisw.kkori.session.service.SessionTicketIssuer;
@@ -13,12 +14,18 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -140,6 +147,51 @@ class InterviewSessionCreationFailureTest extends InterviewSessionIntegrationTes
                 .andExpect(status().isCreated());
 
         assertThat(sessionRepository.findByUserIdAndStatusIn(userId, SessionStatus.NON_TERMINAL)).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("커밋과 응답 사이에 동시 생성이 세션을 교체하면 409 S005 — 자신의 룸을 보상 삭제하고 교체 세션은 유효하다")
+    void supersededDuringDispatchIsRejectedAndCompensated() throws Exception {
+        long userId = saveUser("kakao-f-7");
+        long resumeId = embeddedResume(userId);
+        when(ticketIssuer.issue(anyString(), anyString())).thenReturn(new SessionTicket("token", "ws://test"));
+
+        // 첫 디스패치 시점에 두 번째 생성 요청을 통째로 끼워 넣는다 — "A 커밋 → B가 A를
+        // 교체(ABORTED)·룸 삭제까지 완료 → A의 늦은 디스패치가 삭제된 룸을 자동 재생성"
+        // 인터리빙의 결정적 재현. A의 승계 재확인이 이를 감지해야 한다 (agent-dispatch.md 기능 2)
+        AtomicBoolean interleaved = new AtomicBoolean(false);
+        doAnswer(invocation -> {
+            if (interleaved.compareAndSet(false, true)) {
+                mockMvc.perform(post(SESSIONS_URI)
+                                .header(HttpHeaders.AUTHORIZATION, bearerOf(userId))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(createBody(resumeId, "THIRTY_MIN", "BACKEND")))
+                        .andExpect(status().isCreated());
+            }
+            return null;
+        }).when(agentDispatcher).dispatch(anyString(), anyString());
+
+        mockMvc.perform(post(SESSIONS_URI)
+                        .header(HttpHeaders.AUTHORIZATION, bearerOf(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createBody(resumeId, "THIRTY_MIN", "BACKEND")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("S005"));
+
+        // "마지막 생성이 유효" — A(외부 요청)는 ABORTED, B(끼워 넣은 요청)의 PENDING만 남는다
+        List<InterviewSession> nonTerminal =
+                sessionRepository.findByUserIdAndStatusIn(userId, SessionStatus.NON_TERMINAL);
+        assertThat(nonTerminal).hasSize(1);
+        assertThat(sessionRepository.count()).isEqualTo(2);
+        InterviewSession abortedA = sessionRepository.findAll().stream()
+                .filter(s -> s.getStatus() == SessionStatus.ABORTED).findFirst().orElseThrow();
+
+        // A의 룸은 교체측(B)의 정리와 A 자신의 보상 삭제로 두 번 삭제 시도된다(중복 삭제 무해) —
+        // A의 보상이 디스패치가 자동 재생성한 좀비 룸(에이전트 포함)을 소멸시키는 경로다
+        verify(roomManager, times(2)).deleteRoomQuietly(abortedA.getLivekitRoom());
+        // 유효 세션(B)의 룸은 건드리지 않고, 디스패치는 두 요청 각각 1회씩이다
+        verify(roomManager, never()).deleteRoomQuietly(nonTerminal.get(0).getLivekitRoom());
+        verify(agentDispatcher, times(2)).dispatch(anyString(), anyString());
     }
 
     @Test

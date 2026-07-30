@@ -92,6 +92,15 @@ public class SessionService {
         try {
             SessionTicket ticket = ticketIssuer.issue(IDENTITY_PREFIX + plan.sessionId(), roomName);
             agentDispatcher.dispatch(roomName, plan.dispatchMetadata());
+
+            // 승계(superseded) 재확인 — user 잠금은 트랜잭션 구간만 직렬화하므로, 커밋과 디스패치
+            // 사이에 동시 생성이 이 세션을 교체(ABORTED)하고 룸을 삭제했을 수 있다. createDispatch는
+            // 미존재 룸을 자동 생성하므로(실측 확인) 방금 호출이 에이전트 있는 좀비 룸을 되살렸을 수
+            // 있다 — 교체가 감지되면 룸을 보상 삭제(재생성 룸·agent job 함께 소멸)하고 409로 끝낸다.
+            // 교체가 이 재확인 뒤에 오는 경우는 정상 교체 흐름과 같다(교체측 룸 삭제가 job까지 정리).
+            if (!sessionRepository.existsByIdAndStatus(plan.sessionId(), SessionStatus.PENDING)) {
+                throw new BusinessException(ErrorCode.SESSION_SUPERSEDED);
+            }
             return new InterviewSessionCreateResponse(
                     plan.sessionId(), ticket.token(), ticket.serverUrl(), roomName);
         } catch (RuntimeException e) {

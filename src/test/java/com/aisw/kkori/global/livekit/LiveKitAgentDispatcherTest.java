@@ -7,6 +7,7 @@ import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
 import livekit.LivekitAgentDispatch;
 import okhttp3.mockwebserver.MockResponse;
+import okio.Buffer;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
 import okhttp3.mockwebserver.SocketPolicy;
@@ -62,12 +63,24 @@ class LiveKitAgentDispatcherTest {
         server.shutdown();
     }
 
+    /** 성공 계약대로 "생성된 AgentDispatch"를 담은 2xx 응답 — 어댑터의 응답 검증(id·room·agent_name) 대상. */
+    private static MockResponse createdDispatchResponse(String roomName) {
+        LivekitAgentDispatch.AgentDispatch created = LivekitAgentDispatch.AgentDispatch.newBuilder()
+                .setId("AD_test")
+                .setRoom(roomName)
+                .setAgentName("kkori-interviewer")
+                .build();
+        Buffer body = new Buffer();
+        body.write(created.toByteArray());
+        return new MockResponse().setResponseCode(200)
+                .setHeader("Content-Type", "application/protobuf")
+                .setBody(body);
+    }
+
     @Test
-    @DisplayName("2xx 응답이면 디스패치가 성공하고, 요청 protobuf에 room·agent_name·metadata·JRP_NEVER가 실린다")
+    @DisplayName("생성된 AgentDispatch 응답이면 성공하고, 요청 protobuf에 room·agent_name·metadata·JRP_NEVER가 실린다")
     void dispatchSucceedsAndRequestCarriesContract() throws Exception {
-        // SDK는 응답을 protobuf로 역직렬화한다 — 빈 바디는 모든 필드가 기본값인 유효한 AgentDispatch 메시지다
-        server.enqueue(new MockResponse().setResponseCode(200)
-                .setHeader("Content-Type", "application/protobuf"));
+        server.enqueue(createdDispatchResponse("room-1"));
 
         assertThatCode(() -> dispatcher.dispatch("room-1", METADATA)).doesNotThrowAnyException();
 
@@ -83,6 +96,20 @@ class LiveKitAgentDispatcherTest {
         assertThat(sent.getAgentName()).isEqualTo("kkori-interviewer");
         assertThat(sent.getMetadata()).isEqualTo(METADATA);
         assertThat(sent.getRestartPolicy()).isEqualTo(LivekitAgentDispatch.JobRestartPolicy.JRP_NEVER);
+    }
+
+    @Test
+    @DisplayName("2xx라도 빈(default) 바디면 생성 확인 불가로 S004에 매핑된다")
+    void dispatchMapsEmptySuccessBodyToS004() {
+        // 빈 바디는 모든 필드가 기본값인 AgentDispatch로 역직렬화된다 — 성공 계약은 "생성된
+        // AgentDispatch 반환"이므로 id·room·agent_name이 확인되지 않으면 실패로 다룬다
+        server.enqueue(new MockResponse().setResponseCode(200)
+                .setHeader("Content-Type", "application/protobuf"));
+
+        assertThatThrownBy(() -> dispatcher.dispatch("room-1", METADATA))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.SESSION_DISPATCH_FAILED));
     }
 
     @Test

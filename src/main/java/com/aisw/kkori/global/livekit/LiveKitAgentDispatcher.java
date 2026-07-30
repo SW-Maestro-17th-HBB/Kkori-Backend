@@ -4,6 +4,7 @@ import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.session.service.SessionAgentDispatcher;
 import io.livekit.server.AgentDispatchServiceClient;
+import livekit.LivekitAgentDispatch;
 import livekit.LivekitAgentDispatch.JobRestartPolicy;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.OkHttpClient;
@@ -46,7 +47,7 @@ public class LiveKitAgentDispatcher implements SessionAgentDispatcher {
 
     @Override
     public void dispatch(String roomName, String metadata) {
-        Response<?> response;
+        Response<LivekitAgentDispatch.AgentDispatch> response;
         try {
             response = client.createDispatch(roomName, AGENT_NAME, metadata, JobRestartPolicy.JRP_NEVER)
                     .execute();
@@ -58,6 +59,16 @@ public class LiveKitAgentDispatcher implements SessionAgentDispatcher {
         if (!response.isSuccessful()) {
             log.warn("에이전트 디스패치 실패 (room={}, http={}, metadataBytes={})",
                     roomName, response.code(), utf8Bytes(metadata));
+            throw new BusinessException(ErrorCode.SESSION_DISPATCH_FAILED);
+        }
+        // 2xx라도 생성 확인이 안 되면 실패다 — 성공 계약은 "생성된 AgentDispatch 반환"이며,
+        // 빈·default 바디를 성공으로 삼으면 job이 실제로 만들어졌는지 모른 채 201을 반환하게 된다
+        LivekitAgentDispatch.AgentDispatch created = response.body();
+        if (created == null || created.getId().isEmpty()
+                || !roomName.equals(created.getRoom())
+                || !AGENT_NAME.equals(created.getAgentName())) {
+            log.warn("에이전트 디스패치 응답 검증 실패 — 생성 확인 불가 (room={}, metadataBytes={})",
+                    roomName, utf8Bytes(metadata));
             throw new BusinessException(ErrorCode.SESSION_DISPATCH_FAILED);
         }
     }

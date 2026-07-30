@@ -35,4 +35,7 @@ public interface InterviewSessionRepository extends JpaRepository<InterviewSessi
 
     /** "진행 중 면접에서 사용 중인 이력서" 판정 — RESUME_IN_USE 검사의 원천. */
     boolean existsByResumeIdAndStatusIn(Long resumeId, Collection<SessionStatus> statuses);
+
+    /** 커밋 후 승계(superseded) 재확인 — 디스패치 뒤에도 이 세션이 여전히 해당 상태인지 판정. */
+    boolean existsByIdAndStatus(Long id, SessionStatus status);
 }
