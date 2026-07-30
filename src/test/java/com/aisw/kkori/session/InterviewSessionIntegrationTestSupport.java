@@ -11,6 +11,7 @@ import com.aisw.kkori.session.domain.InterviewType;
 import com.aisw.kkori.session.domain.Position;
 import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.repository.InterviewSessionRepository;
+import com.aisw.kkori.session.service.SessionAgentDispatcher;
 import com.aisw.kkori.session.service.SessionRoomManager;
 import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.repository.UserRepository;
@@ -28,10 +29,10 @@ import org.springframework.test.web.servlet.MockMvc;
 /**
  * 면접 세션 통합 테스트 공통 베이스.
  *
- * <p>{@link SessionRoomManager}는 모킹한다 — 테스트 프로퍼티의 LiveKit 값은 연결 불가한
- * 더미라 실제 Server API 왕복이 불가능하다(토큰 서명은 로컬 연산이라 실물 유지). 하위
- * 클래스의 {@code @MockitoBean} 구성을 동일하게 유지해야 ApplicationContext가 공유된다
- * (Testcontainers 비용).
+ * <p>{@link SessionRoomManager}·{@link SessionAgentDispatcher}는 모킹한다 — 테스트 프로퍼티의
+ * LiveKit 값은 연결 불가한 더미라 실제 Server API 왕복이 불가능하다(토큰 서명은 로컬 연산이라
+ * 실물 유지). 하위 클래스의 {@code @MockitoBean} 구성을 동일하게 유지해야 ApplicationContext가
+ * 공유된다(Testcontainers 비용).
  *
  * <p>EMBEDDED·FAILED 등 Worker 소유 상태와 세션 상태 전이는 JdbcTemplate로 연기한다 —
  * ACTIVE 계열 전이는 후속 스토리(webhook) 전까지 Spring 코드로 만들 수 없다.
@@ -54,6 +55,7 @@ abstract class InterviewSessionIntegrationTestSupport {
     @Autowired StringRedisTemplate redisTemplate;
 
     @MockitoBean SessionRoomManager roomManager;
+    @MockitoBean SessionAgentDispatcher agentDispatcher;
 
     @BeforeEach
     void cleanDatabase() {
@@ -98,6 +100,10 @@ abstract class InterviewSessionIntegrationTestSupport {
 
     long embeddedResume(long userId) {
         return resumeSeeder().embedded(userId);
+    }
+
+    long embeddedResume(long userId, String structuredDataJson) {
+        return resumeSeeder().embedded(userId, structuredDataJson);
     }
 
     long failedResume(long userId) {

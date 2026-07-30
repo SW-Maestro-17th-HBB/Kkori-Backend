@@ -86,6 +86,32 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
         InterviewSession session = sessionRepository.findById(dataLong(result, "id")).orElseThrow();
         assertThat(session.getResumeId()).isNull();
         verify(roomManager).createRoom(session.getLivekitRoom());
+        // 이력서 없는 세션의 metadata는 resumeContext 필드 자체가 생략된다 (계약 픽스처와 동일 형태)
+        verify(agentDispatcher).dispatch(session.getLivekitRoom(),
+                "{\"sessionId\":\"" + session.getId() + "\",\"interviewType\":\"FIVE_MIN\",\"position\":\"FRONTEND\"}");
+    }
+
+    @Test
+    @DisplayName("생성 성공 시 세션 룸으로 에이전트가 디스패치되고, metadata는 검증 트랜잭션에서 읽은 structured_data로 조립된다")
+    void creationDispatchesAgentWithAssembledMetadata() throws Exception {
+        long userId = saveUser("kakao-s-5");
+        long resumeId = embeddedResume(userId, """
+                {"profile": {"name": "시더", "email": "seeder@example.com"},
+                 "skills": [{"category": "언어", "items": ["Java"]}],
+                 "projects": [], "experiences": []}
+                """);
+
+        ResultActions result = mockMvc.perform(post(SESSIONS_URI)
+                        .header(HttpHeaders.AUTHORIZATION, bearerOf(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createBody(resumeId, "THIRTY_MIN", "BACKEND")))
+                .andExpect(status().isCreated());
+
+        // 조립 규칙 자체는 단위 테스트(계약 픽스처) 소관 — 여기서는 실제 저장된 이력서의
+        // structured_data가 그 세션의 룸·id와 함께 정확히 배선되는지를 자구로 확인한다
+        verify(agentDispatcher).dispatch(dataText(result, "livekitRoom"),
+                "{\"sessionId\":\"" + dataLong(result, "id") + "\",\"interviewType\":\"THIRTY_MIN\","
+                        + "\"position\":\"BACKEND\",\"resumeContext\":\"[기술 스택]\\n- 언어: Java\"}");
     }
 
     @Test
@@ -283,6 +309,7 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
         assertThat(sessionRepository.count()).isEqualTo(1);
         assertThat(statusOfSession(pendingId)).isEqualTo("PENDING");
         verifyNoInteractions(roomManager);
+        verifyNoInteractions(agentDispatcher);
     }
 
     @Test
@@ -305,6 +332,7 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
         verify(roomManager).createRoom(room.capture());
         verify(roomManager).deleteRoomQuietly(room.getValue());
         verify(roomManager, never()).deleteRoomQuietly("room-existing-2");
+        verifyNoInteractions(agentDispatcher);
     }
 
     // ─── 기존 세션 정리 ───
@@ -419,6 +447,7 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
         verify(roomManager).createRoom(room.capture());
         verify(roomManager).deleteRoomQuietly(room.getValue());
         verify(roomManager, never()).deleteRoomQuietly("room-old-s002");
+        verifyNoInteractions(agentDispatcher);
     }
 
     @Test

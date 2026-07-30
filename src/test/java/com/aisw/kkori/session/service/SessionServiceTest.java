@@ -45,12 +45,14 @@ class SessionServiceTest {
     private final ResumeAccessGuard resumeAccessGuard = mock(ResumeAccessGuard.class);
     private final SessionRoomManager roomManager = mock(SessionRoomManager.class);
     private final SessionTicketIssuer ticketIssuer = mock(SessionTicketIssuer.class);
+    private final DispatchMetadataAssembler metadataAssembler = mock(DispatchMetadataAssembler.class);
+    private final SessionAgentDispatcher agentDispatcher = mock(SessionAgentDispatcher.class);
     private final TransactionTemplate transactionTemplate = mock(TransactionTemplate.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-07-22T09:00:00Z"), ZoneOffset.UTC);
 
     private final SessionService sessionService = new SessionService(
             userRepository, sessionRepository, resumeAccessGuard, roomManager, ticketIssuer,
-            transactionTemplate, clock);
+            metadataAssembler, agentDispatcher, transactionTemplate, clock);
 
     @BeforeEach
     void passThroughTransactionTemplate() {
@@ -82,7 +84,7 @@ class SessionServiceTest {
         ArgumentCaptor<String> room = ArgumentCaptor.forClass(String.class);
         verify(roomManager).createRoom(room.capture());
         verify(roomManager).deleteRoomQuietly(room.getValue());
-        verifyNoInteractions(ticketIssuer);
+        verifyNoInteractions(ticketIssuer, agentDispatcher);
     }
 
     @Test
@@ -104,7 +106,7 @@ class SessionServiceTest {
         ArgumentCaptor<String> room = ArgumentCaptor.forClass(String.class);
         verify(roomManager).createRoom(room.capture());
         verify(roomManager).deleteRoomQuietly(room.getValue());
-        verifyNoInteractions(ticketIssuer);
+        verifyNoInteractions(ticketIssuer, agentDispatcher);
     }
 
     /** 상태 전이 메서드는 후속 스토리 소관이라 엔티티에 없다 — 테스트는 리플렉션으로 상태를 주입한다. */
