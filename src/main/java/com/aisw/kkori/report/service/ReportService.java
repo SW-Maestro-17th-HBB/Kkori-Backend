@@ -8,6 +8,7 @@ import com.aisw.kkori.report.domain.ReportScore;
 import com.aisw.kkori.report.domain.ReportStatus;
 import com.aisw.kkori.global.response.PageResponse;
 import com.aisw.kkori.report.dto.ReportDetailResponse;
+import com.aisw.kkori.report.dto.ReportStatusResponse;
 import com.aisw.kkori.report.dto.ReportSummaryResponse;
 import com.aisw.kkori.report.repository.ReportFeedbackRepository;
 import com.aisw.kkori.report.repository.ReportRepository;
@@ -90,20 +91,37 @@ public class ReportService {
     }
 
     /**
+     * 생성 상태 조회 (PRD §5) — SSE 유실·재연결 시 동기화용.
+     * 상세 조회와 달리 상태 게이트(409)가 없다 — 상태 확인이 목적이므로 모든 상태에서 조회 가능.
+     */
+    @Transactional(readOnly = true)
+    public ReportStatusResponse getStatus(Long userId, Long reportId) {
+        return ReportStatusResponse.from(findOwned(userId, reportId));
+    }
+
+    /**
      * 본인 소유 + COMPLETED 검증. 순서: 존재(404) → 소유(403) → 상태(409).
-     * 타인의 리포트는 존재를 숨기지 않고 403으로 명확히 거부한다(이력서 R009 선례).
      */
     private Report findOwnedCompleted(Long userId, Long reportId) {
-        Report report = reportRepository.findById(reportId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.REPORT_NOT_FOUND));
-        if (!report.getUserId().equals(userId)) {
-            throw new BusinessException(ErrorCode.REPORT_FORBIDDEN);
-        }
+        Report report = findOwned(userId, reportId);
         if (report.getStatus() == ReportStatus.FAILED) {
             throw new BusinessException(ErrorCode.REPORT_GENERATION_FAILED);
         }
         if (report.getStatus() != ReportStatus.COMPLETED) {
             throw new BusinessException(ErrorCode.REPORT_GENERATION_IN_PROGRESS);
+        }
+        return report;
+    }
+
+    /**
+     * 본인 소유 검증. 순서: 존재(404) → 소유(403).
+     * 타인의 리포트는 존재를 숨기지 않고 403으로 명확히 거부한다(이력서 R009 선례).
+     */
+    private Report findOwned(Long userId, Long reportId) {
+        Report report = reportRepository.findById(reportId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.REPORT_NOT_FOUND));
+        if (!report.getUserId().equals(userId)) {
+            throw new BusinessException(ErrorCode.REPORT_FORBIDDEN);
         }
         return report;
     }

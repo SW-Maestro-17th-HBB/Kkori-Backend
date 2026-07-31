@@ -1,7 +1,7 @@
-package com.aisw.kkori.resume.config;
+package com.aisw.kkori.report.config;
 
-import com.aisw.kkori.resume.dto.ResumeStatusChangedMessage;
-import com.aisw.kkori.resume.service.ResumeStatusEventListener;
+import com.aisw.kkori.report.dto.ReportStatusChangedMessage;
+import com.aisw.kkori.report.service.ReportStatusEventListener;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -18,27 +18,27 @@ import java.time.Duration;
 import java.util.UUID;
 
 /**
- * 상태 이벤트 스트림 구독 컨테이너 설정.
+ * 리포트 상태 이벤트 스트림 구독 컨테이너 설정 (ResumeStatusStreamConfig와 동일 구조).
  *
  * <p>Consumer Group(auto-ack)으로 구독한다. 그룹 없는 {@code ReadOffset.latest()} 구독은
  * 매 폴마다 {@code $}부터 다시 읽어 배치 처리 중 도착한 이벤트를 건너뛰기 때문에
  * (연속 XADD 시 유실), 오프셋이 전진하는 그룹 구독이 필요하다. ACK 관리는 하지 않는다
- * (auto-ack) — SSE는 유실을 허용하고 복구는 REST가 담당한다는 PRD §3 규칙.
+ * (auto-ack) — SSE는 유실을 허용하고 복구는 REST가 담당한다는 PRD §5 규칙.
  *
  * <p>TODO: 서버 다중 인스턴스 배포 시 인스턴스마다 별도 그룹을 쓰도록 그룹명을
  * 인스턴스 식별자 기반으로 변경해야 모든 인스턴스가 이벤트를 받는다(브로드캐스트 의미론).
  */
 @Slf4j
 @Configuration
-public class ResumeStatusStreamConfig {
+public class ReportStatusStreamConfig {
 
-    private static final String CONSUMER_GROUP = "resume-sse-relay";
+    private static final String CONSUMER_GROUP = "report-sse-relay";
 
     @Bean(destroyMethod = "stop")
-    public StreamMessageListenerContainer<String, MapRecord<String, String, String>> resumeStatusListenerContainer(
+    public StreamMessageListenerContainer<String, MapRecord<String, String, String>> reportStatusListenerContainer(
             RedisConnectionFactory connectionFactory,
             StringRedisTemplate redisTemplate,
-            ResumeStatusEventListener listener
+            ReportStatusEventListener listener
     ) {
         createGroupIfAbsent(redisTemplate);
 
@@ -52,11 +52,11 @@ public class ResumeStatusStreamConfig {
         // 읽기 오류(예: Redis 순단)가 나도 구독을 취소하지 않는다 — 기본 동작은 취소라
         // 중계가 조용히 죽은 채 남는다. 오류는 로그만 남기고 다음 폴로 계속한다 (리뷰 반영).
         var readRequest = StreamMessageListenerContainer.StreamReadRequest
-                .builder(StreamOffset.create(ResumeStatusChangedMessage.STREAM_KEY, ReadOffset.lastConsumed()))
+                .builder(StreamOffset.create(ReportStatusChangedMessage.STREAM_KEY, ReadOffset.lastConsumed()))
                 .consumer(Consumer.from(CONSUMER_GROUP, "sse-" + UUID.randomUUID()))
                 .autoAcknowledge(true)
                 .cancelOnError(t -> false)
-                .errorHandler(t -> log.warn("이력서 상태 스트림 읽기 오류 — 구독 유지", t))
+                .errorHandler(t -> log.warn("리포트 상태 스트림 읽기 오류 — 구독 유지", t))
                 .build();
         container.register(readRequest, listener);
         container.start();
@@ -68,7 +68,7 @@ public class ResumeStatusStreamConfig {
         try {
             redisTemplate.execute((org.springframework.data.redis.core.RedisCallback<Object>) connection -> {
                 connection.streamCommands().xGroupCreate(
-                        ResumeStatusChangedMessage.STREAM_KEY.getBytes(),
+                        ReportStatusChangedMessage.STREAM_KEY.getBytes(),
                         CONSUMER_GROUP,
                         ReadOffset.latest(),
                         true
