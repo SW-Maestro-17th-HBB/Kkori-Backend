@@ -29,21 +29,33 @@ public class ReportStatusEventListener implements StreamListener<String, MapReco
     public void onMessage(MapRecord<String, String, String> record) {
         try {
             ReportStatusChangedMessage message = ReportStatusChangedMessage.from(record.getValue());
+            String eventName = eventNameFor(message.status());
+            if (eventName == null) {
+                // 계약(3종) 밖 상태는 프론트로 흘리지 않는다 — 발행 측 강제의 소비 측 방어선 (리뷰 반영)
+                log.warn("계약에 없는 리포트 상태 — 전송 생략: recordId={}, status={}",
+                        record.getId(), message.status());
+                return;
+            }
             ReportStatusEvent event = new ReportStatusEvent(
                     message.reportId(), message.status(), message.message());
             // 소유자에게만 전송 — userId는 Worker가 리포트 행의 소유자를 에코한 값 (계약)
-            emitters.sendTo(message.userId(), eventNameFor(message.status()), event);
+            emitters.sendTo(message.userId(), eventName, event);
         } catch (RuntimeException e) {
-            // 잘못된 이벤트 하나가 리스너를 죽이지 않도록 삼킨다
-            log.warn("리포트 상태 이벤트 처리 실패: {}", record.getValue(), e);
+            // 잘못된 이벤트 하나가 리스너를 죽이지 않도록 삼킨다. payload 원문은 남기지 않는다
+            // — userId·실패 사유가 담기므로 진단에 필요한 최소 필드만 (리뷰 반영)
+            log.warn("리포트 상태 이벤트 처리 실패: recordId={}, reportId={}, status={}",
+                    record.getId(), record.getValue().get("reportId"),
+                    record.getValue().get("status"), e);
         }
     }
 
+    /** 계약에 정의된 3종만 매핑한다 — 그 외(null 포함)는 null을 반환해 전송을 막는다. */
     private String eventNameFor(String status) {
         return switch (status) {
+            case "PROCESSING" -> EVENT_STATUS_CHANGED;
             case "COMPLETED" -> EVENT_COMPLETED;
             case "FAILED" -> EVENT_FAILED;
-            default -> EVENT_STATUS_CHANGED;
+            case null, default -> null;
         };
     }
 }
