@@ -203,7 +203,9 @@ public class ReportService {
     }
 
     private int roundToInt(double value) {
-        return (int) Math.round(value);
+        // 절대값 기준 반올림 — Math.round는 음수 .5를 0 쪽으로 올려, 정확히 .5 하락한
+        // monthlyDelta가 "변화 없음(0)"으로 표시된다 (리뷰 반영)
+        return value < 0 ? -(int) Math.round(-value) : (int) Math.round(value);
     }
 
     /**

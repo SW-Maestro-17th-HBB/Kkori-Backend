@@ -135,6 +135,18 @@ class ReportStatsIntegrationTest {
     }
 
     @Test
+    @DisplayName("monthlyDelta가 정확히 0.5 하락이면 -1로 반올림된다 (0으로 뭉개지지 않음)")
+    void monthlyDeltaRoundsHalfAwayFromZero() throws Exception {
+        fixtures.completedReport(USER_ID, 80, completedLastMonthAt(10));   // 지난달 평균 80
+        fixtures.completedReport(USER_ID, 79, completedThisMonthAt(1));
+        fixtures.completedReport(USER_ID, 80, completedThisMonthAt(2));    // 이번 달 평균 79.5
+
+        mockMvc.perform(get("/api/v1/reports/stats").with(authOf(USER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.monthlyDelta").value(-1));  // -0.5 → -1 (절대값 기준 반올림)
+    }
+
+    @Test
     @DisplayName("이번 달·지난달 중 한쪽에 완료 리포트가 없으면 monthlyDelta는 null이다")
     void monthlyDeltaIsNullWhenAMonthIsMissing() throws Exception {
         fixtures.completedReport(USER_ID, 80, completedThisMonthAt(1));  // 지난달 없음
