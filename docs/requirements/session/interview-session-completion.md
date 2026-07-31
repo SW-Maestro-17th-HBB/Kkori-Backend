@@ -169,8 +169,9 @@ LiveKit Cloud가 발송하는 webhook을 수신·검증해 이벤트→전이 �
 | 시점 상태 | 동작 | 응답 |
 | --- | --- | --- |
 | `ACTIVE` | `end_requested_at` 기록(최초 1회 — 이미 있으면 유지) 후 커밋, 커밋 후 SendData 발신 → 에이전트가 클로징·flush·룸 삭제 → `room_finished`로 `ENDED` | `202` |
-| `PENDING`·`AGENT_LOST` | 에이전트가 없어 보낼 상대가 없다 — **즉시 `ABORTED`(`ended_at`) + 룸 삭제**(best-effort) | `202` |
-| `INTERRUPTED` | `PENDING`과 동일 취급 (본 스토리에서 도달 불가 — 재연결 스토리가 재검토) | `202` |
+| `PENDING` | **관측 상태일 뿐이므로 에이전트 부재를 단정하지 않는다**(joined 유실 병리 — stale PENDING과 동일 보호): 행 있음 → `ENDED` + 룸 삭제 / 행 없음 → **룸 참가자 대조** — AGENT 관측 시 `ACTIVE` 복원(`started_at`=관측 입장 시각) 후 ACTIVE와 동일 처리(SendData — 정상 클로징·flush·리포트 보존), 부재·룸 미존재 시 `ABORTED`(`ended_at`) + 룸 삭제. 표식 단축은 두지 않는다 — 실시간 경로에서 표식+에이전트 재실은 "클로징 진행 중"일 수 있어 대조가 먼저다 | `202` |
+| `PENDING` (대조 실패) | 종료를 단정하지 않고 `S008`로 끝낸다 — 재시도 가능하며, 수렴은 스위퍼·room_finished가 어차피 보장한다 | `500` |
+| `AGENT_LOST`·`INTERRUPTED` | **소실이 관측된 상태**(판별 ③ 경유)라 부재가 증거 기반이다 — 즉시 `ABORTED`(`ended_at`) + 룸 삭제(best-effort). `INTERRUPTED`는 본 스토리 도달 불가(재연결 스토리가 재검토) | `202` |
 | terminal | 멱등 no-op + **룸 삭제 best-effort 재시도** — 이미 종료 상태이므로 상태는 불변이고(더블클릭·낡은 화면에 안전), 선기록 후 삭제 실패로 잔존한 룸이 있으면 이 재시도가 능동 복구 경로다(룸이 없으면 무해한 no-op) | `202` |
 
 - **비동기 계약**: `202 Accepted`는 수리(종료 수렴 보장)의 의미다 — `ACTIVE` 경로의 실제 종료 확정은 `room_finished` webhook이며, 클라이언트는 응답이 아니라 룸 종료(DisconnectReason=`ROOM_DELETED`)로 종료를 감지한다. API 문서(Swagger)에 이 비동기 계약을 명시한다.
@@ -179,7 +180,7 @@ LiveKit Cloud가 발송하는 webhook을 수신·검증해 이벤트→전이 �
 - **중복 `/end`**: `ACTIVE`인 한 SendData를 재발신하되(에이전트의 종료 신호 처리는 멱등 — 전진 전용 상태 머신) `end_requested_at`은 최초값을 유지한다 — fallback 창이 재호출로 연장되지 않는다.
 - **fallback**(스위퍼 — 공통: 스위퍼·설정): `status=ACTIVE AND end_requested_at ≤ now − fallback타임아웃` 세션을 크로스 레포 계약대로 처리한다 — 행 판별 선기록(행 있음 `ENDED` / 없음 `ABORTED`, 표식 있으면 cause 로그) → 커밋 → 룸 삭제. 선기록 후 삭제 순서는 계약이다. **terminal 선기록 후 룸 삭제 실패(감수)**: 세션이 이미 terminal이라 스위퍼 대상에서 빠지므로, candidate가 남아 있으면 empty timeout이 시작되지 않아 룸이 잔존하고 클라이언트가 `ROOM_DELETED`를 받지 못할 수 있다. 수렴 경로는 세 겹이다 — ① 참가자 퇴장 즉시 empty timeout이 정리 ② 유저가 종료 버튼을 다시 누르면 terminal `/end`의 룸 삭제 재시도가 정리(기회적 보조 경로 — **프론트에 재호출을 요구하는 계약이 아니다**) ③ 운영 탐지·수동 삭제(`lk room list`). **보장 범위**: 본 스토리가 하드 보장하는 것은 **DB 세션의 terminal 수렴**(이력서 차단 해제·재생성 허용)이며 이는 선기록 시점에 이미 성립해 있다. **실제 룸 폐쇄와 `ROOM_DELETED` 전달은 best-effort다** — 통상은 유저 이탈(자발 퇴장·창 닫기·연결 끊김)이 participant 퇴장으로 관측되어 empty timeout이 정리하지만, 클라이언트가 연결을 유지하는 한 이탈 시점에 상한이 없다. 삭제 실패 시 사용자가 직접 이탈해야 할 수 있음을 잔여 UX로 수용한다. 서버 상태(이력서 차단 해제·재생성 허용)는 선기록 시점에 이미 회복되어 있어 영향은 UX에 한정된다 — HBB1-18의 동일 잔여 위험(candidate 잔류 룸) 수용과 같은 판단이며, 영속 재시도 상태(`room_cleanup_pending` 류)는 발생이 실측되면 그때 도입을 검토한다.
 - **잔여 경합의 실제 형태 (감수)**: 에이전트가 정상 진행 중인데 fallback이 선착하면 — 선기록의 행 판별이 flush 커밋보다 먼저 실행된 경우 — `ABORTED` 선기록·룸 삭제 뒤 에이전트가 flush·리포트 발행을 이어가 **"`ABORTED` + transcript 행 + 리포트"**가 남을 수 있다. terminal 확정 원칙("행 없는 `ENDED`" 차단)의 역방향은 막지 않으며, fallback 타임아웃을 종료 시퀀스 최악 소요보다 충분히 크게 잡아(공통: 스위퍼·설정의 값 근거) 창을 실질 0으로 좁힌다. **리포트 소비 스토리는 terminal 상태와 산출물(행·리포트) 존재의 불일치를 허용해야 한다** — 연계 제약으로 명시한다. 이 경합의 구조적 제거(ENDING 중간 상태·terminal 보정 ABORTED→ENDED)는 도입하지 않는다: terminal no-op 가드는 에이전트 PRD가 전이 경쟁 수렴의 전제로 의존하는 크로스 레포 계약이고 상태 집합 6종도 HBB1-18 확정 계약이라, terminal을 가변화하는 쪽이 더 큰 위험이다 — 창의 발생 조건은 "종료 시퀀스 최악 소요(≈119s)를 넘는 병리적 지연"뿐으로 타임아웃 설계(180s)가 실질 0으로 좁힌다.
-- `/end` 도중 상태가 바뀌는 경합(예: 판별이 먼저 `AGENT_LOST` 전이)은 user 잠금이 직렬화한다 — 잠금 획득 시점의 상태 기준으로 위 표를 적용한다.
+- `/end` 도중 상태가 바뀌는 경합(예: 판별이 먼저 `AGENT_LOST` 전이)은 user 잠금이 직렬화한다 — 잠금 획득 시점의 상태 기준으로 위 표를 적용한다. `PENDING`의 행 판별·참가자 대조는 잠금 트랜잭션 **밖**(LiveKit 왕복 — 기존 원칙)이므로, 대조 결과의 반영 트랜잭션이 최신 상태를 재분기한다 — 대조 사이에 세션이 `ACTIVE`로 전이(webhook 선착)했으면 대조 결과를 버리고 ACTIVE 분기를, terminal이 됐으면 no-op을 적용한다(대조 결과는 `PENDING` 유지 시에만 유효).
 
 ### 실행 조건
 
@@ -189,7 +190,9 @@ LiveKit Cloud가 발송하는 webhook을 수신·검증해 이벤트→전이 �
 ### 검증 기준
 
 - `ACTIVE` 세션 `/end` 시 `202`와 함께 `end_requested_at`이 기록되고, 커밋 후 SendData 어댑터가 topic `interview:end`·payload `{"sessionId":"<id>"}`·RELIABLE로 1회 호출되는지 확인
-- `PENDING`·`AGENT_LOST` 세션 `/end` 시 즉시 `ABORTED`(`ended_at`) 전이·룸 삭제 시도·`202` 응답 확인, SendData는 호출되지 않는지 확인
+- `PENDING` 세션 `/end`: 행 있음 → `ENDED` + 룸 삭제(대조 미실행), 행 없음 + AGENT 관측 → `ACTIVE` 복원(`started_at`=관측 입장 시각)·`end_requested_at` 기록·SendData 발신, 행 없음 + 부재/룸 미존재 → `ABORTED` + 룸 삭제·SendData 미호출, 대조 실패 → `500 S008`·상태 무변화 확인
+- `PENDING` 대조와 상태 전이의 경합: 대조 중 세션이 `ACTIVE`로 전이하면 대조 결과를 버리고 ACTIVE 분기(SendData)로 수렴하는지 확인 (결정적 재현 — 대조 시점에 전이를 끼워 넣는 테스트)
+- `AGENT_LOST` 세션 `/end` 시 즉시 `ABORTED`(`ended_at`) 전이·룸 삭제 시도·`202` 응답 확인, SendData는 호출되지 않는지 확인
 - terminal 세션 `/end`가 상태 무변화·`202`이되 룸 삭제를 best-effort로 재시도하는지 확인 (멱등 + 잔존 룸 능동 복구)
 - 중복 `/end`(ACTIVE 유지 중)가 SendData를 재발신하되 `end_requested_at` 최초값을 유지하는지 확인
 - 미존재 세션 `404 SESSION_NOT_FOUND`, 타 유저 세션 `403 SESSION_FORBIDDEN`, 미인증 `401` 확인
@@ -200,7 +203,7 @@ LiveKit Cloud가 발송하는 webhook을 수신·검증해 이벤트→전이 �
 
 ### 성능 요구사항
 
-- 없음 (LiveKit 왕복 1회 추가 — `livekit.api-timeout` 상한, 기존 SLA 방침 유지)
+- 없음 — LiveKit 왕복은 경로당 최대 2회(`PENDING` 참가자 대조 + SendData 또는 룸 삭제)이며 각각 `livekit.api-timeout`으로 상한된다 (기존 SLA 방침 유지)
 
 ### 인터페이스 요구사항
 
@@ -210,7 +213,7 @@ LiveKit Cloud가 발송하는 webhook을 수신·검증해 이벤트→전이 �
 
 ### 제약사항
 
-- `/end`는 종료 의도의 관문일 뿐 종료 실행 주체가 아니다 — `ACTIVE`의 실제 종료(클로징·flush·룸 삭제)는 에이전트 소관이며, **`ACTIVE` 경로에서** Spring이 직접 종료를 실행하는 것은 fallback뿐이다. 에이전트 부재 상태(`PENDING`·`AGENT_LOST`)의 즉시 정리와 terminal의 룸 삭제 재시도는 에이전트가 없는 세션에 대한 별개 경로다.
+- `/end`는 종료 의도의 관문일 뿐 종료 실행 주체가 아니다 — `ACTIVE`의 실제 종료(클로징·flush·룸 삭제)는 에이전트 소관이며, **`ACTIVE` 경로에서** Spring이 직접 종료를 실행하는 것은 fallback뿐이다. 소실 관측 상태(`AGENT_LOST`·`INTERRUPTED`)의 즉시 정리, `PENDING`의 대조 기반 처리, terminal의 룸 삭제 재시도는 SendData 없이 수행되는 별개 경로다.
 - 프론트 종료 UI·`ROOM_DELETED` 처리 화면은 프론트 스토리 소관(프론트는 룸 종료 감지 로직 기준 추가 작업 없음).
 
 ### 기타 요구사항
@@ -315,7 +318,7 @@ LiveKit Cloud가 발송하는 webhook을 수신·검증해 이벤트→전이 �
 | --- | --- | --- | --- |
 | S006 | SESSION_NOT_FOUND | 404 | 미존재 세션에 대한 종료 요청 (신설) |
 | S007 | SESSION_FORBIDDEN | 403 | 타 유저 세션에 대한 종료 요청 (신설) |
-| S008 | SESSION_END_SIGNAL_FAILED | 500 | SendData 발신 실패·타임아웃 — 종료 의도는 기록되어 fallback이 수렴 보장 (신설) |
+| S008 | SESSION_END_SIGNAL_FAILED | 500 | 종료 처리의 LiveKit 왕복 실패 — SendData 발신 실패·타임아웃(종료 의도는 기록되어 fallback이 수렴 보장), `PENDING` 참가자 대조 실패(수렴은 스위퍼·room_finished가 보장). 재시도 가능 (신설) |
 
 - S001~S005는 기존 정의 그대로 유지된다.
 - webhook 서명 검증 실패는 공통 `UNAUTHORIZED`(401, C005)로 응답한다.

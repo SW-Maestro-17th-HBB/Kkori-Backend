@@ -64,7 +64,7 @@ public enum ErrorCode {
     SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, "S006", "면접 세션을 찾을 수 없습니다."),
     SESSION_FORBIDDEN(HttpStatus.FORBIDDEN, "S007", "해당 면접 세션에 대한 권한이 없습니다."),
     SESSION_END_SIGNAL_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "S008",
-            "종료 요청 전달에 실패했습니다. 종료는 잠시 후 자동으로 완료됩니다."),
+            "종료 요청 처리에 실패했습니다. 잠시 후 다시 시도해 주세요."),
     ;
 
     private final HttpStatus status;
