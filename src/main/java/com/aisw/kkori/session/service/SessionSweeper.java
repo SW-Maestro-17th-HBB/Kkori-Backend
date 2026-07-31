@@ -42,6 +42,14 @@ import java.util.function.Consumer;
 @RequiredArgsConstructor
 public class SessionSweeper {
 
+    /**
+     * stale PENDING 대조 건너뛰기의 상한 배수 — {@code created_at}이 stale 임계의 이 배수(기본 3h)를
+     * 넘기면 지속 장애로 대조가 계속 실패해도 대조 없이 행·표식 판별만으로 terminal을 확정한다.
+     * 튜닝 노브가 아닌 안전 백스톱이라 설정이 아닌 상수로 둔다(PRD 기능 3 — 수렴을 LiveKit
+     * 가용성에 조건부로 만들지 않는 hard ceiling).
+     */
+    private static final int STALE_PENDING_PROBE_CEILING_MULTIPLIER = 4;
+
     private final InterviewSessionRepository sessionRepository;
     private final InterviewTranscriptReader transcriptReader;
     private final TerminationMarkerReader markerReader;
@@ -122,6 +130,8 @@ public class SessionSweeper {
      */
     private void sweepStalePending(Instant now) {
         Instant cutoff = now.minus(properties.staleRecoveryTimeout());
+        Instant probeCeiling = now.minus(
+                properties.staleRecoveryTimeout().multipliedBy(STALE_PENDING_PROBE_CEILING_MULTIPLIER));
         forEachIsolated("stale PENDING",
                 sessionRepository.findByStatusAndCreatedAtLessThanEqual(SessionStatus.PENDING, cutoff),
                 session -> {
@@ -130,6 +140,13 @@ public class SessionSweeper {
                         return;
                     }
                     if (markerReader.read(session.getId()).isPresent()) {
+                        finishStalePending(session, SessionStatus.ABORTED);
+                        return;
+                    }
+                    // hard ceiling — 대조 없이 확정한다. 토큰 TTL(1h)이 늦은 입장을 차단해 이 시점의
+                    // 진행 중 면접은 실질 불가하고, 판별(DB·Redis)은 대조(LiveKit)와 장애 도메인이 분리된다
+                    if (!session.getCreatedAt().isAfter(probeCeiling)) {
+                        log.info("stale PENDING 대조 상한 초과 — 대조 없이 정리 (sessionId={})", session.getId());
                         finishStalePending(session, SessionStatus.ABORTED);
                         return;
                     }

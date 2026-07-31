@@ -19,6 +19,7 @@ import java.time.ZoneOffset;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -222,6 +223,25 @@ class SessionSweeperTest extends SessionCompletionTestSupport {
 
         assertThat(statusOfSession(sessionId)).isEqualTo("PENDING");
         verify(roomManager, never()).deleteRoomQuietly(anyString());
+    }
+
+    @Test
+    @DisplayName("stale PENDING — 지속 조회 실패에도 대조 상한(임계 4배) 경과 후 대조 없이 강제 정리된다")
+    void stalePendingHardCeilingConvergesDespiteUnknown() {
+        long userId = saveUser("kakao-sw-15");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.PENDING, "room-sw-15");
+        when(roomManager.probeAgentPresence("room-sw-15")).thenReturn(AgentPresence.unknown());
+
+        // 상한(45m×4=3h) 이전 — 대조 실패로 건너뛴다
+        expiredSweeper().sweep();
+        assertThat(statusOfSession(sessionId)).isEqualTo("PENDING");
+        verify(roomManager).probeAgentPresence("room-sw-15");
+
+        // 상한 경과 — 대조 자체를 시도하지 않고 ABORTED 확정 (수렴이 LiveKit 가용성에 비의존)
+        sweeperAt(Instant.now().plus(Duration.ofHours(4))).sweep();
+        assertThat(statusOfSession(sessionId)).isEqualTo("ABORTED");
+        verify(roomManager, times(1)).probeAgentPresence("room-sw-15");
+        verify(roomManager).deleteRoomQuietly("room-sw-15");
     }
 
     @Test
