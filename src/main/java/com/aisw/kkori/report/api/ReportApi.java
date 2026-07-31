@@ -5,6 +5,7 @@ import com.aisw.kkori.report.domain.ReportStatus;
 import com.aisw.kkori.report.dto.ReportDetailResponse;
 import com.aisw.kkori.report.dto.ReportStatsResponse;
 import com.aisw.kkori.global.response.PageResponse;
+import com.aisw.kkori.report.dto.ReportStatusResponse;
 import com.aisw.kkori.report.dto.ReportSummaryResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -69,6 +70,23 @@ public interface ReportApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "생성 진행 중(RP003)·생성 실패 상태(RP004 — 재생성 필요)"),
     })
     ResponseEntity<ApiResponse<ReportDetailResponse>> getDetail(
+            @Parameter(hidden = true) Long userId,
+            @Parameter(description = "리포트 ID", required = true) Long reportId
+    );
+
+    @Operation(
+            summary = "리포트 생성 상태 조회",
+            description = """
+                    리포트의 현재 생성 상태를 조회한다 — SSE 유실·재연결 시 동기화용.
+                    모든 상태에서 조회 가능하며, failedReason은 FAILED일 때만 값이 있다.
+                    """
+    )
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "조회 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "타인의 리포트(RP002)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "리포트 없음(RP001)"),
+    })
+    ResponseEntity<ApiResponse<ReportStatusResponse>> getStatus(
             @Parameter(hidden = true) Long userId,
             @Parameter(description = "리포트 ID", required = true) Long reportId
     );

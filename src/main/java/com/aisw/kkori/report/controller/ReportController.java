@@ -6,6 +6,7 @@ import com.aisw.kkori.report.domain.ReportStatus;
 import com.aisw.kkori.report.dto.ReportDetailResponse;
 import com.aisw.kkori.report.dto.ReportStatsResponse;
 import com.aisw.kkori.global.response.PageResponse;
+import com.aisw.kkori.report.dto.ReportStatusResponse;
 import com.aisw.kkori.report.dto.ReportSummaryResponse;
 import com.aisw.kkori.report.service.ReportService;
 import lombok.RequiredArgsConstructor;
@@ -51,5 +52,13 @@ public class ReportController implements ReportApi {
             @PathVariable Long reportId
     ) {
         return ResponseEntity.ok(ApiResponse.success(reportService.getDetail(userId, reportId)));
+    }
+
+    @GetMapping("/{reportId}/status")
+    public ResponseEntity<ApiResponse<ReportStatusResponse>> getStatus(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long reportId
+    ) {
+        return ResponseEntity.ok(ApiResponse.success(reportService.getStatus(userId, reportId)));
     }
 }
