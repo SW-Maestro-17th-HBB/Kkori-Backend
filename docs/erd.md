@@ -18,6 +18,7 @@ erDiagram
   RESUMES ||--o{ RESUME_CHUNKS : indexed_as
   USERS ||--o{ INTERVIEW_SESSION : owns
   RESUMES ||--o{ INTERVIEW_SESSION : based_on
+  INTERVIEW_SESSION ||--o| INTERVIEW_TRANSCRIPT : flushed_as
 
   USERS {
     bigint id PK
@@ -108,12 +109,21 @@ erDiagram
     string position "NOT NULL, BACKEND|FRONTEND"
     string status "NOT NULL, PENDING|ACTIVE|INTERRUPTED|AGENT_LOST|ENDED|ABORTED"
     string livekit_room UK "NOT NULL, 세션-룸 매핑(webhook 역추적 키)"
-    timestamptz started_at "nullable, ACTIVE 전환(후속 스토리)"
+    timestamptz started_at "nullable, ACTIVE 전환"
     timestamptz ended_at "nullable, terminal 전환"
     timestamptz disconnected_at "nullable, INTERRUPTED 전환(후속 스토리)"
+    timestamptz end_requested_at "nullable, 최초 /end 시각(fallback 앵커)"
+    timestamptz agent_lost_at "nullable, AGENT_LOST 전환(유예 앵커)"
     timestamptz created_at
     timestamptz updated_at
     timestamptz deleted_at "nullable, E1 파기 연계(후속 스토리)"
+  }
+
+  INTERVIEW_TRANSCRIPT {
+    bigint id PK
+    bigint session_id UK "NOT NULL, FK 없음(무FK 방침)"
+    jsonb content "발화 객체 배열"
+    timestamptz deleted_at "nullable"
   }
 ```
 
@@ -124,7 +134,8 @@ erDiagram
 | `users` · `refresh_token` · `user_consent` · `deletion_log` | Spring (E1) | `user_consent`는 append-only 이력. `deletion_log`는 auditing 미적용(명시 시각 관리) |
 | `resumes` · `resume_analysis_status` | Spring (이력서) | 분석 상태는 Python Worker가 전이 기록(UPLOADED 이후) |
 | `resume_chunks` | Python Worker | 테이블 생성·쓰기 모두 Worker 소관. pgvector 확장은 백엔드 리포(로컬 이미지·Testcontainers)가 제공 |
-| `interview_session` | Spring (세션) | HBB1-18 신설. 상태 전이는 현재 PENDING(생성)·ABORTED(PENDING 자동 교체)만 발생, 나머지는 후속 스토리. 인덱스 `(user_id, status)` |
+| `interview_session` | Spring (세션) | HBB1-18 신설, HBB1-294가 종료 전이(webhook·/end·스위퍼)와 `end_requested_at`·`agent_lost_at` 추가. INTERRUPTED 전이만 후속 스토리. 인덱스 `(user_id, status)` |
+| `interview_transcript` | Kkori-AI (에이전트) | 테이블 DDL·마이그레이션·쓰기 모두 에이전트 소관(Kkori-AI interview-end.md §4). Spring은 판별용 EXISTS 읽기만(HBB1-294 — interview-session-completion.md). dev/prod는 에이전트 배포가 테이블 존재의 선행 조건 |
 
 ## 마이그레이션 도구 도입 시 반영할 항목 (Flyway — 배포 스토리)
 
