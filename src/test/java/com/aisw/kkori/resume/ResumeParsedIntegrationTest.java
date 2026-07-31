@@ -1,12 +1,18 @@
 package com.aisw.kkori.resume;
 
+import com.aisw.kkori.ResumeSeeder;
 import com.aisw.kkori.TestcontainersConfiguration;
 import com.aisw.kkori.resume.domain.AnalysisStatus;
 import com.aisw.kkori.resume.domain.Resume;
-import com.aisw.kkori.resume.domain.ResumeAnalysisStatus;
 import com.aisw.kkori.resume.dto.ResumeParseRequestedMessage;
 import com.aisw.kkori.resume.repository.ResumeAnalysisStatusRepository;
 import com.aisw.kkori.resume.repository.ResumeRepository;
+import com.aisw.kkori.session.domain.InterviewSession;
+import com.aisw.kkori.session.domain.InterviewType;
+import com.aisw.kkori.session.domain.Position;
+import com.aisw.kkori.session.repository.InterviewSessionRepository;
+import com.aisw.kkori.user.domain.User;
+import com.aisw.kkori.user.repository.UserRepository;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -47,8 +53,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import(TestcontainersConfiguration.class)
 class ResumeParsedIntegrationTest {
 
-    private static final long USER_ID = 1L;
-    private static final long OTHER_USER_ID = 2L;
+    /** 실제 저장된 유저 id — 수정·재분석이 user 행 잠금을 잡으므로(세션 생성과 직렬화) 가짜 상수로는 401이 난다. */
+    private long userId;
+    private long otherUserId;
 
     private static final String VALID_STRUCTURED_DATA = """
             {
@@ -62,14 +69,20 @@ class ResumeParsedIntegrationTest {
     @Autowired MockMvc mockMvc;
     @Autowired ResumeRepository resumeRepository;
     @Autowired ResumeAnalysisStatusRepository statusRepository;
+    @Autowired InterviewSessionRepository interviewSessionRepository;
+    @Autowired UserRepository userRepository;
     @Autowired StringRedisTemplate redisTemplate;
     @Autowired JdbcTemplate jdbcTemplate;
 
     @BeforeEach
     void setUp() {
+        interviewSessionRepository.deleteAll();
         statusRepository.deleteAll();
         resumeRepository.deleteAll();
+        userRepository.deleteAll();
         redisTemplate.delete(ResumeParseRequestedMessage.STREAM_KEY);
+        userId = userRepository.save(User.create("kakao-parsed-1", "p1@example.com", "본인")).getId();
+        otherUserId = userRepository.save(User.create("kakao-parsed-2", "p2@example.com", "타인")).getId();
     }
 
     // ─── 조회 ───
@@ -77,9 +90,9 @@ class ResumeParsedIntegrationTest {
     @Test
     @DisplayName("EMBEDDED 이력서 조회 시 200과 함께 structuredData가 반환되고 rawText는 없다")
     void getParsed_embedded_returnsStructuredData() throws Exception {
-        long resumeId = embeddedResume(USER_ID);
+        long resumeId = embeddedResume(userId);
 
-        mockMvc.perform(get("/api/v1/resumes/{resumeId}/parsed", resumeId).with(authOf(USER_ID)))
+        mockMvc.perform(get("/api/v1/resumes/{resumeId}/parsed", resumeId).with(authOf(userId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.resumeId").value(resumeId))
@@ -93,9 +106,9 @@ class ResumeParsedIntegrationTest {
     @Test
     @DisplayName("분석 진행 중이면 조회가 409 R010으로 거부된다")
     void getParsed_inProgress_returns409() throws Exception {
-        long resumeId = inProgressResume(USER_ID);
+        long resumeId = inProgressResume(userId);
 
-        mockMvc.perform(get("/api/v1/resumes/{resumeId}/parsed", resumeId).with(authOf(USER_ID)))
+        mockMvc.perform(get("/api/v1/resumes/{resumeId}/parsed", resumeId).with(authOf(userId)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("R010"));
     }
@@ -103,9 +116,9 @@ class ResumeParsedIntegrationTest {
     @Test
     @DisplayName("FAILED 이력서는 조회가 409 R011로 거부된다 (복구는 재분석의 몫)")
     void getParsed_failed_returns409() throws Exception {
-        long resumeId = failedResume(USER_ID);
+        long resumeId = failedResume(userId);
 
-        mockMvc.perform(get("/api/v1/resumes/{resumeId}/parsed", resumeId).with(authOf(USER_ID)))
+        mockMvc.perform(get("/api/v1/resumes/{resumeId}/parsed", resumeId).with(authOf(userId)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("R011"));
     }
@@ -113,9 +126,9 @@ class ResumeParsedIntegrationTest {
     @Test
     @DisplayName("타인의 이력서 조회는 403 R009 — 404가 아니라 명확한 거부 (PRD §4)")
     void getParsed_othersResume_returns403() throws Exception {
-        long resumeId = embeddedResume(OTHER_USER_ID);
+        long resumeId = embeddedResume(otherUserId);
 
-        mockMvc.perform(get("/api/v1/resumes/{resumeId}/parsed", resumeId).with(authOf(USER_ID)))
+        mockMvc.perform(get("/api/v1/resumes/{resumeId}/parsed", resumeId).with(authOf(userId)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error.code").value("R009"));
     }
@@ -123,7 +136,7 @@ class ResumeParsedIntegrationTest {
     @Test
     @DisplayName("없는 이력서 조회는 404 R008")
     void getParsed_notFound_returns404() throws Exception {
-        mockMvc.perform(get("/api/v1/resumes/{resumeId}/parsed", 999_999L).with(authOf(USER_ID)))
+        mockMvc.perform(get("/api/v1/resumes/{resumeId}/parsed", 999_999L).with(authOf(userId)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("R008"));
     }
@@ -133,7 +146,7 @@ class ResumeParsedIntegrationTest {
     @Test
     @DisplayName("수정 성공 시 DB에 반영되고 분석 요청은 발행되지 않는다 (수정 ≠ 재분석)")
     void updateParsed_success_savesWithoutPublishing() throws Exception {
-        long resumeId = embeddedResume(USER_ID);
+        long resumeId = embeddedResume(userId);
 
         mockMvc.perform(patch("/api/v1/resumes/{resumeId}/parsed", resumeId)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -142,7 +155,7 @@ class ResumeParsedIntegrationTest {
                                  "skills": [{"category": "백엔드", "items": ["Kotlin"]}],
                                  "projects": [], "experiences": []}
                                 """))
-                        .with(authOf(USER_ID)))
+                        .with(authOf(userId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.structuredData.profile.name").value("수정된 이름"))
                 .andExpect(jsonPath("$.data.analysisStatus").value("EMBEDDED"));   // 수정은 상태를 바꾸지 않음
@@ -159,7 +172,7 @@ class ResumeParsedIntegrationTest {
     @Test
     @DisplayName("수정 응답의 updatedAt은 이번 저장 시각이다 (flush 시점 버그 회귀 테스트)")
     void updateParsed_responseCarriesFreshUpdatedAt() throws Exception {
-        long resumeId = embeddedResume(USER_ID);
+        long resumeId = embeddedResume(userId);
 
         // 두 수정의 내용이 달라야 한다 — 같으면 더티 체킹이 UPDATE를 생략해 updatedAt이 안 바뀐다
         Instant first = updatedAtOf(patchName(resumeId, "1차 수정"));
@@ -172,24 +185,24 @@ class ResumeParsedIntegrationTest {
     @Test
     @DisplayName("필드 누락·빈 배열은 유효하다 — 내용의 올바름은 시스템이 판정하지 않는다")
     void updateParsed_emptyAndMissingFields_allowed() throws Exception {
-        long resumeId = embeddedResume(USER_ID);
+        long resumeId = embeddedResume(userId);
 
         mockMvc.perform(patch("/api/v1/resumes/{resumeId}/parsed", resumeId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(updateBody("{\"skills\": []}"))   // profile·projects·experiences 전부 누락
-                        .with(authOf(USER_ID)))
+                        .with(authOf(userId)))
                 .andExpect(status().isOk());
     }
 
     @Test
     @DisplayName("JSON 구조 오류(배열 자리에 문자열)는 400 C002 — 역직렬화 단계에서 차단된다")
     void updateParsed_structuralError_returns400() throws Exception {
-        long resumeId = embeddedResume(USER_ID);
+        long resumeId = embeddedResume(userId);
 
         mockMvc.perform(patch("/api/v1/resumes/{resumeId}/parsed", resumeId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(updateBody("{\"skills\": \"배열이어야 함\"}"))
-                        .with(authOf(USER_ID)))
+                        .with(authOf(userId)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("C002"));
     }
@@ -197,12 +210,12 @@ class ResumeParsedIntegrationTest {
     @Test
     @DisplayName("배열 내 null 요소는 400 C002 + fieldErrors — 검증 단계에서 차단된다")
     void updateParsed_nullInArray_returns400WithFieldErrors() throws Exception {
-        long resumeId = embeddedResume(USER_ID);
+        long resumeId = embeddedResume(userId);
 
         mockMvc.perform(patch("/api/v1/resumes/{resumeId}/parsed", resumeId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(updateBody("{\"skills\": [null]}"))
-                        .with(authOf(USER_ID)))
+                        .with(authOf(userId)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("C002"))
                 .andExpect(jsonPath("$.error.fieldErrors").isNotEmpty());   // 어느 필드가 틀렸는지 알려주는 유일한 경로
@@ -211,12 +224,12 @@ class ResumeParsedIntegrationTest {
     @Test
     @DisplayName("structuredData 자체가 없으면 400 C002 + fieldErrors")
     void updateParsed_missingStructuredData_returns400() throws Exception {
-        long resumeId = embeddedResume(USER_ID);
+        long resumeId = embeddedResume(userId);
 
         mockMvc.perform(patch("/api/v1/resumes/{resumeId}/parsed", resumeId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}")
-                        .with(authOf(USER_ID)))
+                        .with(authOf(userId)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("C002"))
                 .andExpect(jsonPath("$.error.fieldErrors").isNotEmpty());
@@ -225,7 +238,7 @@ class ResumeParsedIntegrationTest {
     @Test
     @DisplayName("직렬화 실측 100KB 초과는 400 C002 — Content-Length가 아니라 저장될 크기 기준")
     void updateParsed_over100KB_returns400() throws Exception {
-        long resumeId = embeddedResume(USER_ID);
+        long resumeId = embeddedResume(userId);
         String bigDescription = "가".repeat(60_000);   // UTF-8 3바이트 × 60,000 = 180KB > 100KB
 
         mockMvc.perform(patch("/api/v1/resumes/{resumeId}/parsed", resumeId)
@@ -233,7 +246,7 @@ class ResumeParsedIntegrationTest {
                         .content(updateBody("""
                                 {"projects": [{"name": "p", "role": "r", "description": "%s", "techStacks": []}]}
                                 """.formatted(bigDescription)))
-                        .with(authOf(USER_ID)))
+                        .with(authOf(userId)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("C002"));
     }
@@ -241,12 +254,12 @@ class ResumeParsedIntegrationTest {
     @Test
     @DisplayName("FAILED 이력서는 수정이 409 R011로 거부된다")
     void updateParsed_failed_returns409() throws Exception {
-        long resumeId = failedResume(USER_ID);
+        long resumeId = failedResume(userId);
 
         mockMvc.perform(patch("/api/v1/resumes/{resumeId}/parsed", resumeId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(updateBody(VALID_STRUCTURED_DATA))
-                        .with(authOf(USER_ID)))
+                        .with(authOf(userId)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("R011"));
     }
@@ -254,12 +267,12 @@ class ResumeParsedIntegrationTest {
     @Test
     @DisplayName("분석 진행 중이면 수정이 409 R010으로 거부된다 (Worker와의 동시 쓰기 방지)")
     void updateParsed_inProgress_returns409() throws Exception {
-        long resumeId = inProgressResume(USER_ID);
+        long resumeId = inProgressResume(userId);
 
         mockMvc.perform(patch("/api/v1/resumes/{resumeId}/parsed", resumeId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(updateBody(VALID_STRUCTURED_DATA))
-                        .with(authOf(USER_ID)))
+                        .with(authOf(userId)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("R010"));
     }
@@ -269,9 +282,9 @@ class ResumeParsedIntegrationTest {
     @Test
     @DisplayName("EMBEDDED에서 재분석하면 REINDEX가 발행되고 상태가 EMBEDDING으로 재시작된다")
     void reanalyze_embedded_publishesReindex() throws Exception {
-        long resumeId = embeddedResume(USER_ID);
+        long resumeId = embeddedResume(userId);
 
-        mockMvc.perform(post("/api/v1/resumes/{resumeId}/reanalyze", resumeId).with(authOf(USER_ID)))
+        mockMvc.perform(post("/api/v1/resumes/{resumeId}/reanalyze", resumeId).with(authOf(userId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.resumeId").value(resumeId))
                 .andExpect(jsonPath("$.data.analysisStatus").value("EMBEDDING"));
@@ -284,7 +297,7 @@ class ResumeParsedIntegrationTest {
         assertThat(records).hasSize(1);
         assertThat(records.get(0).getValue())
                 .containsEntry("resumeId", String.valueOf(resumeId))
-                .containsEntry("userId", String.valueOf(USER_ID))
+                .containsEntry("userId", String.valueOf(userId))
                 .containsEntry("bucket", resume.getOriginalFileBucket())     // 설정값이 아니라 저장 당시 DB 기록
                 .containsEntry("objectKey", resume.getOriginalFileKey())
                 .containsEntry("mode", "REINDEX");
@@ -293,9 +306,9 @@ class ResumeParsedIntegrationTest {
     @Test
     @DisplayName("FAILED에서 재분석하면 FULL이 발행되고 상태 UPLOADED + 이전 실패 정보가 초기화된다")
     void reanalyze_failed_publishesFullAndClearsFailure() throws Exception {
-        long resumeId = failedResume(USER_ID);
+        long resumeId = failedResume(userId);
 
-        mockMvc.perform(post("/api/v1/resumes/{resumeId}/reanalyze", resumeId).with(authOf(USER_ID)))
+        mockMvc.perform(post("/api/v1/resumes/{resumeId}/reanalyze", resumeId).with(authOf(userId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.analysisStatus").value("UPLOADED"));
 
@@ -314,63 +327,100 @@ class ResumeParsedIntegrationTest {
     @Test
     @DisplayName("분석 진행 중이면 재분석이 409 R010으로 거부되고 아무것도 발행되지 않는다")
     void reanalyze_inProgress_returns409WithoutPublishing() throws Exception {
-        long resumeId = inProgressResume(USER_ID);
+        long resumeId = inProgressResume(userId);
 
-        mockMvc.perform(post("/api/v1/resumes/{resumeId}/reanalyze", resumeId).with(authOf(USER_ID)))
+        mockMvc.perform(post("/api/v1/resumes/{resumeId}/reanalyze", resumeId).with(authOf(userId)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("R010"));
 
         assertThat(streamRecords()).isEmpty();
     }
 
-    // ─── Worker 연기 헬퍼 ───
+    // ─── 사용 중 차단 (R013 — interview-session-creation.md 기능 1) ───
 
-    /** 분석 완료(EMBEDDED) 이력서 생성 — 상태·structured_data를 Worker처럼 SQL로 채운다. */
+    @Test
+    @DisplayName("non-terminal 세션(PENDING)이 참조하는 이력서는 수정이 409 R013로 거부된다")
+    void updateParsed_resumeInUse_returns409() throws Exception {
+        long resumeId = embeddedResume(userId);
+        referencingSession(resumeId);
+
+        mockMvc.perform(patch("/api/v1/resumes/{resumeId}/parsed", resumeId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(updateBody(VALID_STRUCTURED_DATA))
+                        .with(authOf(userId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("R013"));
+    }
+
+    @Test
+    @DisplayName("ACTIVE 세션이 참조하는 이력서도 동일하게 R013로 차단된다")
+    void updateParsed_activeSessionInUse_returns409() throws Exception {
+        long resumeId = embeddedResume(userId);
+        long sessionId = referencingSession(resumeId);
+        jdbcTemplate.update("UPDATE interview_session SET status = 'ACTIVE' WHERE id = ?", sessionId);
+
+        mockMvc.perform(patch("/api/v1/resumes/{resumeId}/parsed", resumeId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(updateBody(VALID_STRUCTURED_DATA))
+                        .with(authOf(userId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("R013"));
+    }
+
+    @Test
+    @DisplayName("사용 중 이력서는 재분석도 409 R013로 거부되고 아무것도 발행되지 않는다")
+    void reanalyze_resumeInUse_returns409WithoutPublishing() throws Exception {
+        long resumeId = embeddedResume(userId);
+        referencingSession(resumeId);
+
+        mockMvc.perform(post("/api/v1/resumes/{resumeId}/reanalyze", resumeId).with(authOf(userId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("R013"));
+
+        assertThat(streamRecords()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("참조 세션이 terminal이 되면 수정·재분석이 다시 허용된다")
+    void terminalSessionReleasesResume() throws Exception {
+        long resumeId = embeddedResume(userId);
+        long sessionId = referencingSession(resumeId);
+        jdbcTemplate.update("UPDATE interview_session SET status = 'ABORTED' WHERE id = ?", sessionId);
+
+        mockMvc.perform(patch("/api/v1/resumes/{resumeId}/parsed", resumeId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(updateBody(VALID_STRUCTURED_DATA))
+                        .with(authOf(userId)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/v1/resumes/{resumeId}/reanalyze", resumeId).with(authOf(userId)))
+                .andExpect(status().isOk());
+    }
+
+    /** 해당 이력서를 참조하는 PENDING 세션 — 상태 전이는 SQL로 연기한다(전이 코드는 후속 스토리). */
+    private long referencingSession(long resumeId) {
+        return interviewSessionRepository.save(InterviewSession.pending(
+                userId, resumeId, InterviewType.THIRTY_MIN, Position.BACKEND,
+                "room-inuse-" + System.nanoTime())).getId();
+    }
+
+    // ─── Worker 연기 헬퍼 — 공용 픽스처({@link ResumeSeeder})에 위임 ───
+
+    private ResumeSeeder resumeSeeder() {
+        return new ResumeSeeder(resumeRepository, statusRepository, jdbcTemplate);
+    }
+
+    /** 분석 완료(EMBEDDED) + structured_data까지 채운 이력서. */
     private long embeddedResume(long userId) {
-        long resumeId = newResume(userId);
-        jdbcTemplate.update("UPDATE resumes SET structured_data = ?::jsonb WHERE id = ?",
-                VALID_STRUCTURED_DATA, resumeId);
-        jdbcTemplate.update("""
-                UPDATE resume_analysis_status
-                SET parse_status = 'EMBEDDED', completed_at = now()
-                WHERE resume_id = ?""", resumeId);
-        return resumeId;
+        return resumeSeeder().embedded(userId, VALID_STRUCTURED_DATA);
     }
 
-    /** 분석 실패(FAILED) 이력서 생성 — 재시도 소진 후 포기한 Worker의 기록을 재현한다. */
     private long failedResume(long userId) {
-        long resumeId = newResume(userId);
-        jdbcTemplate.update("""
-                UPDATE resume_analysis_status
-                SET parse_status = 'FAILED', error_message = 'LLM 타임아웃', failed_at = now(), retry_count = 3
-                WHERE resume_id = ?""", resumeId);
-        return resumeId;
+        return resumeSeeder().failed(userId);
     }
 
-    /** 분석 진행 중(EMBEDDING) 이력서 생성. */
     private long inProgressResume(long userId) {
-        long resumeId = newResume(userId);
-        jdbcTemplate.update("""
-                UPDATE resume_analysis_status
-                SET parse_status = 'EMBEDDING', started_at = now()
-                WHERE resume_id = ?""", resumeId);
-        return resumeId;
-    }
-
-    private long newResume(long userId) {
-        Resume resume = resumeRepository.save(Resume.builder()
-                .userId(userId)
-                .title("이력서")
-                .fileHash("hash-" + userId)
-                .originalFileBucket(TestcontainersConfiguration.TEST_BUCKET)
-                .originalFileKey("resumes/" + userId + "/hash.pdf")
-                .originalFileName("resume.pdf")
-                .fileSize(1L)
-                .mimeType("application/pdf")
-                .pageCount(1)
-                .build());
-        statusRepository.save(ResumeAnalysisStatus.init(resume));
-        return resume.getId();
+        return resumeSeeder().inProgress(userId);
     }
 
     // ─── 요청·응답 헬퍼 ───
@@ -388,7 +438,7 @@ class ResumeParsedIntegrationTest {
         return mockMvc.perform(patch("/api/v1/resumes/{resumeId}/parsed", resumeId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(updateBody("{\"profile\": {\"name\": \"" + name + "\", \"email\": \"k@x.com\"}}"))
-                        .with(authOf(USER_ID)))
+                        .with(authOf(userId)))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
     }

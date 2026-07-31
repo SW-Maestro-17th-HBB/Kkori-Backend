@@ -35,10 +35,10 @@ public class LiveKitTokenIssuer implements SessionTicketIssuer {
     }
 
     @Override
-    public SessionTicket issue(long userId, String roomName) {
+    public SessionTicket issue(String identity, String roomName) {
         try {
             AccessToken token = new AccessToken(properties.apiKey(), properties.apiSecret());
-            token.setIdentity(String.valueOf(userId));
+            token.setIdentity(identity);
             token.setTtl(properties.tokenTtl().toMillis());
             token.addGrants(
                     new RoomJoin(true),

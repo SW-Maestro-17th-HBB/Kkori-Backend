@@ -1,5 +1,7 @@
 package com.aisw.kkori.user.repository;
 
+import com.aisw.kkori.global.exception.BusinessException;
+import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.user.domain.User;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -34,6 +36,18 @@ public interface UserRepository extends JpaRepository<User, Long> {
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<User> findWithLockById(Long id);
+
+    /**
+     * user 행 잠금 + 활성 재확인 — "잠금 후 활성 재확인" 관용구의 단일 정의.
+     * 유저 상태에 의존하는 쓰기 경로(정보 수정·동의 변경·세션 생성·이력서 수정/재분석)가
+     * 공유하는 직렬화 지점으로, 탈퇴가 선점했으면 {@code UNAUTHORIZED}를 던진다.
+     * 의도적으로 다른 변형(탈퇴의 무필터 멱등 잠금, 재발급의 RT_NOT_FOUND)은 이 헬퍼를 쓰지 않는다.
+     */
+    default User findActiveWithLock(Long id) {
+        return findWithLockById(id)
+                .filter(user -> !user.isDeleted())
+                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
+    }
 
     /**
      * 조건부 soft delete — 활성 상태일 때만 {@code deleted_at}을 기록한다.
