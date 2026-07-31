@@ -2,6 +2,7 @@ package com.aisw.kkori.report.config;
 
 import com.aisw.kkori.report.dto.ReportStatusChangedMessage;
 import com.aisw.kkori.report.service.ReportStatusEventListener;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.RedisSystemException;
@@ -27,6 +28,7 @@ import java.util.UUID;
  * <p>TODO: 서버 다중 인스턴스 배포 시 인스턴스마다 별도 그룹을 쓰도록 그룹명을
  * 인스턴스 식별자 기반으로 변경해야 모든 인스턴스가 이벤트를 받는다(브로드캐스트 의미론).
  */
+@Slf4j
 @Configuration
 public class ReportStatusStreamConfig {
 
@@ -47,11 +49,16 @@ public class ReportStatusStreamConfig {
         StreamMessageListenerContainer<String, MapRecord<String, String, String>> container =
                 StreamMessageListenerContainer.create(connectionFactory, options);
 
-        container.receiveAutoAck(
-                Consumer.from(CONSUMER_GROUP, "sse-" + UUID.randomUUID()),
-                StreamOffset.create(ReportStatusChangedMessage.STREAM_KEY, ReadOffset.lastConsumed()),
-                listener
-        );
+        // 읽기 오류(예: Redis 순단)가 나도 구독을 취소하지 않는다 — 기본 동작은 취소라
+        // 중계가 조용히 죽은 채 남는다. 오류는 로그만 남기고 다음 폴로 계속한다 (리뷰 반영).
+        var readRequest = StreamMessageListenerContainer.StreamReadRequest
+                .builder(StreamOffset.create(ReportStatusChangedMessage.STREAM_KEY, ReadOffset.lastConsumed()))
+                .consumer(Consumer.from(CONSUMER_GROUP, "sse-" + UUID.randomUUID()))
+                .autoAcknowledge(true)
+                .cancelOnError(t -> false)
+                .errorHandler(t -> log.warn("리포트 상태 스트림 읽기 오류 — 구독 유지", t))
+                .build();
+        container.register(readRequest, listener);
         container.start();
         return container;
     }
