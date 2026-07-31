@@ -2,14 +2,18 @@ package com.aisw.kkori.global.livekit;
 
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
+import com.aisw.kkori.session.dto.AgentPresence;
 import com.aisw.kkori.session.service.SessionRoomManager;
 import io.livekit.server.RoomServiceClient;
+import livekit.LivekitModels.ParticipantInfo;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.OkHttpClient;
 import org.springframework.stereotype.Component;
 import retrofit2.Response;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.util.List;
 
 /**
  * LiveKit Server API로 룸을 생성·삭제하는 벤더 어댑터.
@@ -69,5 +73,31 @@ public class LiveKitRoomManager implements SessionRoomManager {
             log.warn("LiveKit 룸 삭제 통신 실패 — empty timeout 자연 소멸 대기 (room={}): {}",
                     roomName, e.getClass().getSimpleName());
         }
+    }
+
+    @Override
+    public AgentPresence probeAgentPresence(String roomName) {
+        Response<List<ParticipantInfo>> response;
+        try {
+            response = client.listParticipants(roomName).execute();
+        } catch (Exception e) {
+            // never-throw 계약 — 조회 실패는 UNKNOWN(호출측이 이번 회차를 건너뛴다)
+            log.warn("LiveKit 참가자 조회 통신 실패 (room={}): {}", roomName, e.getClass().getSimpleName());
+            return AgentPresence.unknown();
+        }
+        if (response.code() == 404) {
+            // twirp not_found — 룸 미존재는 "진행 중 면접 아님"의 확정 증거다
+            return AgentPresence.absent();
+        }
+        if (!response.isSuccessful() || response.body() == null) {
+            log.warn("LiveKit 참가자 조회 실패 (room={}, http={})", roomName, response.code());
+            return AgentPresence.unknown();
+        }
+        return response.body().stream()
+                .filter(p -> p.getKind() == ParticipantInfo.Kind.AGENT)
+                .findFirst()
+                // joined_at은 unix 초 — 0(미설정)이면 호출측이 현재 시각으로 보수 적용한다
+                .map(p -> AgentPresence.present(p.getJoinedAt() > 0 ? Instant.ofEpochSecond(p.getJoinedAt()) : null))
+                .orElseGet(AgentPresence::absent);
     }
 }
