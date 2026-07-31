@@ -15,6 +15,7 @@ docker compose up -d         # 로컬 PostgreSQL(5432) + Redis(6379) + MinIO(900
 ```
 
 - 테스트는 Testcontainers가 Postgres/Redis 컨테이너를 자동 기동하므로 Docker만 실행 중이면 됨 (`TestcontainersConfiguration` 참조, `@SpringBootTest`에 `@Import` 필요)
+- 같은 검증 로직에 입력·기대값만 다른 테스트 케이스(에러 코드 검증 등)는 개별 `@Test`로 나열하지 말고 `@ParameterizedTest`(`@ValueSource`·`@CsvSource`)로 묶어서 작성
 
 ## 작업 규칙
 
