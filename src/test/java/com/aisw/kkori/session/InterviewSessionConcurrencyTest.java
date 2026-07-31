@@ -48,15 +48,24 @@ class InterviewSessionConcurrencyTest extends InterviewSessionIntegrationTestSup
         for (int i = 0; i < ITERATIONS; i++) {
             long userId = saveUser("kakao-c-1-" + i);
             long resumeId = embeddedResume(userId);
-            Runnable create = () -> sessionService.create(userId,
-                    new InterviewSessionCreateRequest(resumeId, InterviewType.THIRTY_MIN, Position.BACKEND));
+            Runnable create = () -> {
+                try {
+                    sessionService.create(userId, new InterviewSessionCreateRequest(
+                            resumeId, InterviewType.THIRTY_MIN, Position.BACKEND));
+                } catch (BusinessException e) {
+                    // 먼저 커밋한 쪽은 커밋~재확인 사이에 상대가 교체를 완료하면 S005로 끝난다
+                    // (agent-dispatch.md 승계 재확인) — "마지막 생성이 유효"의 응답 계약화, 유효한 수렴 결과
+                    assertThat(e.getErrorCode()).isEqualTo(ErrorCode.SESSION_SUPERSEDED);
+                }
+            };
 
             runConcurrently(create, create);
 
             List<InterviewSession> nonTerminal =
                     sessionRepository.findByUserIdAndStatusIn(userId, SessionStatus.NON_TERMINAL);
             assertThat(nonTerminal).hasSize(1);
-            // 두 건 모두 성공(교체 정책) — 이 유저의 세션은 정확히 2행(먼저 커밋된 쪽 ABORTED + 나중 쪽 PENDING)
+            // 두 건 모두 커밋된다(교체 정책) — 이 유저의 세션은 정확히 2행(먼저 커밋된 쪽 ABORTED + 나중 쪽 PENDING).
+            // 응답은 나중 쪽 성공 + 먼저 쪽 {성공 | S005} 중 하나로 수렴한다
             Long userSessions = jdbcTemplate.queryForObject(
                     "SELECT count(*) FROM interview_session WHERE user_id = ?", Long.class, userId);
             assertThat(userSessions).isEqualTo(2);
