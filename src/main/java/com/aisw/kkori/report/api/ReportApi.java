@@ -3,6 +3,7 @@ package com.aisw.kkori.report.api;
 import com.aisw.kkori.global.response.ApiResponse;
 import com.aisw.kkori.report.domain.ReportStatus;
 import com.aisw.kkori.report.dto.ReportDetailResponse;
+import com.aisw.kkori.report.dto.ReportStatsResponse;
 import com.aisw.kkori.global.response.PageResponse;
 import com.aisw.kkori.report.dto.ReportSummaryResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -35,6 +36,22 @@ public interface ReportApi {
             @Parameter(description = "정렬 방향: desc(기본) 또는 asc") String order,
             @Parameter(description = "페이지 번호 (기본 0)") int page,
             @Parameter(description = "페이지 크기 (기본 20)") int size
+    );
+
+    @Operation(
+            summary = "리포트 통계 조회",
+            description = """
+                    본인의 완료(COMPLETED) 리포트 전체를 집계한 통계를 반환한다 — KPI(완료 수·평균·최고점),
+                    지난달 대비 변화(Asia/Seoul 월 경계, 어느 한쪽이 없으면 null), 점수 추이(완료 시각 오름차순
+                    최대 12개), 축별 평균(전달력은 평가된 리포트만 모수), 약점 태그 분포(빈도 내림차순 전체).
+                    완료 리포트가 없으면 totalCount 0에 수치는 null, 배열은 빈 배열이다.
+                    """
+    )
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "조회 성공"),
+    })
+    ResponseEntity<ApiResponse<ReportStatsResponse>> getStats(
+            @Parameter(hidden = true) Long userId
     );
 
     @Operation(

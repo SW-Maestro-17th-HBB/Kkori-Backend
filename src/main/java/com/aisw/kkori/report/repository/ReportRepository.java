@@ -8,6 +8,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
+
 public interface ReportRepository extends JpaRepository<Report, Long> {
 
     /** 목록 조회 — status가 null이면 전체. 정렬은 Pageable의 Sort로 전달한다(createdAt 계열 전용). */
@@ -25,6 +27,9 @@ public interface ReportRepository extends JpaRepository<Report, Long> {
     Page<Report> findPageOrderByOverallScoreDesc(@Param("userId") Long userId,
                                                  @Param("status") ReportStatus status,
                                                  Pageable pageable);
+
+    /** 통계 집계 대상(PRD §6) — 완료 시각 오름차순·동시각은 id로 고정. 사용자당 수십 건 규모라 전량 로드로 충분. */
+    List<Report> findByUserIdAndStatusOrderByCompletedAtAscIdAsc(Long userId, ReportStatus status);
 
     /** overallScore 오름차순 — null은 여기서도 항상 뒤. */
     @Query("select r from Report r where r.userId = :userId and (:status is null or r.status = :status) "

@@ -4,6 +4,7 @@ import com.aisw.kkori.global.response.ApiResponse;
 import com.aisw.kkori.report.api.ReportApi;
 import com.aisw.kkori.report.domain.ReportStatus;
 import com.aisw.kkori.report.dto.ReportDetailResponse;
+import com.aisw.kkori.report.dto.ReportStatsResponse;
 import com.aisw.kkori.global.response.PageResponse;
 import com.aisw.kkori.report.dto.ReportSummaryResponse;
 import com.aisw.kkori.report.service.ReportService;
@@ -35,6 +36,13 @@ public class ReportController implements ReportApi {
     ) {
         return ResponseEntity.ok(ApiResponse.success(
                 reportService.getList(userId, status, sort, order, page, size)));
+    }
+
+    @GetMapping("/stats")
+    public ResponseEntity<ApiResponse<ReportStatsResponse>> getStats(
+            @AuthenticationPrincipal Long userId
+    ) {
+        return ResponseEntity.ok(ApiResponse.success(reportService.getStats(userId)));
     }
 
     @GetMapping("/{reportId}")
