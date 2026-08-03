@@ -6,7 +6,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -17,6 +19,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import java.util.List;
+import java.util.stream.Stream;
 
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
@@ -141,8 +144,9 @@ class ReportTimelineIntegrationTest {
 
         mockMvc.perform(get("/api/v1/reports/{reportId}/timeline", reportId).with(authOf(USER_ID)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.items[0].evaluation.resumeContext").doesNotExist())
-                .andExpect(jsonPath("$.data.items[0].evaluation.resume_context").doesNotExist());
+                // doesNotExist()는 null 로 노출돼도 통과한다 — 경로 자체의 부재를 검증
+                .andExpect(jsonPath("$.data.items[0].evaluation.resumeContext").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data.items[0].evaluation.resume_context").doesNotHaveJsonPath());
     }
 
     @Test
@@ -163,25 +167,29 @@ class ReportTimelineIntegrationTest {
                 .andExpect(jsonPath("$.data.items[1].answer").value(""));
     }
 
-    @Test
-    @DisplayName("대본 발화에 questionNumber가 없으면 원시 예외 대신 500(C001)으로 응답한다")
-    void internalErrorWhenQuestionNumberMissing() throws Exception {
-        long reportId = fixtures.evaluatedReport(USER_ID, null);
-        fixtures.transcript(fixtures.sessionIdOf(reportId), """
-                [{"parentQuestionNumber": 1, "speaker": "INTERVIEWER",
-                  "questionType": "MAIN", "content": "질문입니다.", "spokenAt": "2026-07-01T10:00:00Z"}]""");
-
-        mockMvc.perform(get("/api/v1/reports/{reportId}/timeline", reportId).with(authOf(USER_ID)))
-                .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$.error.code").value("C001"));
+    /** 대본 계약 위반 케이스 — 전부 조립 중 원시 예외(NPE 등) 대신 읽기 계층에서 500으로 변환돼야 한다. */
+    static Stream<Arguments> 계약_위반_대본() {
+        String valid = "\"questionNumber\": 1, \"parentQuestionNumber\": 1, \"speaker\": \"INTERVIEWER\", "
+                + "\"questionType\": \"MAIN\"";
+        return Stream.of(
+                Arguments.of("문서 전체가 JSON null", "null"),
+                Arguments.of("배열 원소가 null", "[null]"),
+                Arguments.of("questionNumber 누락", """
+                        [{"parentQuestionNumber": 1, "speaker": "INTERVIEWER", "questionType": "MAIN",
+                          "content": "질문입니다.", "spokenAt": "2026-07-01T10:00:00Z"}]"""),
+                Arguments.of("content 누락", "[{" + valid + ", \"spokenAt\": \"2026-07-01T10:00:00Z\"}]"),
+                Arguments.of("spokenAt null", "[{" + valid + ", \"content\": \"질문입니다.\", \"spokenAt\": null}]"),
+                Arguments.of("spokenAt 형식 오류",
+                        "[{" + valid + ", \"content\": \"질문입니다.\", \"spokenAt\": \"어제 오전\"}]")
+        );
     }
 
-    @Test
-    @DisplayName("대본 발화의 spokenAt이 시각 형식이 아니면 원시 예외 대신 500(C001)으로 응답한다")
-    void internalErrorWhenSpokenAtMalformed() throws Exception {
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("계약_위반_대본")
+    @DisplayName("대본이 계약을 위반하면 원시 예외 대신 500(C001)으로 응답한다")
+    void internalErrorOnTranscriptContractViolation(String caseName, String contentJson) throws Exception {
         long reportId = fixtures.evaluatedReport(USER_ID, null);
-        fixtures.transcript(fixtures.sessionIdOf(reportId),
-                "[" + utterance(1, 1, "INTERVIEWER", "MAIN", "질문입니다.", "어제 오전") + "]");
+        fixtures.transcript(fixtures.sessionIdOf(reportId), contentJson);
 
         mockMvc.perform(get("/api/v1/reports/{reportId}/timeline", reportId).with(authOf(USER_ID)))
                 .andExpect(status().isInternalServerError())
