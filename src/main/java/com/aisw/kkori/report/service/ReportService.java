@@ -12,6 +12,8 @@ import com.aisw.kkori.report.dto.ReportDetailResponse;
 import com.aisw.kkori.report.dto.ReportStatsResponse;
 import com.aisw.kkori.report.dto.ReportStatusResponse;
 import com.aisw.kkori.report.dto.ReportSummaryResponse;
+import com.aisw.kkori.report.dto.ReportTimelineResponse;
+import com.aisw.kkori.report.dto.TranscriptUtterance;
 import com.aisw.kkori.report.repository.ReportRepository;
 import com.aisw.kkori.report.repository.ReportScoreRepository;
 import com.aisw.kkori.report.repositoryservice.ReportRepositoryService;
@@ -97,6 +99,18 @@ public class ReportService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR));
         List<ReportFeedback> feedbacks = reportRepositoryService.findFeedbacks(report.getId());
         return ReportDetailResponse.of(report, score, feedbacks, AI_DISCLAIMER);
+    }
+
+    /**
+     * 질문-답변 타임라인 조회 (PRD §4). 접근 규칙은 상세와 동일 — 404 → 403 → 409.
+     */
+    @Transactional(readOnly = true)
+    public ReportTimelineResponse getTimeline(Long userId, Long reportId) {
+        Report report = reportRepositoryService.findOwnedCompleted(userId, reportId);
+        List<TranscriptUtterance> utterances =
+                reportRepositoryService.getUtterances(report.getInterviewSessionId());
+        List<ReportFeedback> feedbacks = reportRepositoryService.findFeedbacks(report.getId());
+        return ReportTimelineResponse.of(utterances, feedbacks);
     }
 
 

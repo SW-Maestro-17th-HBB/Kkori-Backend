@@ -8,6 +8,7 @@ import com.aisw.kkori.report.dto.ReportStatsResponse;
 import com.aisw.kkori.global.response.PageResponse;
 import com.aisw.kkori.report.dto.ReportStatusResponse;
 import com.aisw.kkori.report.dto.ReportSummaryResponse;
+import com.aisw.kkori.report.dto.ReportTimelineResponse;
 import com.aisw.kkori.report.service.ReportService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -52,6 +53,14 @@ public class ReportController implements ReportApi {
             @PathVariable Long reportId
     ) {
         return ResponseEntity.ok(ApiResponse.success(reportService.getDetail(userId, reportId)));
+    }
+
+    @GetMapping("/{reportId}/timeline")
+    public ResponseEntity<ApiResponse<ReportTimelineResponse>> getTimeline(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long reportId
+    ) {
+        return ResponseEntity.ok(ApiResponse.success(reportService.getTimeline(userId, reportId)));
     }
 
     @GetMapping("/{reportId}/status")
