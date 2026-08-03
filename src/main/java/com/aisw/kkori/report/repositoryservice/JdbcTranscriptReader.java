@@ -47,6 +47,11 @@ public class JdbcTranscriptReader implements TranscriptReader {
             log.error("대본 JSON 파싱 실패 (session_id={})", sessionId, e);
             throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
         }
+        if (utterances == null) {
+            // JSON 리터럴 null 은 파싱 예외가 아니라 자바 null 로 돌아온다 ('null'::jsonb 는 NOT NULL 통과)
+            log.error("대본 content가 JSON null (session_id={})", sessionId);
+            throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
+        }
         validate(utterances, sessionId);
         return Optional.of(utterances);
     }
@@ -57,10 +62,12 @@ public class JdbcTranscriptReader implements TranscriptReader {
      */
     private static void validate(List<TranscriptUtterance> utterances, long sessionId) {
         for (TranscriptUtterance u : utterances) {
-            if (u.questionNumber() == null || u.content() == null || !hasParseableSpokenAt(u)) {
+            if (u == null || u.questionNumber() == null || u.content() == null
+                    || !hasParseableSpokenAt(u)) {
                 // 발화 내용(content)은 사용자 답변이라 로그에 남기지 않는다
                 log.error("대본 발화가 계약을 위반 (session_id={}, questionNumber={}, spokenAt={})",
-                        sessionId, u.questionNumber(), u.spokenAt());
+                        sessionId, u == null ? null : u.questionNumber(),
+                        u == null ? null : u.spokenAt());
                 throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
             }
         }
