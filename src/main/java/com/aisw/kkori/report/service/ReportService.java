@@ -12,9 +12,9 @@ import com.aisw.kkori.report.dto.ReportDetailResponse;
 import com.aisw.kkori.report.dto.ReportStatsResponse;
 import com.aisw.kkori.report.dto.ReportStatusResponse;
 import com.aisw.kkori.report.dto.ReportSummaryResponse;
-import com.aisw.kkori.report.repository.ReportFeedbackRepository;
 import com.aisw.kkori.report.repository.ReportRepository;
 import com.aisw.kkori.report.repository.ReportScoreRepository;
+import com.aisw.kkori.report.repositoryservice.ReportRepositoryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -46,9 +46,10 @@ public class ReportService {
      */
     static final String AI_DISCLAIMER = "AI 분석 결과는 참고용이며 실제 면접 평가와 다를 수 있습니다.";
 
+    // getList·getStats·getDetail의 직접 의존은 repositoryService 일괄 리팩터링 때 전환 예정
     private final ReportRepository reportRepository;
     private final ReportScoreRepository reportScoreRepository;
-    private final ReportFeedbackRepository reportFeedbackRepository;
+    private final ReportRepositoryService reportRepositoryService;
 
     /** 이력서 목록과 동일한 상한 (ResumeQueryService 선례). */
     private static final int MAX_PAGE_SIZE = 100;
@@ -90,12 +91,11 @@ public class ReportService {
 
     @Transactional(readOnly = true)
     public ReportDetailResponse getDetail(Long userId, Long reportId) {
-        Report report = findOwnedCompleted(userId, reportId);
+        Report report = reportRepositoryService.findOwnedCompleted(userId, reportId);
         // COMPLETED 리포트에는 텍스트 3축 점수가 반드시 존재한다(Worker가 한 트랜잭션으로 저장).
         ReportScore score = reportScoreRepository.findByReportId(report.getId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR));
-        List<ReportFeedback> feedbacks =
-                reportFeedbackRepository.findByReportIdOrderByQuestionNumberAsc(report.getId());
+        List<ReportFeedback> feedbacks = reportRepositoryService.findFeedbacks(report.getId());
         return ReportDetailResponse.of(report, score, feedbacks, AI_DISCLAIMER);
     }
 
@@ -214,33 +214,6 @@ public class ReportService {
      */
     @Transactional(readOnly = true)
     public ReportStatusResponse getStatus(Long userId, Long reportId) {
-        return ReportStatusResponse.from(findOwned(userId, reportId));
-    }
-
-    /**
-     * 본인 소유 + COMPLETED 검증. 순서: 존재(404) → 소유(403) → 상태(409).
-     */
-    private Report findOwnedCompleted(Long userId, Long reportId) {
-        Report report = findOwned(userId, reportId);
-        if (report.getStatus() == ReportStatus.FAILED) {
-            throw new BusinessException(ErrorCode.REPORT_GENERATION_FAILED);
-        }
-        if (report.getStatus() != ReportStatus.COMPLETED) {
-            throw new BusinessException(ErrorCode.REPORT_GENERATION_IN_PROGRESS);
-        }
-        return report;
-    }
-
-    /**
-     * 본인 소유 검증. 순서: 존재(404) → 소유(403).
-     * 타인의 리포트는 존재를 숨기지 않고 403으로 명확히 거부한다(이력서 R009 선례).
-     */
-    private Report findOwned(Long userId, Long reportId) {
-        Report report = reportRepository.findById(reportId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.REPORT_NOT_FOUND));
-        if (!report.getUserId().equals(userId)) {
-            throw new BusinessException(ErrorCode.REPORT_FORBIDDEN);
-        }
-        return report;
+        return ReportStatusResponse.from(reportRepositoryService.findOwned(userId, reportId));
     }
 }
