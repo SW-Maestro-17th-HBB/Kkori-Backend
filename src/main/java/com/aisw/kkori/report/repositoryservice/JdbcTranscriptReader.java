@@ -11,6 +11,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Optional;
 
@@ -37,12 +39,42 @@ public class JdbcTranscriptReader implements TranscriptReader {
         if (rows.isEmpty()) {
             return Optional.empty();
         }
+        List<TranscriptUtterance> utterances;
         try {
-            return Optional.of(objectMapper.readValue(rows.get(0), new TypeReference<>() {
-            }));
+            utterances = objectMapper.readValue(rows.get(0), new TypeReference<>() {
+            });
         } catch (JsonProcessingException e) {
             log.error("대본 JSON 파싱 실패 (session_id={})", sessionId, e);
             throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
+        }
+        validate(utterances, sessionId);
+        return Optional.of(utterances);
+    }
+
+    /**
+     * 필드 수준 계약 검증 — 대본은 다른 도메인이 쓰는 데이터라, 위반을 조립 중의
+     * 원시 예외(NPE 등)로 흘리지 않고 경계에서 명확한 500으로 변환한다.
+     */
+    private static void validate(List<TranscriptUtterance> utterances, long sessionId) {
+        for (TranscriptUtterance u : utterances) {
+            if (u.questionNumber() == null || u.content() == null || !hasParseableSpokenAt(u)) {
+                // 발화 내용(content)은 사용자 답변이라 로그에 남기지 않는다
+                log.error("대본 발화가 계약을 위반 (session_id={}, questionNumber={}, spokenAt={})",
+                        sessionId, u.questionNumber(), u.spokenAt());
+                throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
+            }
+        }
+    }
+
+    private static boolean hasParseableSpokenAt(TranscriptUtterance u) {
+        if (u.spokenAt() == null) {
+            return false;
+        }
+        try {
+            OffsetDateTime.parse(u.spokenAt());
+            return true;
+        } catch (DateTimeParseException e) {
+            return false;
         }
     }
 }

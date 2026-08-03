@@ -163,6 +163,31 @@ class ReportTimelineIntegrationTest {
                 .andExpect(jsonPath("$.data.items[1].answer").value(""));
     }
 
+    @Test
+    @DisplayName("대본 발화에 questionNumber가 없으면 원시 예외 대신 500(C001)으로 응답한다")
+    void internalErrorWhenQuestionNumberMissing() throws Exception {
+        long reportId = fixtures.evaluatedReport(USER_ID, null);
+        fixtures.transcript(fixtures.sessionIdOf(reportId), """
+                [{"parentQuestionNumber": 1, "speaker": "INTERVIEWER",
+                  "questionType": "MAIN", "content": "질문입니다.", "spokenAt": "2026-07-01T10:00:00Z"}]""");
+
+        mockMvc.perform(get("/api/v1/reports/{reportId}/timeline", reportId).with(authOf(USER_ID)))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.error.code").value("C001"));
+    }
+
+    @Test
+    @DisplayName("대본 발화의 spokenAt이 시각 형식이 아니면 원시 예외 대신 500(C001)으로 응답한다")
+    void internalErrorWhenSpokenAtMalformed() throws Exception {
+        long reportId = fixtures.evaluatedReport(USER_ID, null);
+        fixtures.transcript(fixtures.sessionIdOf(reportId),
+                "[" + utterance(1, 1, "INTERVIEWER", "MAIN", "질문입니다.", "어제 오전") + "]");
+
+        mockMvc.perform(get("/api/v1/reports/{reportId}/timeline", reportId).with(authOf(USER_ID)))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.error.code").value("C001"));
+    }
+
     // ─── 접근 규칙 (§3과 동일 — 404 → 403 → 409) ───
 
     @Test
