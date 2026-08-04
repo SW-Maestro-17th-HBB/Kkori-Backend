@@ -7,6 +7,7 @@ import com.aisw.kkori.report.dto.ReportStatsResponse;
 import com.aisw.kkori.global.response.PageResponse;
 import com.aisw.kkori.report.dto.ReportStatusResponse;
 import com.aisw.kkori.report.dto.ReportSummaryResponse;
+import com.aisw.kkori.report.dto.ReportTimelineResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -70,6 +71,26 @@ public interface ReportApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "생성 진행 중(RP003)·생성 실패 상태(RP004 — 재생성 필요)"),
     })
     ResponseEntity<ApiResponse<ReportDetailResponse>> getDetail(
+            @Parameter(hidden = true) Long userId,
+            @Parameter(description = "리포트 ID", required = true) Long reportId
+    );
+
+    @Operation(
+            summary = "질문-답변 타임라인 조회",
+            description = """
+                    완성(COMPLETED)된 리포트의 질문-답변 흐름을 질문 단위로 조회한다 — 질문·답변 텍스트와
+                    답변별 평가(축별 점수·피드백·약점 태그)를 결합해 발화 시각 오름차순으로 반환한다.
+                    questionType(MAIN/TAIL)·parentQuestionNumber는 대본 값 그대로 전달된다(꼬리 소속 표시용).
+                    페이지네이션 없음 — 한 세션의 전체 흐름을 한 번에 반환한다.
+                    """
+    )
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "조회 성공"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "타인의 리포트(RP002)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "리포트 없음(RP001)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "생성 진행 중(RP003)·생성 실패 상태(RP004 — 재생성 필요)"),
+    })
+    ResponseEntity<ApiResponse<ReportTimelineResponse>> getTimeline(
             @Parameter(hidden = true) Long userId,
             @Parameter(description = "리포트 ID", required = true) Long reportId
     );

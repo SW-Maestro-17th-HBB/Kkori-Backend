@@ -41,6 +41,35 @@ public class ReportFixtures {
         reportFeedbackRepository.deleteAll();
         reportScoreRepository.deleteAll();
         reportRepository.deleteAll();
+        ensureTranscriptTable();
+        jdbcTemplate.update("DELETE FROM interview_transcript");
+    }
+
+    /**
+     * 대본 테이블 보장 — 에이전트 소유 테이블이라 JPA 엔티티가 없어 ddl-auto가 만들지 않는다.
+     * 스키마 원천: Kkori-AI agent/migrations/001_interview_transcript.sql (변경 시 여기도 동기화).
+     */
+    private void ensureTranscriptTable() {
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS interview_transcript (
+                    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    session_id BIGINT NOT NULL UNIQUE,
+                    content JSONB NOT NULL,
+                    deleted_at TIMESTAMPTZ
+                )""");
+    }
+
+    /** 세션 대본 저장 — Worker·타임라인이 읽는 발화 배열 JSON을 그대로 넣는다. */
+    public void transcript(long sessionId, String contentJson) {
+        ensureTranscriptTable();
+        jdbcTemplate.update(
+                "INSERT INTO interview_transcript (session_id, content) VALUES (?, ?::jsonb)",
+                sessionId, contentJson);
+    }
+
+    /** 리포트가 물고 있는 세션 ID — 대본 픽스처를 같은 세션에 심을 때 사용. */
+    public long sessionIdOf(long reportId) {
+        return reportRepository.findById(reportId).orElseThrow().getInterviewSessionId();
     }
 
     /** 기본 리포트 행 — COMPLETED면 점수·태그 요약·완료 시각까지 채운다. createdAt을 지정 시각으로 맞춘다. */
