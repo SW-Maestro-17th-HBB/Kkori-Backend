@@ -37,7 +37,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 
 - 상태의 진실 원천은 `REPORTS.status`다(사용자 노출 상태). `REPORT_GENERATION_JOBS`는 시도 추적·운영 관찰용(retry_count, error_message, 시각 필드)이며 사용자 노출 판단에 쓰지 않는다.
 - 생성 수명주기(로우 생성 → 상태 전이 → 산출물 저장)는 전부 Worker가 수행하고, 단계 진입 시 상태를 갱신하며 상태 이벤트를 발행한다. Spring은 상태 이벤트를 소비해 SSE로 중계하고, 재생성 시 생성 요청을 재발행하는 것만 담당한다.
-- `retry_count`·Job의 진행 시각은 Worker가 기록하고 서버는 읽기 전용(이력서 `retry_count` 선례와 동일).
+- `retry_count`·Job의 진행 시각은 Worker가 기록하고 서버는 읽기 전용(이력서 `retry_count` 선례와 동일). 단 하나의 예외로, FAILED 재생성 시 `requested_at` 갱신은 Spring(재생성 API)이 수행한다(§1 재생성 규칙).
 
 ### 기능 요구사항
 
