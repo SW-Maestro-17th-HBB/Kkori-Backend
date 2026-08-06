@@ -24,7 +24,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 - **delivery_score의 저장 위치는 `REPORTS` 컬럼이다**: REPORT_SCORES 행은 텍스트 분석(1단계)이 만드는데, 음성 분석(2단계)이 먼저 끝날 수도 있다. REPORTS 행은 PENDING 시점부터 항상 존재하므로 여기에 두면 어느 단계가 먼저 끝나든 단순 UPDATE로 저장할 수 있다. 세션 단위 단일 값이라 overall_score와 같은 테이블에 있는 것이 의미상으로도 맞다. (REPORT_SCORES는 텍스트 3축 전용)
 - **평가는 2단계 파이프라인이다 (2026-07-23 확정)**: 텍스트 분석(LLM — 3축 평가·총평·태그·과제)과 음성 분석(LLM 무관 — VAD+결정적 수식으로 delivery_score)을 분리 수행하고, **둘 다 끝나야 COMPLETED**다. 텍스트 분석은 세션 종료 직후 시작하고, 음성 분석은 녹음 파일이 준비된 뒤 수행한다. LLM 호출은 텍스트 단계 1회뿐이라 단계 분리로 인한 LLM 비용 증가는 없다.
 - **음성 분석이 늦으면 기다리지 않고 완성한다**: 오디오가 **유예 시간 내 준비되지 않으면 텍스트 3축만으로 COMPLETED 처리한다(delivery_score null)** — 녹음 사고가 리포트를 영구 미완성에 머물게 하거나 복기 기록을 잃게 하지 않는다. 총평·약점 태그·개선 과제는 텍스트 단계 소관으로 한정하므로, 음성 단계가 늦거나 생략되어도 달라지는 것은 delivery_score(와 그에 따른 overall) 하나뿐이다. **음성 분석의 실패도 같은 경로로 처리한다(2026-07-27 확정)** — 처리 실패가 반복된 음성 분석 요청은 리포트를 FAILED로 만들지 않고 포기(ACK)하며, 그 리포트는 위의 유예 완성 경로(delivery null)로 완성된다. FAILED는 텍스트 분석 경로의 실패에 한정한다.
-- **녹음 파일은 전 환경 S3 호환 저장소를 경유한다 (2026-07-23 확정)**: 자체 호스팅 LiveKit의 Egress(사용자 트랙 분리 녹음)가 로컬은 MinIO, prod는 실제 S3의 전용 prefix(예: `recordings/`)에 업로드하고, Worker는 전 환경 동일하게 S3 클라이언트로 다운로드한다(이력서 PDF와 같은 패턴 — 코드 경로 단일). 로컬 파일·볼륨 공유 방식은 호스트 결합·유실·파기 통제 문제로 채택하지 않는다. **녹음 파일의 수명 (2026-07-23 확정)**: 객체 키는 `recordings/{sessionId}`로 세션과 1:1로 연결되며, **음성 분석이 끝나면 Worker가 즉시 삭제한다.** 삭제를 놓친 객체는 S3 수명주기 규칙(7일 자동 삭제)이 안전망으로 정리한다.
+- **녹음 파일은 전 환경 S3 호환 저장소를 경유한다 (2026-07-23 확정)**: 자체 호스팅 LiveKit의 Egress(사용자 트랙 분리 녹음)가 로컬은 MinIO, prod는 실제 S3의 전용 prefix(예: `recordings/`)에 업로드하고, Worker는 전 환경 동일하게 S3 클라이언트로 다운로드한다(이력서 PDF와 같은 패턴 — 코드 경로 단일). 로컬 파일·볼륨 공유 방식은 호스트 결합·유실·파기 통제 문제로 채택하지 않는다. **녹음 파일의 수명 (2026-08-06 변경 — "분석 후 즉시 삭제" 폐기)**: 객체 키는 `recordings/{sessionId}`로 세션과 1:1로 연결되며, **분석 후에도 삭제하지 않고 7일 보관한다** — 삭제는 S3 수명주기 규칙(7일 자동 삭제)이 일괄 수행하며 Worker에 삭제 단계를 두지 않는다. 보관 실익은 음성 분석 재트리거 여지·디버깅이다. 회원 탈퇴 파기 시에는 수명주기를 기다리지 않고 즉시 삭제한다(비기능 요구사항의 파기 규칙).
 
 ### 생성 상태
 
@@ -36,7 +36,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 | FAILED | 생성 실패 — **텍스트 분석 경로의 실패에 한정** (Worker 재시도 소진 또는 재전달 임계 초과). 음성 분석 실패는 FAILED로 만들지 않는다(유예 완성 경로) |
 
 - 상태의 진실 원천은 `REPORTS.status`다(사용자 노출 상태). `REPORT_GENERATION_JOBS`는 시도 추적·운영 관찰용(retry_count, error_message, 시각 필드)이며 사용자 노출 판단에 쓰지 않는다.
-- 생성 수명주기(로우 생성 → 상태 전이 → 산출물 저장)는 전부 Worker가 수행하고, 단계 진입 시 상태를 갱신하며 상태 이벤트를 발행한다. Spring은 상태 이벤트를 소비해 SSE로 중계하고, 재생성 요청 발행만 담당한다.
+- 생성 수명주기(로우 생성 → 상태 전이 → 산출물 저장)는 전부 Worker가 수행하고, 단계 진입 시 상태를 갱신하며 상태 이벤트를 발행한다. Spring은 상태 이벤트를 소비해 SSE로 중계하고, 재생성 시 생성 요청을 재발행하는 것만 담당한다.
 - `retry_count`·Job의 진행 시각은 Worker가 기록하고 서버는 읽기 전용(이력서 `retry_count` 선례와 동일).
 
 ### 기능 요구사항
@@ -73,14 +73,14 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 - **점수 체계 (백엔드 확정, Worker 이행)**: 모든 점수는 0~100 정수. 텍스트 3축의 영역 점수(REPORT_SCORES) = 답변별 해당 축 점수의 평균(반올림). **전달력은 예외로 답변별 평균이 아니라 세션 오디오에서 직접 산출**한다(결정적 수식 — 지표·매핑 기준은 평가 기준 설계에서 확정). `overall_score` = **평가된 축**(전달력 미평가 시 3축, 평가 시 4축) 점수의 평균(반올림). **산식은 결정적이며 본 문서가 정의 원천**이다 — LLM은 답변별 텍스트 3축 점수만 산정하고 집계는 산식을 따른다.
 - **약점 태그**: `weakness_tags`는 자유 텍스트가 아닌 **고정 어휘집의 코드 문자열**이다(집계·후속 면접 질문 반영이 가능하도록). 어휘집의 내용·선정은 Worker PRD 소관이며 백엔드는 코드를 불투명 문자열로 취급한다. `REPORTS.weakness_tag_summary`는 전체 답변의 태그 빈도 상위 3개(`[{tag, count}]`)로 Worker가 저장 시 계산한다.
 - **개선 과제는 답변 단위로 저장한다** (ERD 원안 유지 — `REPORT_FEEDBACKS.improvement_tasks`, `[{title, description}]`): Worker가 답변별 평가 시 해당 답변의 개선 과제를 함께 생성한다. 상세 화면의 "개선 과제 추천" 영역은 상세 API가 답변별 과제를 조회 시점에 모아 반환한다(§3) — 리포트 단위 별도 저장은 하지 않는다.
-- **Outbox는 MVP에서 도입하지 않는다 (2026-07-23 확정 — 이력서 PRD의 2026-07-14 결정과 동일 정책 유지)**: 발행은 DB 트랜잭션 안에서 직접 수행하고, 발행 실패 시 트랜잭션째 되돌린다(시끄러운 실패). 남는 구멍 — 발행은 성공했는데 커밋만 실패해 실제 데이터 없는 메시지가 남는 경우 — 는 확률이 낮고, 소비 측의 멱등 규칙과 "레코드 없으면 재전달 대기/스킵" 규칙이 무해화하므로 **알려진 한계로 수용한다.** 발행 유실의 복구는 본 문서의 안전망(발행 측 재시도·조정 배치·음성 유예 완성)이 담당한다. 도입 재검토 신호는 이력서 PRD와 공유하며, 도입하게 되면 모든 발행 지점(이력서 업로드·리포트 생성 요청·음성 분석 요청·재생성 요청)을 한 번에 전환한다.
+- **Outbox는 MVP에서 도입하지 않는다 (2026-07-23 확정 — 이력서 PRD의 2026-07-14 결정과 동일 정책 유지)**: 발행은 DB 트랜잭션 안에서 직접 수행하고, 발행 실패 시 트랜잭션째 되돌린다(시끄러운 실패). 남는 구멍 — 발행은 성공했는데 커밋만 실패해 실제 데이터 없는 메시지가 남는 경우 — 는 확률이 낮고, 소비 측의 멱등 규칙과 "레코드 없으면 재전달 대기/스킵" 규칙이 무해화하므로 **알려진 한계로 수용한다.** 발행 유실의 복구는 본 문서의 안전망(발행 측 재시도·조정 배치·음성 유예 완성)이 담당한다. 도입 재검토 신호는 이력서 PRD와 공유하며, 도입하게 되면 모든 발행 지점(이력서 업로드·리포트 생성 요청(세션 종료·재생성)·음성 분석 요청)을 한 번에 전환한다.
 - **발행 측(면접 도메인 에이전트) 요구사항 (2026-07-30 실물 구현 확인)**: 생성 요청은 **대본 저장이 성공한 뒤에만** 발행한다 — 이 순서가 Worker의 "대본 없는 요청 = 비정상 메시지 스킵" 판정의 전제다. 발행 실패 시 짧은 재시도 후 소진되면 sessionId 식별 로그를 남기고 넘어간다 — 발행이 끝내 유실된 세션의 검출식은 "**대본 행 존재 + 리포트 로우 부재**"이며, 감지·재처리는 조정 배치가 담당한다.
 - **조정 배치 (최후 안전망, Worker 소유)**: "정상 종료 + **대본 행 존재** + **리포트 로우 부재** + 유예 시간 경과" 세션을 주기적으로 찾아 생성 요청 소비와 동일한 처리를 수행한다. **판정 기준은 로우 부재이며, 상태(COMPLETED 여부) 기준을 쓰지 않는다** — 상태 기준이면 오래 걸리는 생성·FAILED를 재생성하는 오탐이 생긴다. Worker는 소비 초반에 PENDING 로우를 만들므로 생성 소요 시간은 판정에 영향이 없다. 지연 소비와의 레이스는 `interview_session_id` 유니크가 무해화한다. **PENDING/PROCESSING 정체는 메시지 회수(XAUTOCLAIM) 소관, FAILED 복구는 사용자의 재생성 API 소관** — 배치는 이들을 건드리지 않는다. 단 하나의 예외로, **텍스트 분석은 끝났는데 음성 분석이 유예 시간을 넘긴 리포트를 delivery null로 완성(COMPLETED) 처리하는 규칙**도 이 배치가 함께 수행한다.
-- **실패·재시도**: Worker가 소비하는 스트림(생성 요청·음성 분석 요청·재생성 요청)은 모두 Consumer Group 기반 at-least-once이며, 처리는 sessionId(또는 reportId) 기준 멱등이어야 한다. Worker는 ACK 없이 방치된 메시지를 회수(XAUTOCLAIM)해 재처리하고, **재전달 횟수가 임계를 넘었을 때의 종결은 스트림마다 다르다**: 생성 요청·재생성 요청은 FAILED로 종결하고(`failed_reason` 기록) 모든 요청이 반드시 COMPLETED/FAILED로 끝나거나 스킵 ACK된다. **음성 분석 요청은 임계를 넘어도 FAILED로 만들지 않는다** — 포기(ACK)하고, 그 리포트는 유예 완성 경로(delivery_score null)로 완성된다(위 유예 완성 규칙). idle time·임계값·내부 재시도 수치는 Worker PRD 소관. 이력서와 달리 트리거가 시스템이므로 **자동 재시도를 허용**하되, FAILED 종결 후의 복구 주체는 사용자다(아래 재생성).
-- **FAILED 재생성**(`POST /api/v1/reports/{reportId}/retry`): **본인 리포트에만** 가능하다(타인 리포트 403 REPORT_FORBIDDEN, 없는 리포트 404 REPORT_NOT_FOUND). FAILED 리포트에 한해 Spring이 이전 런 흔적 초기화·PENDING 전환·**재생성 요청 발행**을 **한 트랜잭션으로** 처리하고(발행도 트랜잭션 안 — 실패하면 전부 되돌아가 FAILED 유지), Worker가 재생성 요청을 소비해 **텍스트 분석(1단계)만 다시 수행한다(2026-07-27 확정)** — 녹음 파일은 음성 분석 직후 삭제되므로 음성 분석은 다시 할 수 없고, 이전 런의 음성 산출물이 있으면 보존해 재사용한다. 이력서 재분석과 같은 구조이며, 세부 규칙도 동일하게 맞춘다:
-  - **이전 런 흔적 초기화 (Spring)**: REPORTS의 결과 컬럼 중 텍스트 경로 산출물을 지운다 — `failed_reason`, `completed_at`, `text_analyzed_at`, `overall_score`, `summary`, `weakness_tag_summary`. **`delivery_score`·`audio_analyzed_at`은 지우지 않는다** — 음성 재분석이 불가능하므로 이전 런의 음성 결과를 보존하며, 재생성 완료 시 보존된 값과 새 텍스트 결과로 완성 판정이 이뤄진다(음성 산출물이 없던 리포트는 유예 완성 경로를 다시 탄다). REPORT_SCORES·REPORT_FEEDBACKS 행의 정리는 Worker가 재저장 시 수행한다(1단계의 "저장 전 기존 산출물이 있으면 지우고 다시 저장" 규칙 — 이력서에서 청크 정리가 Worker 몫인 것과 동일한 분담).
+- **실패·재시도**: Worker가 소비하는 스트림(생성 요청·음성 분석 요청)은 모두 Consumer Group 기반 at-least-once이며, 처리는 sessionId 기준 멱등이어야 한다. Worker는 ACK 없이 방치된 메시지를 회수(XAUTOCLAIM)해 재처리하고, **재전달 횟수가 임계를 넘었을 때의 종결은 스트림마다 다르다**: 생성 요청은 FAILED로 종결하고(`failed_reason` 기록) 모든 요청이 반드시 COMPLETED/FAILED로 끝나거나 스킵 ACK된다. **음성 분석 요청은 임계를 넘어도 FAILED로 만들지 않는다** — 포기(ACK)하고, 그 리포트는 유예 완성 경로(delivery_score null)로 완성된다(위 유예 완성 규칙). idle time·임계값·내부 재시도 수치는 Worker PRD 소관. 이력서와 달리 트리거가 시스템이므로 **자동 재시도를 허용**하되, FAILED 종결 후의 복구 주체는 사용자다(아래 재생성).
+- **FAILED 재생성**(`POST /api/v1/reports/{reportId}/retry`): **본인 리포트에만** 가능하다(타인 리포트 403 REPORT_FORBIDDEN, 없는 리포트 404 REPORT_NOT_FOUND). FAILED 리포트에 한해 Spring이 이전 런 흔적 초기화·PENDING 전환·**생성 요청 재발행**을 **한 트랜잭션으로** 처리하고(발행도 트랜잭션 안 — 실패하면 전부 되돌아가 FAILED 유지), Worker의 기존 생성 소비가 **텍스트 분석(1단계)만 다시 수행한다(2026-07-27 확정)** — FAILED는 텍스트 경로의 실패에 한정되고, 음성 분석은 결정적 산식이라 같은 녹음에서 같은 점수가 나와 재분석의 실익이 없으므로(녹음 보관 7일이 지나면 가능하지도 않다) 이전 런의 음성 산출물이 있으면 보존해 재사용한다. **별도 재생성 스트림은 두지 않는다 (2026-08-06 변경 — 기존 `report.regenerate.requested` 계약 폐기)**: 재생성은 워커에게 새로운 종류의 일이 아니라 같은 생성 요청의 반복이다 — 초기화된 리포트는 "PENDING + `text_analyzed_at` 없음"으로 신규 생성과 동일한 상태라, 워커는 재시도 여부를 알 필요 없이 기존 소비 로직이 그대로 처리한다(산출물 덮어쓰기·멱등·포기 규칙 전부 재사용). 발행자(에이전트 vs Spring) 구분은 각 발행자의 로그가 담당한다. 이력서 재분석과 같은 구조이며, 세부 규칙도 동일하게 맞춘다:
+  - **이전 런 흔적 초기화 (Spring)**: REPORTS의 결과 컬럼 중 텍스트 경로 산출물을 지운다 — `failed_reason`, `completed_at`, `text_analyzed_at`, `overall_score`, `summary`, `weakness_tag_summary`. **`delivery_score`·`audio_analyzed_at`은 지우지 않는다** — 음성 재분석은 하지 않으므로(위의 결정적 산식 근거) 이전 런의 음성 결과를 보존하며, 재생성 완료 시 보존된 값과 새 텍스트 결과로 완성 판정이 이뤄진다(음성 산출물이 없던 리포트는 유예 완성 경로를 다시 탄다). REPORT_SCORES·REPORT_FEEDBACKS 행의 정리는 Worker가 재저장 시 수행한다(1단계의 "저장 전 기존 산출물이 있으면 지우고 다시 저장" 규칙 — 이력서에서 청크 정리가 Worker 몫인 것과 동일한 분담).
   - **검사와 전환 사이의 잠금**: 상태 검사(FAILED인지) 후 전환하는 트랜잭션은 리포트 행을 잠그고 읽는다 — 검사와 커밋 사이에 다른 요청(연속 클릭 등)이 상태를 바꾸면 낡은 판정으로 통과하기 때문(이력서 재분석의 선례).
-  - 발행만 실패해서 다시 시도할 길이 없는 PENDING에 갇히는 경우가 없고, 발행 성공 후 커밋만 실패해 남는 메시지는 Worker가 소비해도 무해하다(FAILED 리포트의 재평가는 사용자가 의도한 결과와 같음). Job의 `requested_at`을 갱신한다(`retry_count`는 Worker 소관 — 서버는 초기화하지 않는다).
+  - 발행만 실패해서 다시 시도할 길이 없는 PENDING에 갇히는 경우가 없고, 발행 성공 후 커밋만 실패해 남는 메시지는 행이 FAILED로 남아 있어 Worker의 종결 스킵 규칙이 무해하게 ACK한다(사용자는 다시 재생성을 요청하면 된다). Job의 `requested_at`을 갱신한다(`retry_count`는 Worker 소관 — 서버는 초기화하지 않는다).
 
 ### 실행 조건
 
@@ -109,10 +109,10 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 - 텍스트 분석 완료 후 음성 분석이 유예 시간을 넘기면 delivery null로 COMPLETED되는지 확인
 - 음성 분석 요청의 처리 실패가 반복되어도 리포트가 FAILED가 되지 않고, 포기 후 유예 완성 경로로 완성되는지 확인
 - 음성 없이 완성 처리된 리포트에 뒤늦게 음성 분석 요청이 도착하면 무시(ACK만)되고 점수가 바뀌지 않는지 확인
-- 음성 분석 완료 후 녹음 파일이 삭제되는지 확인
+- 음성 분석이 녹음 파일을 삭제하지 않는지 확인 (7일 보관 — 삭제는 S3 수명주기 소관)
 - weakness_tag_summary가 답변별 태그 빈도 상위 3개와 일치하는지 확인
 - 답변별 REPORT_FEEDBACKS에 개선 과제(improvement_tasks)가 저장되는지 확인
-- FAILED 리포트에 재생성 요청 시 상태가 PENDING으로 되돌아가고 재생성 요청이 발행되어 Worker가 텍스트 분석만 다시 수행하는지 확인
+- FAILED 리포트에 재생성 요청 시 상태가 PENDING으로 되돌아가고 생성 요청이 재발행되어 Worker의 기존 생성 소비가 텍스트 분석만 다시 수행하는지 확인
 - 재생성 시 이전 런의 `delivery_score`·`audio_analyzed_at`이 보존되고, 재생성 완료 시 보존된 음성 결과와 합쳐져 완성되는지 확인
 - FAILED가 아닌 리포트에 재생성 요청 시 409(진행 중이면 REPORT_GENERATION_IN_PROGRESS, COMPLETED면 REPORT_RETRY_NOT_ALLOWED)로 거부되는지 확인
 - 다른 사용자의 리포트에 재생성 요청 시 403(REPORT_FORBIDDEN)이 반환되는지 확인
@@ -128,12 +128,11 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 ### 인터페이스 요구사항
 
 - `POST /api/v1/reports/{reportId}/retry` (바디 없음) — FAILED 재생성. 그 외 생성은 API가 아닌 생성 요청 소비로 트리거
-- Redis Stream 4종. **스트림별 메시지 스키마의 정의 원천은 계약 record**. 스트림 키는 기존 이력서 스트림(`resume.parse.requested` 등)과 같은 점 표기·요청형 명명을 따른다(2026-07-30 면접 도메인과 합의):
-  - **`report.generation.requested` — 리포트 생성 요청(Worker가 소비)**: 발행자는 면접 도메인(에이전트, 대본 저장 성공 후). `ReportGenerationRequestedMessage`(**sessionId 하나 — 2026-07-30 확정**. 소유자·이력서는 Worker가 세션 행에서 읽고, 발행 측이 덧붙이는 그 외 필드(requestedAt 등)는 소비 측이 무시한다)
+- Redis Stream 3종. **스트림별 메시지 스키마의 정의 원천은 계약 record**. 스트림 키는 기존 이력서 스트림(`resume.parse.requested` 등)과 같은 점 표기·요청형 명명을 따른다(2026-07-30 면접 도메인과 합의):
+  - **`report.generation.requested` — 리포트 생성 요청(Worker가 소비)**: 발행자는 면접 도메인(에이전트, 대본 저장 성공 후)과 Spring(FAILED 재생성 API — 2026-08-06 추가). 어느 발행자인지는 각 발행자의 로그로 구분한다. `ReportGenerationRequestedMessage`(**sessionId 하나 — 2026-07-30 확정**. 소유자·이력서는 Worker가 세션 행에서 읽고, 발행 측이 덧붙이는 그 외 필드(requestedAt 등)는 소비 측이 무시한다)
   - **`report.audio.analysis.requested` — 음성 분석 요청(Worker가 소비)**: 발행자는 면접 도메인(녹음 파일 S3 업로드 완료 시). `AudioAnalysisRequestedMessage`(sessionId, bucket, objectKey — 필드 확정은 면접 도메인과 합의, **미정**)
-  - **`report.regenerate.requested` — 재생성 요청(Spring이 발행, Worker가 소비)**: `RegenerateRequestedMessage`(reportId, sessionId, userId — Worker가 DB에서 입력을 직접 읽으므로 포인터만)
   - **`report.status.changed` — 상태 이벤트(Worker가 발행, Spring이 소비)**: `ReportStatusChangedMessage`(reportId, userId, status, message — userId는 SSE 라우팅 근거로 Worker가 에코). **발행되는 status는 PROCESSING·COMPLETED·FAILED 3종뿐이다**(§5 — PENDING 미발행을 Worker 계약 모델이 강제)
-  - Python Worker는 4개 계약 record 전부를 계약 문서로 참조
+  - Python Worker는 3개 계약 record 전부를 계약 문서로 참조 (Worker 레포에 남아 있는 `RegenerateRequested` 계약은 폐기 대상 — 재생성 스트림 폐기에 따른 정리)
 - **jsonb 산출물의 스키마 정의 원천도 계약 record** (이력서 `StructuredData` 선례) — `weakness_tags`(코드 문자열 배열), `weakness_tag_summary`(`[{tag, count}]`), `improvement_tasks`(답변 단위, `[{title, description}]`). `resume_context`는 Worker 소관의 자유 구조로 백엔드는 불투명하게 취급한다(계약 없음).
 - 응답은 공통 엔벨로프 `ApiResponse<T>`를 따른다 (이하 모든 REST API 동일)
 
