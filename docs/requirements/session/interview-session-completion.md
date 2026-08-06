@@ -30,7 +30,7 @@ Kkori-AI 레포와 공유하는 계약으로, 원천은 Kkori-AI `docs/prd/inter
 
 - **정상 종료**(마지막 답변 완료·시간 소진 판단·hard 강제·사용자 종료): 에이전트가 클로징 발화 → transcript DB flush(`interview_transcript` 1행) → Redis 사본 정리 → 리포트 요청 발행 → **에이전트가 직접 룸을 삭제**(bounded retry) → `room_finished` 발생. **즉 `room_finished`가 정상 종료의 신호다.** flush가 룸 삭제보다 먼저이므로, `room_finished` 생성 시점에 transcript 행은 항상 커밋되어 있다.
 - **오류 종료**(TTS 재시도 소진 등 진행 불가): 클로징·flush·표식·룸 삭제 없이 잡만 종료한다 → Spring에는 `participant_left(agent)`로 관측된다(룸 잔존). 에이전트 측이 의도적으로 `AGENT_LOST` 경로로 남겨 재dispatch 여지를 보존한 설계다(재dispatch 자체는 후속 스토리).
-- **candidate 이탈**(현행): 에이전트도 flush·표식 없이 즉시 종료하고, 빈 룸은 empty timeout으로 소멸해 `room_finished`가 발생한다. 재연결 처리는 후속 `INTERRUPTED` 스토리.
+- **candidate 이탈**(HBB1-308 개정): 에이전트는 즉시 종료하지 않고 **재연결 창(3분) 동안 세션을 유지**하며, 창 내 재입장은 identity 일치 기반으로 면접을 재개한다. 창 소진 시 남은 면접 시간이 있으면 flush 없이 룸 삭제(표식 cause `RECONNECT_TIMEOUT`) → `room_finished` + 행 없음 → `ABORTED`, 면접 시간이 이미 소진된 경우는 flush 후 정상 종료 → `ENDED`. Spring 측 처리(`INTERRUPTED` 전이·재입장 토큰·유예)는 `interview-session-reconnection.md` 참조.
 - **candidate 미입장**: 에이전트는 입장 대기 타임아웃 후 flush·표식 없이 종료한다 — candidate 이탈과 동일하게 관측된다.
 
 **사용자 종료 신호 (SendData)**:
@@ -41,7 +41,7 @@ Kkori-AI 레포와 공유하는 계약으로, 원천은 Kkori-AI `docs/prd/inter
 **종료 표식 (termination marker)**:
 
 - 에이전트가 CLOSING 진입 부수효과로 Redis에 기록한다 — 키 `interview:{sessionId}:termination`, 값 JSON `{"cause":"<원인>","markedAt":"<UTC ISO-8601(초 단위, Z)>"}`, TTL 24h(86400s), **best-effort**(기록 실패 가능).
-- cause는 4종 전부 "의도된 클로징" 계열이다: `FINAL_QUESTION`·`LLM_END`·`HARD_TIMEOUT`·`USER_REQUEST`. 오류 종료·candidate 이탈은 CLOSING을 거치지 않아 **표식을 남기지 않는다**.
+- cause는 "의도된 클로징" 계열 4종(`FINAL_QUESTION`·`LLM_END`·`HARD_TIMEOUT`·`USER_REQUEST`)에 HBB1-308로 `RECONNECT_TIMEOUT`·`RECOVERED_CLOSING` 2종이 추가되었다. 오류 종료는 CLOSING을 거치지 않아 **표식을 남기지 않는다**.
 - **Spring은 cause 값으로 분기하지 않는다** — 표식의 존재가 판별 신호이고 cause는 진단 로그용으로만 기록한다. 에이전트가 cause를 추가해도 Spring 계약은 불변이다.
 
 **AGENT_LOST 판별표** (`participant_left(agent)` 관측 시 — 우선순위 순):
@@ -75,10 +75,10 @@ Kkori-AI 레포와 공유하는 계약으로, 원천은 Kkori-AI `docs/prd/inter
 | --- | --- | --- | --- |
 | `participant_joined` (kind=AGENT) | `PENDING` | → `ACTIVE` (`started_at`) | 그 외 상태 no-op (중복 전달 포함) |
 | `participant_joined` (그 외 participant) | * | no-op | candidate 선입장 허용(PENDING 정의), 구 토큰 재입장도 흡수 |
-| `participant_left` (kind=AGENT) | `PENDING`·`ACTIVE` | **판별 3-경로** (기능 3) | `PENDING` 포함: 입장 직후 소실은 joined/left가 역순 도착할 수 있다 — 역순이어도 ③→유예→`ABORTED`로 수렴 |
-| `participant_left` (그 외 participant) | * | no-op | `INTERRUPTED`는 후속 스토리. 에이전트도 즉시 종료하므로 `participant_left(agent)` 경로가 이어서 처리 |
-| `participant_connection_aborted` (kind=AGENT) | `PENDING`·`ACTIVE` | **판별 3-경로** (기능 3 — `participant_left`와 동일 취급) | signaling 성립 후 media 연결 실패(공식 문서) — `participant_joined` **없이** 발생할 수 있고 후속 `participant_left`가 보장되지 않으므로, 무시하면 에이전트 접속 실패 세션이 stale 회수(45m)까지 `PENDING`에 방치된다 |
-| `participant_connection_aborted` (그 외 participant) | * | no-op | candidate 연결 실패의 재시도·재입장은 프론트·재연결 스토리 소관 |
+| `participant_left` (kind=AGENT) | `PENDING`·`ACTIVE`·`INTERRUPTED`(HBB1-308) | **판별 3-경로** (기능 3) | `PENDING` 포함: 입장 직후 소실은 joined/left가 역순 도착할 수 있다 — 역순이어도 ③→유예→`ABORTED`로 수렴. `INTERRUPTED` ③은 `disconnected_at` 보존(재연결 문서) |
+| `participant_left` (그 외 participant) | * | **HBB1-308로 개정** — candidate 이탈은 `INTERRUPTED` 전이 | 매핑·가드(`DUPLICATE_IDENTITY` 등)는 `interview-session-reconnection.md` 매핑 확장 표 참조 |
+| `participant_connection_aborted` (kind=AGENT) | `PENDING`·`ACTIVE`·`INTERRUPTED`(HBB1-308) | **판별 3-경로** (기능 3 — `participant_left`와 동일 취급) | signaling 성립 후 media 연결 실패(공식 문서) — `participant_joined` **없이** 발생할 수 있고 후속 `participant_left`가 보장되지 않으므로, 무시하면 에이전트 접속 실패 세션이 stale 회수(45m)까지 `PENDING`에 방치된다 |
+| `participant_connection_aborted` (그 외 participant) | * | no-op | 미입장(접속 실패) 사건 — 재시도는 프론트 소관. 재연결(HBB1-308)에서도 no-op 유지(`INTERRUPTED` 창은 재입장 성공만이 닫는다) |
 | `room_finished` | 비terminal 전체 | 행 있음 → `ENDED`, 없음 → `ABORTED` | terminal 확정 원칙의 단일 규칙. 상태별 기대 결과는 아래 시나리오 표 |
 | `room_finished` | terminal | no-op | `PENDING` 자동 교체의 룸 삭제, fallback 삭제, 구 토큰 재생성 룸 소멸이 전부 여기로 흡수 |
 | 그 외 이벤트 (`room_started`, `track_*` 등) | * | 무시 | |
@@ -95,7 +95,7 @@ Kkori-AI 레포와 공유하는 계약으로, 원천은 Kkori-AI `docs/prd/inter
 | 에이전트 오류 소실 (룸 잔존) | left(agent) → 판별 ③ `AGENT_LOST` → 유예 만료(스위퍼) 또는 candidate 퇴장 후 room_finished | `ABORTED` |
 | 에이전트 접속 실패 (media 연결 실패) | connection_aborted(agent) → 판별 ③ `AGENT_LOST` → 유예 만료 | `ABORTED` |
 | 에이전트 flush 실패 소실 | left(agent) → 판별 ② (표식 있음) | `ABORTED` |
-| candidate 이탈 | 에이전트 즉시 종료 → left(agent) → ③ `AGENT_LOST` → 빈 룸 empty timeout → room_finished | `ABORTED` |
+| candidate 이탈 (HBB1-308 개정) | left(candidate) → `INTERRUPTED` → 재입장 복귀 또는 창 소진(에이전트 룸 삭제 → room_finished) | `ENDED` / `ABORTED` — 상세 시나리오는 재연결 문서 |
 | candidate 미입장 (에이전트 대기 타임아웃) | joined(agent)→`ACTIVE` → 에이전트 종료 → left(agent) → ③ → room_finished 또는 유예 만료 | `ABORTED` |
 | 워커 다운 (에이전트 미입장) | 이벤트 없음 → 유저 퇴장·미입장 시 empty timeout → room_finished(`PENDING`) | `ABORTED` |
 | `PENDING` 자동 교체 | 교체 커밋(`ABORTED`) → 룸 삭제 → room_finished | no-op (이미 terminal) |
@@ -103,7 +103,7 @@ Kkori-AI 레포와 공유하는 계약으로, 원천은 Kkori-AI `docs/prd/inter
 | webhook 최종 유실 (수신 서버 장기 다운·URL 미설정) | 이벤트 없음 → stale 회수(스위퍼)가 판별 재실행 | `ENDED`(행 있음) 또는 `ABORTED` |
 | joined만 유실 + 면접 진행 중 (에이전트 hang 포함) | stale `PENDING` 회수 → AGENT 관측 → `ACTIVE` 복원 → room_finished(`ENDED`) 또는 ACTIVE stale 판별 | `ENDED` / `ABORTED` |
 
-**수렴 완결성 (webhook 무관 안전망)**: LiveKit webhook 재전송은 유한하므로 최종 유실될 수 있다(수신 서버가 재시도 창 동안 다운·URL 미설정). 따라서 **본 스토리에서 도달 가능한 모든 non-terminal 상태(`PENDING`·`ACTIVE`·`AGENT_LOST`)는 webhook 없이도 유한 시간 내 terminal에 수렴하는 경로를 별도로 가진다** — `PENDING`: 자동 교체 + stale 회수, `ACTIVE`: fallback + stale 회수, `AGENT_LOST`: 유예 만료(전부 DB 기반 스위퍼 — 공통: 스위퍼·설정). `INTERRUPTED`는 본 스토리에서 도달 불가하며, 재연결 스토리가 자체 수렴 경로와 함께 도입해야 한다. 이 안전망이 없으면 webhook 유실 세션이 영구 잔존해 신규 생성 409 차단·`RESUME_IN_USE` 영구 차단이 재발한다 — 본 스토리가 해결하려는 핵심 동기의 재발 방지 조건이다.
+**수렴 완결성 (webhook 무관 안전망)**: LiveKit webhook 재전송은 유한하므로 최종 유실될 수 있다(수신 서버가 재시도 창 동안 다운·URL 미설정). 따라서 **모든 non-terminal 상태(`PENDING`·`ACTIVE`·`AGENT_LOST`·`INTERRUPTED`)는 webhook 없이도 유한 시간 내 terminal에 수렴하는 경로를 별도로 가진다** — `PENDING`: 자동 교체 + stale 회수, `ACTIVE`: fallback + stale 회수, `AGENT_LOST`: 유예 만료, `INTERRUPTED`(HBB1-308 도입): 유예 만료 — 판별 선행·대조 가드 포함, `interview-session-reconnection.md` 참조(전부 DB 기반 스위퍼 — 공통: 스위퍼·설정). 이 안전망이 없으면 webhook 유실 세션이 영구 잔존해 신규 생성 409 차단·`RESUME_IN_USE` 영구 차단이 재발한다 — 본 스토리가 해결하려는 핵심 동기의 재발 방지 조건이다.
 
 **동시성 — user 행 잠금 선행**: webhook 핸들러·스위퍼의 모든 전이는 세션에서 `user_id`를 역추적해 **user 행 잠금을 선행**한다(HBB1-18이 권장 계약으로 예고한 것을 본 스토리가 이행 — 생성 경로의 "교체 건수 불일치 방어선"이 실제로 발동하지 않는 계약의 완성). 잠금 순서는 user 선행으로 기존 경로들과 동일하다. 단 **활성 재확인은 하지 않는다** — 전이는 유저 상태와 무관한 세션 수렴이 목적이므로, 탈퇴 유저의 잔존 세션도 전이시킨다(생성 경로의 잠금과 달리 `deleted_at` 무관 잠금 — 리포지토리 별도 쿼리).
 
@@ -151,7 +151,7 @@ LiveKit Cloud가 발송하는 webhook을 수신·검증해 이벤트→전이 �
 
 ### 제약사항
 
-- `INTERRUPTED` 전이(candidate 이탈 재연결 대기)는 도입하지 않는다 — `participant_left`(candidate)는 no-op이며 재연결 스토리 소관.
+- ~~`INTERRUPTED` 전이(candidate 이탈 재연결 대기)는 도입하지 않는다~~ — **HBB1-308로 도입 완료**: `participant_left`(candidate)의 `INTERRUPTED` 전이·가드는 `interview-session-reconnection.md` 소관.
 - 이벤트 순서 보장·정확히 1회 전달을 전제하지 않는다 — 멱등 설계로 흡수한다.
 
 ### 기타 요구사항
@@ -171,14 +171,15 @@ LiveKit Cloud가 발송하는 webhook을 수신·검증해 이벤트→전이 �
 | `ACTIVE` | `end_requested_at` 기록(최초 1회 — 이미 있으면 유지) 후 커밋, 커밋 후 SendData 발신 → 에이전트가 클로징·flush·룸 삭제 → `room_finished`로 `ENDED` | `202` |
 | `PENDING` | **관측 상태일 뿐이므로 에이전트 부재를 단정하지 않는다**(joined 유실 병리 — stale PENDING과 동일 보호): 행 있음 → `ENDED` + 룸 삭제 / 행 없음 → **룸 참가자 대조** — AGENT 관측 시 `ACTIVE` 복원(`started_at`=관측 입장 시각) 후 ACTIVE와 동일 처리(SendData — 정상 클로징·flush·리포트 보존), 부재·룸 미존재 시 `ABORTED`(`ended_at`) + 룸 삭제. 표식 단축은 두지 않는다 — 실시간 경로에서 표식+에이전트 재실은 "클로징 진행 중"일 수 있어 대조가 먼저다 | `202` |
 | `PENDING` (대조 실패) | 종료를 단정하지 않고 `S008`로 끝낸다 — 재시도 가능하며, 수렴은 스위퍼·room_finished가 어차피 보장한다 | `500` |
-| `AGENT_LOST`·`INTERRUPTED` | **소실이 관측된 상태**(판별 ③ 경유)라 부재가 증거 기반이다 — 즉시 `ABORTED`(`ended_at`) + 룸 삭제(best-effort). `INTERRUPTED`는 본 스토리 도달 불가(재연결 스토리가 재검토) | `202` |
+| `AGENT_LOST` | **소실이 관측된 상태**(판별 ③ 경유)라 부재가 증거 기반이다 — 즉시 `ABORTED`(`ended_at`) + 룸 삭제(best-effort) | `202` |
+| `INTERRUPTED` | **HBB1-308 개정** — 에이전트가 살아 대기 중이므로 `ACTIVE`와 동일 취급(`end_requested_at` 기록 → SendData → 정상 종료, 무응답 시 fallback). 상세는 `interview-session-reconnection.md` | `202` |
 | terminal | 멱등 no-op + **룸 삭제 best-effort 재시도** — 이미 종료 상태이므로 상태는 불변이고(더블클릭·낡은 화면에 안전), 선기록 후 삭제 실패로 잔존한 룸이 있으면 이 재시도가 능동 복구 경로다(룸이 없으면 무해한 no-op) | `202` |
 
 - **비동기 계약**: `202 Accepted`는 수리(종료 수렴 보장)의 의미다 — `ACTIVE` 경로의 실제 종료 확정은 `room_finished` webhook이며, 클라이언트는 응답이 아니라 룸 종료(DisconnectReason=`ROOM_DELETED`)로 종료를 감지한다. API 문서(Swagger)에 이 비동기 계약을 명시한다.
 - **처리 순서**: 트랜잭션{user 행 잠금 → 세션 조회·소유 검증 → 상태별 기록} → 커밋 → [커밋 후] SendData 또는 룸 삭제 — LiveKit 왕복을 트랜잭션·잠금 밖에 두는 기존 방침 계승.
 - **SendData 실패**(`S008`, 커밋 후): `500 SESSION_END_SIGNAL_FAILED`로 응답한다. `end_requested_at`은 이미 커밋되어 있으므로 **재시도 없이도 fallback이 종료를 보장**한다 — 재시도(/end 재호출)는 정상 종료(클로징) 기회를 되살리는 선택지다. LiveKit 호출은 `livekit.api-timeout` 상한·재시도 없음(기존 방침).
 - **중복 `/end`**: `ACTIVE`인 한 SendData를 재발신하되(에이전트의 종료 신호 처리는 멱등 — 전진 전용 상태 머신) `end_requested_at`은 최초값을 유지한다 — fallback 창이 재호출로 연장되지 않는다.
-- **fallback**(스위퍼 — 공통: 스위퍼·설정): `status=ACTIVE AND end_requested_at ≤ now − fallback타임아웃` 세션을 크로스 레포 계약대로 처리한다 — 행 판별 선기록(행 있음 `ENDED` / 없음 `ABORTED`, 표식 있으면 cause 로그) → 커밋 → 룸 삭제. 선기록 후 삭제 순서는 계약이다. **terminal 선기록 후 룸 삭제 실패(감수)**: 세션이 이미 terminal이라 스위퍼 대상에서 빠지므로, candidate가 남아 있으면 empty timeout이 시작되지 않아 룸이 잔존하고 클라이언트가 `ROOM_DELETED`를 받지 못할 수 있다. 수렴 경로는 세 겹이다 — ① 참가자 퇴장 즉시 empty timeout이 정리 ② 유저가 종료 버튼을 다시 누르면 terminal `/end`의 룸 삭제 재시도가 정리(기회적 보조 경로 — **프론트에 재호출을 요구하는 계약이 아니다**) ③ 운영 탐지·수동 삭제(`lk room list`). **보장 범위**: 본 스토리가 하드 보장하는 것은 **DB 세션의 terminal 수렴**(이력서 차단 해제·재생성 허용)이며 이는 선기록 시점에 이미 성립해 있다. **실제 룸 폐쇄와 `ROOM_DELETED` 전달은 best-effort다** — 통상은 유저 이탈(자발 퇴장·창 닫기·연결 끊김)이 participant 퇴장으로 관측되어 empty timeout이 정리하지만, 클라이언트가 연결을 유지하는 한 이탈 시점에 상한이 없다. 삭제 실패 시 사용자가 직접 이탈해야 할 수 있음을 잔여 UX로 수용한다. 서버 상태(이력서 차단 해제·재생성 허용)는 선기록 시점에 이미 회복되어 있어 영향은 UX에 한정된다 — HBB1-18의 동일 잔여 위험(candidate 잔류 룸) 수용과 같은 판단이며, 영속 재시도 상태(`room_cleanup_pending` 류)는 발생이 실측되면 그때 도입을 검토한다.
+- **fallback**(스위퍼 — 공통: 스위퍼·설정): `status IN (ACTIVE, INTERRUPTED) AND end_requested_at ≤ now − fallback타임아웃`(HBB1-308로 `INTERRUPTED` 포함) 세션을 크로스 레포 계약대로 처리한다 — 행 판별 선기록(행 있음 `ENDED` / 없음 `ABORTED`, 표식 있으면 cause 로그) → 커밋 → 룸 삭제. 선기록 후 삭제 순서는 계약이다. **terminal 선기록 후 룸 삭제 실패(감수)**: 세션이 이미 terminal이라 스위퍼 대상에서 빠지므로, candidate가 남아 있으면 empty timeout이 시작되지 않아 룸이 잔존하고 클라이언트가 `ROOM_DELETED`를 받지 못할 수 있다. 수렴 경로는 세 겹이다 — ① 참가자 퇴장 즉시 empty timeout이 정리 ② 유저가 종료 버튼을 다시 누르면 terminal `/end`의 룸 삭제 재시도가 정리(기회적 보조 경로 — **프론트에 재호출을 요구하는 계약이 아니다**) ③ 운영 탐지·수동 삭제(`lk room list`). **보장 범위**: 본 스토리가 하드 보장하는 것은 **DB 세션의 terminal 수렴**(이력서 차단 해제·재생성 허용)이며 이는 선기록 시점에 이미 성립해 있다. **실제 룸 폐쇄와 `ROOM_DELETED` 전달은 best-effort다** — 통상은 유저 이탈(자발 퇴장·창 닫기·연결 끊김)이 participant 퇴장으로 관측되어 empty timeout이 정리하지만, 클라이언트가 연결을 유지하는 한 이탈 시점에 상한이 없다. 삭제 실패 시 사용자가 직접 이탈해야 할 수 있음을 잔여 UX로 수용한다. 서버 상태(이력서 차단 해제·재생성 허용)는 선기록 시점에 이미 회복되어 있어 영향은 UX에 한정된다 — HBB1-18의 동일 잔여 위험(candidate 잔류 룸) 수용과 같은 판단이며, 영속 재시도 상태(`room_cleanup_pending` 류)는 발생이 실측되면 그때 도입을 검토한다.
 - **잔여 경합의 실제 형태 (감수)**: 에이전트가 정상 진행 중인데 fallback이 선착하면 — 선기록의 행 판별이 flush 커밋보다 먼저 실행된 경우 — `ABORTED` 선기록·룸 삭제 뒤 에이전트가 flush·리포트 발행을 이어가 **"`ABORTED` + transcript 행 + 리포트"**가 남을 수 있다. terminal 확정 원칙("행 없는 `ENDED`" 차단)의 역방향은 막지 않으며, fallback 타임아웃을 종료 시퀀스 최악 소요보다 충분히 크게 잡아(공통: 스위퍼·설정의 값 근거) 창을 실질 0으로 좁힌다. **리포트 소비 스토리는 terminal 상태와 산출물(행·리포트) 존재의 불일치를 허용해야 한다** — 연계 제약으로 명시한다. 이 경합의 구조적 제거(ENDING 중간 상태·terminal 보정 ABORTED→ENDED)는 도입하지 않는다: terminal no-op 가드는 에이전트 PRD가 전이 경쟁 수렴의 전제로 의존하는 크로스 레포 계약이고 상태 집합 6종도 HBB1-18 확정 계약이라, terminal을 가변화하는 쪽이 더 큰 위험이다 — 창의 발생 조건은 "종료 시퀀스 최악 소요(≈119s)를 넘는 병리적 지연"뿐으로 타임아웃 설계(180s)가 실질 0으로 좁힌다.
 - `/end` 도중 상태가 바뀌는 경합(예: 판별이 먼저 `AGENT_LOST` 전이)은 user 잠금이 직렬화한다 — 잠금 획득 시점의 상태 기준으로 위 표를 적용한다. `PENDING`의 행 판별·참가자 대조는 잠금 트랜잭션 **밖**(LiveKit 왕복 — 기존 원칙)이므로, 대조 결과의 반영 트랜잭션이 최신 상태를 재분기한다 — 대조 사이에 세션이 `ACTIVE`로 전이(webhook 선착)했으면 대조 결과를 버리고 ACTIVE 분기를, terminal이 됐으면 no-op을 적용한다(대조 결과는 `PENDING` 유지 시에만 유효).
 
@@ -213,7 +214,7 @@ LiveKit Cloud가 발송하는 webhook을 수신·검증해 이벤트→전이 �
 
 ### 제약사항
 
-- `/end`는 종료 의도의 관문일 뿐 종료 실행 주체가 아니다 — `ACTIVE`의 실제 종료(클로징·flush·룸 삭제)는 에이전트 소관이며, **`ACTIVE` 경로에서** Spring이 직접 종료를 실행하는 것은 fallback뿐이다. 소실 관측 상태(`AGENT_LOST`·`INTERRUPTED`)의 즉시 정리, `PENDING`의 대조 기반 처리, terminal의 룸 삭제 재시도는 SendData 없이 수행되는 별개 경로다.
+- `/end`는 종료 의도의 관문일 뿐 종료 실행 주체가 아니다 — `ACTIVE`의 실제 종료(클로징·flush·룸 삭제)는 에이전트 소관이며, **`ACTIVE` 경로에서** Spring이 직접 종료를 실행하는 것은 fallback뿐이다. 소실 관측 상태(`AGENT_LOST`)의 즉시 정리, `PENDING`의 대조 기반 처리, terminal의 룸 삭제 재시도는 SendData 없이 수행되는 별개 경로다(`INTERRUPTED`는 HBB1-308 개정으로 `ACTIVE`와 동일한 SendData 경로).
 - 프론트 종료 UI·`ROOM_DELETED` 처리 화면은 프론트 스토리 소관(프론트는 룸 종료 감지 로직 기준 추가 작업 없음).
 
 ### 기타 요구사항
@@ -233,10 +234,10 @@ LiveKit Cloud가 발송하는 webhook을 수신·검증해 이벤트→전이 �
 - **③ 행 없음 + 표식 없음** → `AGENT_LOST` 전이 + `agent_lost_at` 기록. **룸은 삭제하지 않는다** — 재dispatch 여지 보존(후속 스토리)이 에이전트 측 설계 의도이고, 룸 소멸 시의 수렴은 `room_finished` 매핑(→`ABORTED`)이 담당한다.
 - **판별 조회 규칙**: transcript 행은 `interview_transcript`에 `session_id` EXISTS 네이티브 쿼리(엔티티 미생성 — 읽기 전용 경계), 표식은 Redis GET. **Redis 조회 실패는 표식 부재로 취급**하고 경고 로그를 남긴다 — ③으로 후퇴해도 유예 후 `ABORTED`로 같은 결과에 수렴하며, 잘못된 `ENDED`를 만들지 않는 안전한 방향의 후퇴다.
 - **표식 TTL 충분성**: 판별 시점은 `participant_left` webhook 도착 시점으로 소실 후 초~분 단위이고, LiveKit 재전송 지연을 감안해도 시간 단위다 — TTL 24h는 판별 창을 넉넉히 덮는다.
-- **유예 만료 정리**(스위퍼 — 공통: 스위퍼·설정): `status=AGENT_LOST AND agent_lost_at ≤ now − 유예` 세션을 `ABORTED`(`ended_at`)로 전이하고 룸을 삭제한다(best-effort — 룸의 candidate는 `ROOM_DELETED`로 퇴장된다). 이 정리가 없으면 `AGENT_LOST` 세션이 영구 잔존해 신규 생성이 `SESSION_ALREADY_IN_PROGRESS`(409)로 계속 막힌다. 유예 값은 현재 재dispatch가 없어 순수 대기 비용이므로 짧게 두고, 재dispatch 스토리에서 재검토한다.
+- **유예 만료 정리**(스위퍼 — 공통: 스위퍼·설정): `status=AGENT_LOST AND agent_lost_at ≤ now − 유예` 세션을 정리한다. **HBB1-308 개정**: `disconnected_at` 있는 세션은 재연결 deadline(+마진)과의 **늦은 쪽**까지 기다리고(deadline 충돌 방지), 정리 전 transcript **행 재판별**을 선행한다 — 행 있으면 `ENDED`(terminal 확정 원칙, 재디스패치 복원 후 webhook 전량 유실 병리 보정). 그 외 `ABORTED`(`ended_at`) + 룸 삭제(best-effort — 룸의 candidate는 `ROOM_DELETED`로 퇴장된다). 이 정리가 없으면 `AGENT_LOST` 세션이 영구 잔존해 신규 생성이 `SESSION_ALREADY_IN_PROGRESS`(409)로 계속 막힌다. 유예 값은 90s — HBB1-308에서 재디스패치 복원 창으로 재검토·상향 완료.
 - **stale 회수**(스위퍼 — webhook 최종 유실 안전망, Overview 수렴 완결성):
-  - `status=ACTIVE AND end_requested_at IS NULL AND started_at ≤ now − stale타임아웃`: `room_finished`·`participant_left`가 최종 유실된 잔존 세션이다. **판별 3-경로를 재실행하되 ③은 `AGENT_LOST`가 아니라 즉시 `ABORTED`**로 기록한다 — 면접 상한을 한참 지난 시점이라 재dispatch가 무의미하고 유예는 지연만 더한다. 세 경로 모두 룸을 best-effort 삭제한다(webhook 유실 상황에서는 룸 실존 여부를 알 수 없다). **`end_requested_at`이 있는 세션은 fallback(기능 2)이 전담한다** — stale 임계 직전의 `/end`가 보장한 정상 종료 창(180s)을 stale 회수가 선점·박탈하지 않게 하는 우선순위 분리다.
-  - `status=PENDING AND created_at ≤ now − stale타임아웃`: **stale `ACTIVE`와 같은 판별을 실행한다** — `PENDING`은 Spring의 관측 상태일 뿐이라, `participant_joined` 유실 병리에서는 실제 면접이 진행·완료되어 행·표식이 존재할 수 있다(행 있음 → `ENDED`). 판별 ③(행·표식 없음)은 정리 전에 **룸 참가자 대조**를 거친다: `created_at` 기준 경과에는 상한 없는 디스패치 대기가 포함되므로(워커 장기 다운 후 복귀), joined 유실과 겹치면 뒤늦게 시작된 면접이 진행 중일 수 있다. 룸에 AGENT 참가자가 관측되면 정리하는 대신 **`PENDING`→`ACTIVE`로 복원**한다 — 유실된 `participant_joined`의 관측 기반 보정이며, `started_at`은 LiveKit 참가자의 입장 시각(joined_at, 부재 시 보수적으로 현재 시각)으로 기록한다. 복원 후에는 `started_at` 앵커의 ACTIVE stale 회수가 hard ceiling을 담당하므로, **hang 상태로 연결만 유지하는 에이전트도 무한 skip 없이 유한 시간 내 수렴한다**(정상 진행 중이던 면접은 이후 `room_finished`가 `ENDED`로 정확히 끝낸다). 룸 미존재는 "진행 중 아님"의 확정 증거라 정리를 진행하고, 참가자 조회 실패는 이번 회차만 건너뛴다(다음 스위프 재시도). 단 **건너뛰기에는 상한이 있다** — `created_at`이 stale 임계의 4배(코드 상수 — 기본 3h)를 넘긴 `PENDING`은 지속 장애(자격증명 오류·네트워크 단절 등)로 대조가 계속 실패해도 **대조 없이 행·표식 판별만으로 terminal을 확정**한다(행→`ENDED`, 없음→`ABORTED` + 룸 삭제 best-effort). 안전 근거: 토큰 TTL(1h)이 늦은 입장을 차단해 그 시점에 진행 중인 정상 면접은 실질 불가하고, 판별의 장애 도메인(DB·Redis)은 대조(LiveKit)와 분리되어 있다. 이 상한 덕에 stale 회수의 수렴은 LiveKit API 가용성에 조건부가 아니다. `ACTIVE`에는 이 대조를 두지 않는다 — `started_at` 앵커는 대기 시간이 소거된 시점이라 45m가 정상 체류 상한(≈40분)을 이미 보장한다. `PENDING`을 회수하는 이유: 생성은 막지 않지만(자동 교체) non-terminal이라 이력서를 `RESUME_IN_USE`로 차단하므로, 유저가 재생성하지 않는 한 webhook 유실 시 영구 잔존하는 동일 갭이다.
+  - `status=ACTIVE AND end_requested_at IS NULL AND started_at ≤ now − stale타임아웃`: `room_finished`·`participant_left`가 최종 유실된 잔존 세션이다. **판별 3-경로를 재실행하되 ③은 `AGENT_LOST`가 아니라 즉시 `ABORTED`**로 기록한다 — 면접 상한을 한참 지난 시점이라 재dispatch가 무의미하고 유예는 지연만 더한다. 단 **HBB1-308 개정**: ③의 `ABORTED` 확정 전에 룸 참가자 대조를 거친다 — candidate+AGENT 동시 관측 시 이번 회차 skip(상한 = stale 임계의 4배, 사유 불문 공통). 재연결(이탈·복귀 반복)로 벽시계 체류가 45m를 넘는 정상 세션의 보호이며, 상세는 재연결 문서 참조. 세 경로 모두 룸을 best-effort 삭제한다(webhook 유실 상황에서는 룸 실존 여부를 알 수 없다). **`end_requested_at`이 있는 세션은 fallback(기능 2)이 전담한다** — stale 임계 직전의 `/end`가 보장한 정상 종료 창(180s)을 stale 회수가 선점·박탈하지 않게 하는 우선순위 분리다.
+  - `status=PENDING AND created_at ≤ now − stale타임아웃`: **stale `ACTIVE`와 같은 판별을 실행한다** — `PENDING`은 Spring의 관측 상태일 뿐이라, `participant_joined` 유실 병리에서는 실제 면접이 진행·완료되어 행·표식이 존재할 수 있다(행 있음 → `ENDED`). 판별 ③(행·표식 없음)은 정리 전에 **룸 참가자 대조**를 거친다: `created_at` 기준 경과에는 상한 없는 디스패치 대기가 포함되므로(워커 장기 다운 후 복귀), joined 유실과 겹치면 뒤늦게 시작된 면접이 진행 중일 수 있다. 룸에 AGENT 참가자가 관측되면 정리하는 대신 **`PENDING`→`ACTIVE`로 복원**한다 — 유실된 `participant_joined`의 관측 기반 보정이며, `started_at`은 LiveKit 참가자의 입장 시각(joined_at, 부재 시 보수적으로 현재 시각)으로 기록한다. 복원 후에는 `started_at` 앵커의 ACTIVE stale 회수가 hard ceiling을 담당하므로, **hang 상태로 연결만 유지하는 에이전트도 무한 skip 없이 유한 시간 내 수렴한다**(정상 진행 중이던 면접은 이후 `room_finished`가 `ENDED`로 정확히 끝낸다). 룸 미존재는 "진행 중 아님"의 확정 증거라 정리를 진행하고, 참가자 조회 실패는 이번 회차만 건너뛴다(다음 스위프 재시도). 단 **건너뛰기에는 상한이 있다** — `created_at`이 stale 임계의 4배(코드 상수 — 기본 3h)를 넘긴 `PENDING`은 지속 장애(자격증명 오류·네트워크 단절 등)로 대조가 계속 실패해도 **대조 없이 행·표식 판별만으로 terminal을 확정**한다(행→`ENDED`, 없음→`ABORTED` + 룸 삭제 best-effort). 안전 근거: 토큰 TTL(10m — HBB1-308에서 1h로부터 단축)이 늦은 입장을 차단해 그 시점에 진행 중인 정상 면접은 실질 불가하고, 판별의 장애 도메인(DB·Redis)은 대조(LiveKit)와 분리되어 있다. 이 상한 덕에 stale 회수의 수렴은 LiveKit API 가용성에 조건부가 아니다. `ACTIVE`의 ①·②에는 대조를 두지 않는다(행·표식이 확정 증거). ③의 대조는 HBB1-308이 도입했다 — `started_at` 앵커의 "대기 시간 소거" 전제(45m ≥ 정상 체류 상한 ≈40분)가 재연결의 이탈·복귀 반복으로 약화되었기 때문이다. `PENDING`을 회수하는 이유: 생성은 막지 않지만(자동 교체) non-terminal이라 이력서를 `RESUME_IN_USE`로 차단하므로, 유저가 재생성하지 않는 한 webhook 유실 시 영구 잔존하는 동일 갭이다.
   - **계류 dispatch 잔여 (감수 — HBB1-289 계승)**: stale `PENDING`의 발생 조건(워커 다운)은 계류 dispatch(`JS_PENDING`)의 존재 조건과 겹친다 — 룸 삭제는 계류 dispatch의 취소를 보장하지 않으므로(agent-dispatch.md 실패 모델), 워커 복귀 시 뒤늦은 할당이 terminal 세션의 룸을 재생성할 수 있다. 재생성 룸은 자기 제한적으로 소멸하고(joined는 terminal no-op → 에이전트는 candidate 대기 300s 후 퇴장 → empty timeout → `room_finished` no-op) 유저 영향이 없으므로, HBB1-289와 같은 판단으로 `listDispatch` 보상을 두지 않는다 — **뒤늦은 할당이 실측되면 도입**한다는 판정 기준과 운영 탐지 절차(`lk dispatch list <룸 이름>` — 룸 이름 출처는 DB)를 그대로 계승한다.
 
 ### 실행 조건
@@ -293,14 +294,14 @@ LiveKit Cloud가 발송하는 webhook을 수신·검증해 이벤트→전이 �
   ```yaml
   session:
     end-fallback-timeout: ${SESSION_END_FALLBACK_TIMEOUT:180s}  # /end 후 room_finished 대기 상한
-    agent-lost-grace: ${SESSION_AGENT_LOST_GRACE:60s}           # AGENT_LOST 유예
+    agent-lost-grace: ${SESSION_AGENT_LOST_GRACE:90s}           # AGENT_LOST 유예 (HBB1-308: 재디스패치 복원 창 포함 상향)
     stale-recovery-timeout: ${SESSION_STALE_RECOVERY_TIMEOUT:45m}  # webhook 유실 세션 회수 임계
     sweep-interval: ${SESSION_SWEEP_INTERVAL:10s}               # 스위퍼 주기
   ```
 
   local은 기본값 포함, dev/prod는 기본값 없는 placeholder(기존 방침 — 배포 환경변수 매니페스트에 4종 추가). 값 근거(에이전트 실측 상수 기준):
   - **fallback 180s**: 에이전트 종료 시퀀스 최악 합산 ≈ 119s — 진행 중 발화 완료 대기(끼어들기 불가, ~30s) + 클로징 재생(~15s) + 단계별 타임아웃 10s × 4단계(drain·flush·purge·발행) + 룸 삭제 bounded retry(3회 × 10s + 백오프 2s×2 = 34s) — 에 안전 계수를 둔 값. 이보다 짧으면 정상 진행 중인 에이전트에 fallback이 선착해 잔여 경합(기능 2)의 창이 실질화된다.
-  - **유예 60s**: 재dispatch 부재 동안의 잠금 해제 지연 상한 — 짧게 두고 재dispatch 스토리에서 재검토.
+  - **유예 90s**: HBB1-308에서 확정 — 유예가 순수 대기가 아니라 재디스패치 복원 창(dispatch 왕복 + 워커 기동·join + webhook 지연 여유)이 되었다. `disconnected_at` 있는 세션의 결합 deadline은 재연결 문서 참조.
   - **stale 45m**: 최장 정상 `ACTIVE` 체류 ≈ 40분 — candidate 입장 대기 상한(에이전트 300s) + `THIRTY_MIN` 30분 + hard 유예 3분 + 종료 시퀀스 ~2분 — 에 여유를 둔 값. 면접 유형별 임계 분리는 두지 않는다(stale 회수는 지연 무민감한 안전망 — 최악 유형 기준 단일 값). `PENDING`의 `created_at` 기준 경과에는 상한 없는 디스패치 대기가 **포함되므로** 이 값만으로는 진행 중 면접의 배제를 보장할 수 없다 — stale `PENDING` ③의 룸 참가자 대조가 `ACTIVE` 복원으로 보호한다(기능 3).
 
 ## 공통: 수동 검증 (E2E)
@@ -328,8 +329,8 @@ LiveKit Cloud가 발송하는 webhook을 수신·검증해 이벤트→전이 �
 
 다음은 모두 **범위 밖**이며 후속 스토리에서 도입한다:
 
-- candidate 재연결(`INTERRUPTED` 전이·`disconnected_at`·재입장 토큰) — candidate 이탈은 현행 에이전트 동작(즉시 종료)대로 `ABORTED` 수렴까지만 다룬다
-- `AGENT_LOST` 재dispatch·에이전트 복원 — 본 스토리는 판별·유예 정리까지
+- candidate 재연결(`INTERRUPTED` 전이·`disconnected_at`·재입장 토큰) — **HBB1-308로 도입 완료** (`interview-session-reconnection.md`)
+- `AGENT_LOST` 재dispatch·에이전트 복원 — **HBB1-308로 도입 완료** (동 문서)
 - 리포트 생성·소비(리포트 요청 발행은 에이전트 소관으로 이미 구현됨), egress·전달력 연계
 - E1(탈퇴) 연계 — 탈퇴 시 세션 즉시 abort·파기
 - 프론트 종료 UI — 프론트는 `ROOM_DELETED` 수신으로 종료를 감지하므로 본 스토리에 따른 추가 작업 없음
