@@ -37,4 +37,27 @@ public interface SessionApi {
     ApiResponse<InterviewSessionCreateResponse> create(
             @Parameter(hidden = true) Long userId,
             InterviewSessionCreateRequest request);
+
+    @Operation(summary = "면접 세션 종료",
+            description = """
+                    세션 종료 요청을 수리한다 — 세션 상태와 무관하게 종료(terminal) 수렴이 보장된다.
+                    응답 202는 수리(accepted)의 의미이며 **종료는 비동기로 확정된다**: 진행 중(ACTIVE) 면접은
+                    면접관 에이전트가 클로징 발화 후 룸을 삭제하는 시점에 끝나므로, 클라이언트는 응답이 아니라
+                    룸 종료(DisconnectReason=ROOM_DELETED)로 종료를 감지해야 한다. PENDING은 룸 관측으로
+                    에이전트 유무를 확인해 처리하고(면접 진행 중이면 정상 종료 유도), 에이전트 소실 상태는
+                    즉시 종료 처리되며, 이미 종료된 세션에 대한 재호출은 멱등 no-op이다.""",
+            security = @SecurityRequirement(name = "bearerAuth"))
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "202",
+                    description = "종료 요청 수리 — 실제 종료는 비동기 확정"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
+                    description = "타인의 세션(S007)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                    description = "세션 없음(S006)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500",
+                    description = "종료 처리의 LiveKit 왕복 실패(S008) — 재시도 가능, 종료는 자동 수렴"),
+    })
+    ApiResponse<Void> end(
+            @Parameter(hidden = true) Long userId,
+            @Parameter(description = "종료할 세션 id") Long sessionId);
 }

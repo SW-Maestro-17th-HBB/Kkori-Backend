@@ -1,7 +1,9 @@
 package com.aisw.kkori.session.service;
 
+import com.aisw.kkori.session.dto.AgentPresence;
+
 /**
- * 세션 전용 룸의 준비·정리 추상. 실제 호출은 벤더 어댑터({@code global.livekit.LiveKitRoomManager})가
+ * 세션 전용 룸의 준비·정리·관측 추상. 실제 호출은 벤더 어댑터({@code global.livekit.LiveKitRoomManager})가
  * 담당한다 — 토큰 발급({@link SessionTicketIssuer})과 동일한 격리 구조.
  */
 public interface SessionRoomManager {
@@ -20,4 +22,10 @@ public interface SessionRoomManager {
      * 존재하지 않는 룸에 대한 삭제 시도도 무해해야 한다.
      */
     void deleteRoomQuietly(String roomName);
+
+    /**
+     * 룸의 AGENT 참가자를 관측한다 — stale PENDING 회수의 진행 중 면접 보호 대조(PRD 기능 3).
+     * <b>예외를 던지지 않는다</b> — 조회 실패는 {@code UNKNOWN}으로 반환한다(호출측이 회차를 건너뛴다).
+     */
+    AgentPresence probeAgentPresence(String roomName);
 }

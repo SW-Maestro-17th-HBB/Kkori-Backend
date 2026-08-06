@@ -51,3 +51,9 @@ livekit:
   api-secret: ${LIVEKIT_API_SECRET}
   token-ttl: ${LIVEKIT_TOKEN_TTL}
   api-timeout: ${LIVEKIT_API_TIMEOUT}
+
+session:
+  end-fallback-timeout: ${SESSION_END_FALLBACK_TIMEOUT}
+  agent-lost-grace: ${SESSION_AGENT_LOST_GRACE}
+  stale-recovery-timeout: ${SESSION_STALE_RECOVERY_TIMEOUT}
+  sweep-interval: ${SESSION_SWEEP_INTERVAL}

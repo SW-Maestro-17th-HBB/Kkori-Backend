@@ -78,6 +78,18 @@ public class InterviewSession extends BaseEntity {
     @Column(name = "disconnected_at")
     private Instant disconnectedAt;
 
+    /**
+     * 최초 종료 요청(/end) 시각 — fallback 스위퍼의 만료 앵커(first-wins, 중복 /end로 갱신되지
+     * 않아 fallback 창이 연장되지 않는다). 값이 있는 ACTIVE 세션은 fallback이 전담하고 stale
+     * 회수 대상에서 빠진다(PRD 기능 2·3 우선순위 분리).
+     */
+    @Column(name = "end_requested_at")
+    private Instant endRequestedAt;
+
+    /** AGENT_LOST 전이 시각 — 유예 스위퍼의 만료 앵커. */
+    @Column(name = "agent_lost_at")
+    private Instant agentLostAt;
+
     private InterviewSession(Long userId, Long resumeId, InterviewType interviewType,
                              Position position, String livekitRoom) {
         this.userId = userId;

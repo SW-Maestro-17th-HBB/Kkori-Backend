@@ -10,6 +10,7 @@ import org.springframework.data.repository.query.Param;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 public interface InterviewSessionRepository extends JpaRepository<InterviewSession, Long> {
 
@@ -38,4 +39,94 @@ public interface InterviewSessionRepository extends JpaRepository<InterviewSessi
 
     /** 커밋 후 승계(superseded) 재확인 — 디스패치 뒤에도 이 세션이 여전히 해당 상태인지 판정. */
     boolean existsByIdAndStatus(Long id, SessionStatus status);
+
+    /** webhook의 세션 역추적 — 룸 이름은 UNIQUE(ux_interview_session_livekit_room). */
+    Optional<InterviewSession> findByLivekitRoom(String livekitRoom);
+
+    // ── 이하 전이·스위퍼 쿼리 (PRD interview-session-completion.md) ──
+    // 모든 전이는 상태 술어를 단 조건부 벌크 UPDATE로 원자적·멱등이다(중복·역순 webhook,
+    // terminal no-op 가드). 벌크 쿼리에는 auditing이 적용되지 않아 updatedAt을 명시 갱신하며,
+    // 호출 트랜잭션은 user 행 잠금(활성 재확인 없는 findWithLockById)으로 직렬화되어 있어야 한다.
+
+    /**
+     * PENDING → ACTIVE 전환. webhook(participant_joined)은 {@code startedAt=now}로, stale
+     * PENDING의 관측 기반 복원은 LiveKit 참가자 입장 시각으로 호출한다.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.status = com.aisw.kkori.session.domain.SessionStatus.ACTIVE,
+                s.startedAt = :startedAt,
+                s.updatedAt = :now
+            where s.id = :id
+              and s.status = com.aisw.kkori.session.domain.SessionStatus.PENDING
+            """)
+    int activate(@Param("id") Long id, @Param("startedAt") Instant startedAt, @Param("now") Instant now);
+
+    /** terminal 확정 — {@code to}는 ENDED/ABORTED만 허용된다(호출측 계약). */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.status = :to,
+                s.endedAt = :now,
+                s.updatedAt = :now
+            where s.id = :id
+              and s.status in :from
+            """)
+    int finishFrom(@Param("id") Long id, @Param("from") Collection<SessionStatus> from,
+                   @Param("to") SessionStatus to, @Param("now") Instant now);
+
+    /**
+     * stale ACTIVE 회수 전용 terminal 확정 — {@code endRequestedAt}이 있는 세션은 fallback이
+     * 전담하므로 술어에서 제외한다(후보 조회~전이 사이의 /end 경합에도 우선순위가 유지된다).
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.status = :to,
+                s.endedAt = :now,
+                s.updatedAt = :now
+            where s.id = :id
+              and s.status = com.aisw.kkori.session.domain.SessionStatus.ACTIVE
+              and s.endRequestedAt is null
+            """)
+    int finishStaleActive(@Param("id") Long id, @Param("to") SessionStatus to, @Param("now") Instant now);
+
+    /** 판별 ③ — AGENT_LOST 전이(유예 앵커 기록). 대상은 PENDING·ACTIVE뿐이다. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.status = com.aisw.kkori.session.domain.SessionStatus.AGENT_LOST,
+                s.agentLostAt = :now,
+                s.updatedAt = :now
+            where s.id = :id
+              and s.status in (com.aisw.kkori.session.domain.SessionStatus.PENDING,
+                               com.aisw.kkori.session.domain.SessionStatus.ACTIVE)
+            """)
+    int markAgentLost(@Param("id") Long id, @Param("now") Instant now);
+
+    /** 종료 요청 시각 기록 — first-wins(이미 있으면 no-op)라 중복 /end가 fallback 창을 연장하지 않는다. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.endRequestedAt = :now,
+                s.updatedAt = :now
+            where s.id = :id
+              and s.status = com.aisw.kkori.session.domain.SessionStatus.ACTIVE
+              and s.endRequestedAt is null
+            """)
+    int recordEndRequested(@Param("id") Long id, @Param("now") Instant now);
+
+    /** fallback 후보 — /end 수리 후 room_finished가 오지 않은 ACTIVE. */
+    List<InterviewSession> findByStatusAndEndRequestedAtLessThanEqual(SessionStatus status, Instant cutoff);
+
+    /** 유예 만료 후보. */
+    List<InterviewSession> findByStatusAndAgentLostAtLessThanEqual(SessionStatus status, Instant cutoff);
+
+    /** stale ACTIVE 후보 — end_requested_at 있는 세션은 fallback 전담(PRD 우선순위 분리). */
+    List<InterviewSession> findByStatusAndEndRequestedAtIsNullAndStartedAtLessThanEqual(
+            SessionStatus status, Instant cutoff);
+
+    /** stale PENDING 후보. */
+    List<InterviewSession> findByStatusAndCreatedAtLessThanEqual(SessionStatus status, Instant cutoff);
 }

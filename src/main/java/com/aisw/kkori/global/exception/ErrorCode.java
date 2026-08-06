@@ -61,6 +61,10 @@ public enum ErrorCode {
     SESSION_ALREADY_IN_PROGRESS(HttpStatus.CONFLICT, "S003", "진행 중인 면접 세션이 있습니다. 기존 면접을 종료한 뒤 다시 시작해 주세요."),
     SESSION_DISPATCH_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "S004", "면접관 연결에 실패했습니다. 잠시 후 다시 시도해 주세요."),
     SESSION_SUPERSEDED(HttpStatus.CONFLICT, "S005", "다른 세션 생성 요청이 이 요청을 대체했습니다. 최신 세션을 사용해 주세요."),
+    SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, "S006", "면접 세션을 찾을 수 없습니다."),
+    SESSION_FORBIDDEN(HttpStatus.FORBIDDEN, "S007", "해당 면접 세션에 대한 권한이 없습니다."),
+    SESSION_END_SIGNAL_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "S008",
+            "종료 요청 처리에 실패했습니다. 잠시 후 다시 시도해 주세요."),
 
     // 리포트 (RP) — docs/requirements/report/report.md (R은 이력서가 사용 중이라 두 글자 접두사)
     REPORT_NOT_FOUND(HttpStatus.NOT_FOUND, "RP001", "리포트를 찾을 수 없습니다."),

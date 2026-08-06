@@ -51,6 +51,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/consents").permitAll()
                         // 와일드카드가 아닌 정확 경로만 — 자체 검증 없는 다른 웹훅이 딸려 열리는 사고 방지
                         .requestMatchers("/api/v1/webhook/kakao/unlink").permitAll()
+                        // LiveKit webhook — 인증은 WebhookReceiver 서명 검증이 담당 (PRD 세션 종료 기능 1)
+                        .requestMatchers("/api/v1/webhook/livekit").permitAll()
                         .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**")
                         .permitAll()
                         .anyRequest().authenticated())

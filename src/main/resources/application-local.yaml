@@ -61,3 +61,10 @@ livekit:
   api-secret: ${LIVEKIT_API_SECRET}
   token-ttl: ${LIVEKIT_TOKEN_TTL:1h}
   api-timeout: ${LIVEKIT_API_TIMEOUT:3s}
+
+# 세션 수렴 스위퍼 — 값 근거는 PRD(interview-session-completion.md 공통: 스위퍼·설정)
+session:
+  end-fallback-timeout: ${SESSION_END_FALLBACK_TIMEOUT:180s}
+  agent-lost-grace: ${SESSION_AGENT_LOST_GRACE:60s}
+  stale-recovery-timeout: ${SESSION_STALE_RECOVERY_TIMEOUT:45m}
+  sweep-interval: ${SESSION_SWEEP_INTERVAL:10s}
