@@ -43,6 +43,8 @@ public class ReportFixtures {
         reportRepository.deleteAll();
         ensureTranscriptTable();
         jdbcTemplate.update("DELETE FROM interview_transcript");
+        ensureJobTable();
+        jdbcTemplate.update("DELETE FROM report_generation_jobs");
     }
 
     /**
@@ -57,6 +59,43 @@ public class ReportFixtures {
                     content JSONB NOT NULL,
                     deleted_at TIMESTAMPTZ
                 )""");
+    }
+
+    /**
+     * 생성 Job 테이블 보장 — Worker 소유 테이블이라 JPA 엔티티가 없어 ddl-auto가 만들지 않는다.
+     * 스키마 원천: Kkori-AI worker/src/report/repository.py ensure_schema (변경 시 여기도 동기화).
+     */
+    private void ensureJobTable() {
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS report_generation_jobs (
+                    id            BIGSERIAL PRIMARY KEY,
+                    report_id     BIGINT NOT NULL UNIQUE,
+                    retry_count   INT NOT NULL DEFAULT 0,
+                    error_message TEXT,
+                    requested_at  TIMESTAMPTZ NOT NULL,
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+                )""");
+    }
+
+    /** 생성 Job 행 — Worker가 리포트와 한 트랜잭션으로 만드는 행을 재현한다. */
+    public void job(long reportId, Instant requestedAt, int retryCount) {
+        ensureJobTable();
+        jdbcTemplate.update(
+                "INSERT INTO report_generation_jobs (report_id, retry_count, requested_at) VALUES (?, ?, ?)",
+                reportId, retryCount, Timestamp.from(requestedAt));
+    }
+
+    public Instant jobRequestedAt(long reportId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT requested_at FROM report_generation_jobs WHERE report_id = ?",
+                Timestamp.class, reportId).toInstant();
+    }
+
+    public int jobRetryCount(long reportId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT retry_count FROM report_generation_jobs WHERE report_id = ?",
+                Integer.class, reportId);
     }
 
     /** 세션 대본 저장 — Worker·타임라인이 읽는 발화 배열 JSON을 그대로 넣는다. */
@@ -98,6 +137,29 @@ public class ReportFixtures {
 
     public long reportWithStatus(long userId, ReportStatus status) {
         return report(userId, status, null, Instant.now());
+    }
+
+    /**
+     * 재생성 검증용 FAILED 리포트 — 텍스트 경로 산출물과 음성 산출물을 전부 채워,
+     * 재생성이 텍스트 경로만 지우고 음성 결과는 보존하는지 선별 검증할 수 있게 한다.
+     */
+    public long failedReportWithPreviousRun(long userId, Integer deliveryScore) {
+        Report report = reportRepository.save(Report.builder()
+                .userId(userId)
+                .interviewSessionId(SESSION_SEQ.incrementAndGet())
+                .resumeId(10L)
+                .status(ReportStatus.FAILED)
+                .overallScore(55)
+                .deliveryScore(deliveryScore)
+                .summary("이전 런 총평")
+                .resumeFileNameSnapshot(RESUME_FILE_NAME)
+                .weaknessTagSummary(List.of(new WeaknessTagCount("두괄식 부족", 1)))
+                .failedReason("재전달 임계 초과")
+                .textAnalyzedAt(Instant.now())
+                .audioAnalyzedAt(deliveryScore == null ? null : Instant.now())
+                .completedAt(Instant.now())
+                .build());
+        return report.getId();
     }
 
     /** 상세 조회용 완전체 — COMPLETED 리포트 + 텍스트 3축 점수 + 답변별 피드백 2건(질문 1·2). */
