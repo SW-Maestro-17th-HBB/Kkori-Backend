@@ -24,6 +24,7 @@ public class ReportRepositoryService {
     private final ReportRepository reportRepository;
     private final ReportFeedbackRepository reportFeedbackRepository;
     private final TranscriptReader transcriptReader;
+    private final JdbcReportJobWriter jdbcReportJobWriter;
 
     /**
      * 본인 소유 검증 — 존재(404) → 소유(403) 순서.
@@ -48,6 +49,33 @@ public class ReportRepositoryService {
             throw new BusinessException(ErrorCode.REPORT_GENERATION_IN_PROGRESS);
         }
         return report;
+    }
+
+    /**
+     * 본인 소유 + FAILED 검증(재생성 전용) — 존재(404) → 소유(403) → 상태(409) 순서.
+     * 행을 잠그고 읽는다(SELECT ... FOR UPDATE) — 상태 검사와 전환 커밋 사이에 다른 요청
+     * (연속 클릭 등)이 상태를 바꾸면 낡은 판정으로 통과하기 때문(이력서 재분석의 선례, PRD §1).
+     * 잠금은 트랜잭션이 끝날 때 풀리므로 반드시 호출자의 쓰기 트랜잭션 안에서 호출해야 한다
+     * — 트랜잭션 없이 호출하면 잠금 쿼리가 예외로 실패한다.
+     */
+    public Report findOwnedFailedForUpdate(Long userId, Long reportId) {
+        Report report = reportRepository.findForUpdateById(reportId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.REPORT_NOT_FOUND));
+        if (!report.getUserId().equals(userId)) {
+            throw new BusinessException(ErrorCode.REPORT_FORBIDDEN);
+        }
+        if (report.getStatus() == ReportStatus.COMPLETED) {
+            throw new BusinessException(ErrorCode.REPORT_RETRY_NOT_ALLOWED);
+        }
+        if (report.getStatus() != ReportStatus.FAILED) {
+            throw new BusinessException(ErrorCode.REPORT_GENERATION_IN_PROGRESS);
+        }
+        return report;
+    }
+
+    /** 재생성 시 Job의 requested_at을 현재 시각으로 갱신 — Worker 소유 테이블이라 네이티브로 쓴다. */
+    public void updateJobRequestedAtToNow(long reportId) {
+        jdbcReportJobWriter.updateRequestedAtToNow(reportId);
     }
 
     /** 답변별 피드백 — 질문 번호 오름차순. */

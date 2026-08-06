@@ -4,6 +4,7 @@ import com.aisw.kkori.global.response.ApiResponse;
 import com.aisw.kkori.report.api.ReportApi;
 import com.aisw.kkori.report.domain.ReportStatus;
 import com.aisw.kkori.report.dto.ReportDetailResponse;
+import com.aisw.kkori.report.dto.ReportRegenerateResponse;
 import com.aisw.kkori.report.dto.ReportStatsResponse;
 import com.aisw.kkori.global.response.PageResponse;
 import com.aisw.kkori.report.dto.ReportStatusResponse;
@@ -15,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -61,6 +63,14 @@ public class ReportController implements ReportApi {
             @PathVariable Long reportId
     ) {
         return ResponseEntity.ok(ApiResponse.success(reportService.getTimeline(userId, reportId)));
+    }
+
+    @PostMapping("/{reportId}/retry")
+    public ResponseEntity<ApiResponse<ReportRegenerateResponse>> regenerate(
+            @AuthenticationPrincipal Long userId,
+            @PathVariable Long reportId
+    ) {
+        return ResponseEntity.ok(ApiResponse.success(reportService.regenerate(userId, reportId)));
     }
 
     @GetMapping("/{reportId}/status")
