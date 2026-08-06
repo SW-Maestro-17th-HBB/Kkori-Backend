@@ -71,6 +71,9 @@ public enum ErrorCode {
     REPORT_FORBIDDEN(HttpStatus.FORBIDDEN, "RP002", "해당 리포트에 접근할 권한이 없습니다."),
     REPORT_GENERATION_IN_PROGRESS(HttpStatus.CONFLICT, "RP003", "리포트 생성이 진행 중입니다. 완료 후 다시 시도해 주세요."),
     REPORT_GENERATION_FAILED(HttpStatus.CONFLICT, "RP004", "리포트 생성이 실패한 상태입니다. 재생성을 요청해 주세요."),
+    REPORT_RETRY_NOT_ALLOWED(HttpStatus.CONFLICT, "RP005", "완성된 리포트는 재생성할 수 없습니다."),
+    REPORT_GENERATION_REQUEST_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "RP006",
+            "리포트 재생성 요청에 실패했습니다. 잠시 후 다시 시도해 주세요."),
     ;
 
     private final HttpStatus status;
