@@ -93,7 +93,9 @@ public class LiveKitAgentDispatcher implements SessionAgentDispatcher {
     public void deleteDispatch(String roomName, String dispatchId) {
         Response<LivekitAgentDispatch.AgentDispatch> response;
         try {
-            response = client.deleteDispatch(dispatchId, roomName).execute();
+            // SDK 시그니처는 (roomName, dispatchId) 순서다 — 바이트코드로 확인(setRoom←1번째 인자,
+            // setDispatchId←2번째). getDispatch(id, room)과 순서가 다르니 유추 금지, 어댑터 테스트가 고정한다
+            response = client.deleteDispatch(roomName, dispatchId).execute();
         } catch (IOException | RuntimeException e) {
             log.warn("dispatch 삭제 통신 실패 (room={}, dispatchId={}): {}",
                     roomName, dispatchId, e.getClass().getSimpleName());
