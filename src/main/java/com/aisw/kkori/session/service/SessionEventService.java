@@ -135,31 +135,31 @@ public class SessionEventService {
     }
 
     /**
-     * participant_left(candidate) — 상태별 분기 (재연결 PRD 매핑 확장 표). 유령 퇴장
+     * participant_left(candidate) — 매핑 확장 표의 상태별 분기 (재연결 PRD). 유령 퇴장
      * (DUPLICATE_IDENTITY)은 어댑터가 이미 IGNORE로 접었다.
+     *
+     * <p><b>잠금 전 관측 상태로 분기하지 않는다</b> — agent-left와의 경합(관측은 ACTIVE, 잠금
+     * 시점엔 AGENT_LOST)에서 관측 기준 분기는 이탈 기록을 통째로 놓치고, `disconnected_at`이
+     * 없으면 /rejoin이 S009로 거절되어 3분 재연결 계약이 깨진다. 대신 상태 술어를 단 조건부
+     * UPDATE를 순차 시도한다 — 술어가 잠금 시점의 최신 상태로 분기하며, ACTIVE→INTERRUPTED가
+     * 아니면 AGENT_LOST의 이탈 기록(first-wins)을 시도하고 그 외(INTERRUPTED 중복·PENDING·
+     * terminal)는 둘 다 no-op이다.
      */
     private void handleCandidateLeft(InterviewSession session, String rawEvent) {
-        switch (session.getStatus()) {
-            case ACTIVE -> {
-                int updated = transitionExecutor.execute(session.getUserId(),
-                        now -> sessionRepository.interrupt(session.getId(), now));
-                if (updated == 1) {
-                    log.info("candidate 이탈 — INTERRUPTED 전이 (sessionId={}, event={})",
-                            session.getId(), rawEvent);
-                    // [커밋 후] 즉시 대조 — reason 미실림 시 가짜 INTERRUPTED를 왕복 1회 안에 보정
-                    restoreIfBothPresent(session, "즉시 대조");
-                }
-            }
-            case AGENT_LOST -> {
-                int updated = transitionExecutor.execute(session.getUserId(),
-                        now -> sessionRepository.recordDisconnectedIfAbsent(session.getId(), now));
-                if (updated == 1) {
-                    log.info("AGENT_LOST 중 candidate 이탈 — disconnected_at 기록 (sessionId={})",
-                            session.getId());
-                }
-            }
-            // INTERRUPTED(중복·유령 — 창 연장 금지)·PENDING(선입장 이탈 — empty timeout 수렴)은 no-op
-            default -> { }
+        int interrupted = transitionExecutor.execute(session.getUserId(),
+                now -> sessionRepository.interrupt(session.getId(), now));
+        if (interrupted == 1) {
+            log.info("candidate 이탈 — INTERRUPTED 전이 (sessionId={}, event={})",
+                    session.getId(), rawEvent);
+            // [커밋 후] 즉시 대조 — reason 미실림 시 가짜 INTERRUPTED를 왕복 1회 안에 보정
+            restoreIfBothPresent(session, "즉시 대조");
+            return;
+        }
+        int recorded = transitionExecutor.execute(session.getUserId(),
+                now -> sessionRepository.recordDisconnectedIfAbsent(session.getId(), now));
+        if (recorded == 1) {
+            log.info("AGENT_LOST 중 candidate 이탈 — disconnected_at 기록 (sessionId={})",
+                    session.getId());
         }
     }
 
