@@ -18,4 +18,18 @@ public interface SessionAgentDispatcher {
      *         어댑터이며, 호출측은 보상(룸 삭제)만 하고 원예외를 그대로 재던진다
      */
     void dispatch(String roomName, String metadata);
+
+    /**
+     * 룸의 잔존 dispatch id 목록을 조회한다 — 재디스패치의 활성 dispatch 단일성 정리(HBB1-308).
+     * 실패는 {@code SESSION_DISPATCH_FAILED}(S004)로 던진다 — 호출측(재디스패치 파이프라인)은
+     * 생성을 포기한다(동시 잡 방지가 복원보다 우선).
+     */
+    java.util.List<String> listDispatchIds(String roomName);
+
+    /**
+     * 잔존 dispatch를 삭제한다. 실패는 {@code SESSION_DISPATCH_FAILED}(S004) — 삭제가 실패하면
+     * 생성하지 않는다. 단 {@code DeleteDispatch}는 실행 중 잡의 종료 완료를 계약하지 않는다
+     * (재디스패치 파이프라인이 부재 재확인으로 보완).
+     */
+    void deleteDispatch(String roomName, String dispatchId);
 }

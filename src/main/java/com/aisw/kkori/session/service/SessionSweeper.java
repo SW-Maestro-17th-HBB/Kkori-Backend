@@ -169,17 +169,33 @@ public class SessionSweeper {
         }
     }
 
-    /** AGENT_LOST 유예 만료 — ABORTED 정리 + 룸 삭제(잔류 candidate는 ROOM_DELETED로 퇴장). */
+    /**
+     * AGENT_LOST 유예 만료 — 정리 + 룸 삭제(잔류 candidate는 ROOM_DELETED로 퇴장). HBB1-308 개정:
+     * <b>deadline 충돌 방지</b> — 이탈 관측(disconnected_at) 세션은 재연결 deadline(+마진)과의
+     * 늦은 쪽까지 기다린다(발급된 재입장 토큰의 deadline 약속을 스위퍼가 선제 파기하지 않고,
+     * 계류 dispatch의 뒤늦은 join + 재입장이 그 창 안에서 복구를 완성할 수 있다). <b>행 재판별</b> —
+     * 재디스패치 복원 에이전트가 면접을 완료했는데 webhook이 전량 유실된 병리에서 정상 완료를
+     * ABORTED로 오판하지 않는다(terminal 확정 원칙).
+     */
     private void sweepAgentLostGrace(Instant now) {
         Instant cutoff = now.minus(properties.agentLostGrace());
+        Instant reconnectCutoff = now.minus(properties.reconnectWindow().plus(INTERRUPTED_GRACE_MARGIN));
         forEachIsolated("유예 만료",
                 sessionRepository.findByStatusAndAgentLostAtLessThanEqual(SessionStatus.AGENT_LOST, cutoff),
                 session -> {
+                    if (session.getDisconnectedAt() != null
+                            && session.getDisconnectedAt().isAfter(reconnectCutoff)) {
+                        return; // 재연결 deadline 미도래 — max(유예, deadline+마진)의 늦은 쪽 대기
+                    }
+                    SessionStatus to = transcriptReader.exists(session.getId())
+                            ? SessionStatus.ENDED : SessionStatus.ABORTED;
                     int updated = transitionExecutor.execute(session.getUserId(),
                             txNow -> sessionRepository.finishFrom(
-                                    session.getId(), Set.of(SessionStatus.AGENT_LOST), SessionStatus.ABORTED, txNow));
+                                    session.getId(), Set.of(SessionStatus.AGENT_LOST), to, txNow));
                     if (updated == 1) {
-                        log.info("AGENT_LOST 유예 만료 — ABORTED 정리 (sessionId={})", session.getId());
+                        // redispatched는 CAS 도달 여부만 말한다 — 결과 구분은 재디스패치 단계별 로그 correlation
+                        log.info("AGENT_LOST 유예 만료 — {} 정리 (sessionId={}, redispatched={})",
+                                to, session.getId(), session.getRedispatchedAt() != null);
                         roomManager.deleteRoomQuietly(session.getLivekitRoom());
                     }
                 });

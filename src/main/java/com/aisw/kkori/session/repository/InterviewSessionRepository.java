@@ -165,6 +165,56 @@ public interface InterviewSessionRepository extends JpaRepository<InterviewSessi
     List<InterviewSession> findByStatusAndEndRequestedAtIsNullAndDisconnectedAtLessThanEqual(
             SessionStatus status, Instant cutoff);
 
+    // ── 재디스패치 (PRD interview-session-reconnection.md 기능 3) ──
+
+    /**
+     * 재디스패치 CAS — at-most-once 권한 획득. AGENT 사전 확인에서 부재가 확인된 뒤에만
+     * 시도한다(관측 기반 복원은 이 마커를 소진하지 않는다 — 복원된 에이전트의 후속 소실이
+     * 온전한 재디스패치 기회를 가진다).
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.redispatchedAt = :now,
+                s.updatedAt = :now
+            where s.id = :id
+              and s.status = com.aisw.kkori.session.domain.SessionStatus.AGENT_LOST
+              and s.redispatchedAt is null
+            """)
+    int claimRedispatch(@Param("id") Long id, @Param("now") Instant now);
+
+    /**
+     * AGENT_LOST → ACTIVE 복귀 (joined(agent) 대조·사전 확인 공용 — candidate 재실).
+     * started_at은 보존하되 null(PENDING발 AGENT_LOST)이면 현재 시각을 기록한다.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.status = com.aisw.kkori.session.domain.SessionStatus.ACTIVE,
+                s.disconnectedAt = null,
+                s.startedAt = coalesce(s.startedAt, :now),
+                s.updatedAt = :now
+            where s.id = :id
+              and s.status = com.aisw.kkori.session.domain.SessionStatus.AGENT_LOST
+            """)
+    int resumeAgentLostToActive(@Param("id") Long id, @Param("now") Instant now);
+
+    /**
+     * AGENT_LOST → INTERRUPTED (candidate 부재 — 잔여 재연결 창으로). disconnected_at은
+     * 보존(first-wins — 재연결 deadline·기발급 재입장 토큰의 앵커)하되 null이면 지금 창을 연다.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.status = com.aisw.kkori.session.domain.SessionStatus.INTERRUPTED,
+                s.disconnectedAt = coalesce(s.disconnectedAt, :now),
+                s.startedAt = coalesce(s.startedAt, :now),
+                s.updatedAt = :now
+            where s.id = :id
+              and s.status = com.aisw.kkori.session.domain.SessionStatus.AGENT_LOST
+            """)
+    int resumeAgentLostToInterrupted(@Param("id") Long id, @Param("now") Instant now);
+
     /** 종료 요청 시각 기록 — first-wins(이미 있으면 no-op)라 중복 /end가 fallback 창을 연장하지 않는다.
      * INTERRUPTED 포함(HBB1-308 — /end의 ACTIVE 동일 취급). */
     @Modifying(clearAutomatically = true, flushAutomatically = true)

@@ -90,6 +90,15 @@ public class InterviewSession extends BaseEntity {
     @Column(name = "agent_lost_at")
     private Instant agentLostAt;
 
+    /**
+     * 재디스패치 CAS 마커(HBB1-308) — "실제 dispatch 생성 시도 권한의 소진"이며 세션 생애
+     * 최대 1회(at-most-once). 값의 존재는 CAS 도달만 뜻한다(생성 성공·실패·미실행은 로그
+     * correlation으로 구분). 관측 기반 복원(사전 확인)은 dispatch를 만들지 않으므로 이 마커를
+     * 소진하지 않는다.
+     */
+    @Column(name = "redispatched_at")
+    private Instant redispatchedAt;
+
     private InterviewSession(Long userId, Long resumeId, InterviewType interviewType,
                              Position position, String livekitRoom) {
         this.userId = userId;

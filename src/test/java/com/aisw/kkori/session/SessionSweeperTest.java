@@ -400,6 +400,38 @@ class SessionSweeperTest extends SessionCompletionTestSupport {
     }
 
     @Test
+    @DisplayName("AGENT_LOST 유예 — 이탈 관측 세션은 재연결 deadline(+마진) 전에 정리하지 않는다 (deadline 충돌 방지)")
+    void agentLostGraceWaitsForReconnectDeadline() {
+        long userId = saveUser("kakao-sw-30");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.AGENT_LOST, "room-sw-30");
+        setSessionInstant(sessionId, "agent_lost_at", Instant.now());
+        setSessionInstant(sessionId, "disconnected_at", Instant.now());
+
+        // 유예(90s… 테스트값 60s)는 지났지만 재연결 deadline(3m + 45s)은 미도래 — 기다린다
+        sweeperAt(Instant.now().plus(Duration.ofMinutes(2))).sweep();
+        assertThat(statusOfSession(sessionId)).isEqualTo("AGENT_LOST");
+
+        // 두 deadline 모두 경과 — 정리
+        sweeperAt(Instant.now().plus(Duration.ofMinutes(5))).sweep();
+        assertThat(statusOfSession(sessionId)).isEqualTo("ABORTED");
+        verify(roomManager).deleteRoomQuietly("room-sw-30");
+    }
+
+    @Test
+    @DisplayName("AGENT_LOST 유예 — 정리 전 행 재판별로 행 있으면 ENDED (webhook 전량 유실 병리 보정)")
+    void agentLostGraceEndsWithTranscript() {
+        long userId = saveUser("kakao-sw-31");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.AGENT_LOST, "room-sw-31");
+        setSessionInstant(sessionId, "agent_lost_at", Instant.now());
+        seedTranscript(sessionId);
+
+        expiredSweeper().sweep();
+
+        assertThat(statusOfSession(sessionId)).isEqualTo("ENDED");
+        verify(roomManager).deleteRoomQuietly("room-sw-31");
+    }
+
+    @Test
     @DisplayName("stale ACTIVE ③ 대조 — 진행 중 면접(candidate+AGENT) 관측 시 이번 회차 skip")
     void staleActiveSkipsWhenInterviewObserved() {
         long userId = saveUser("kakao-sw-28");

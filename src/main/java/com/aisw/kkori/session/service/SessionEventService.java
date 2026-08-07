@@ -44,6 +44,7 @@ public class SessionEventService {
     private final TerminationMarkerReader markerReader;
     private final SessionRoomManager roomManager;
     private final SessionTransitionExecutor transitionExecutor;
+    private final SessionRedispatchService redispatchService;
 
     /** 판별 대상 상태 — PENDING 포함: 입장 직후 소실은 joined/left가 역순 도착할 수 있다.
      * INTERRUPTED 포함(HBB1-308): 이탈 대기 중 에이전트 소실 교차곱. */
@@ -75,12 +76,51 @@ public class SessionEventService {
         }
     }
 
-    /** participant_joined(AGENT): PENDING → ACTIVE. 그 외 상태는 조건부 UPDATE가 no-op으로 거른다. */
+    /**
+     * participant_joined(AGENT): PENDING → ACTIVE, AGENT_LOST는 대조 복귀(HBB1-308 — 재디스패치
+     * 복귀 경로). 그 외 상태는 조건부 UPDATE가 no-op으로 거른다.
+     */
     private void activate(InterviewSession session) {
+        if (session.getStatus() == SessionStatus.AGENT_LOST) {
+            recoverFromAgentLost(session);
+            return;
+        }
         int updated = transitionExecutor.execute(session.getUserId(),
                 now -> sessionRepository.activate(session.getId(), now, now));
         if (updated == 1) {
             log.info("세션 ACTIVE 전환 — 에이전트 입장 (sessionId={})", session.getId());
+        }
+    }
+
+    /**
+     * joined(agent) × AGENT_LOST — 룸 대조 후 복귀한다. <b>AGENT 실존 확인 선행</b>: 소실 전
+     * joined의 지연·중복 전달이 에이전트 없는 룸을 살리는 가짜 복구를 차단한다(대조는 실시간
+     * 관측이라 참가자 목록 1회로 AGENT·candidate를 함께 판정).
+     */
+    private void recoverFromAgentLost(InterviewSession session) {
+        RoomPresence presence = roomManager.probeRoomPresence(
+                session.getLivekitRoom(), CandidateIdentity.of(session.getId()));
+        if (!presence.observed()) {
+            throw new IllegalStateException(
+                    "복귀 대조 실패 — webhook 재전송 유도 (sessionId=%d)".formatted(session.getId()));
+        }
+        if (!presence.agentPresent()) {
+            log.info("joined(agent) 관측이나 룸에 AGENT 부재 — 지연·중복 joined 흡수, no-op (sessionId={})",
+                    session.getId());
+            return;
+        }
+        if (presence.candidatePresent()) {
+            int updated = transitionExecutor.execute(session.getUserId(),
+                    now -> sessionRepository.resumeAgentLostToActive(session.getId(), now));
+            if (updated == 1) {
+                log.info("재디스패치 복귀 — candidate 재실, ACTIVE (sessionId={})", session.getId());
+            }
+        } else {
+            int updated = transitionExecutor.execute(session.getUserId(),
+                    now -> sessionRepository.resumeAgentLostToInterrupted(session.getId(), now));
+            if (updated == 1) {
+                log.info("재디스패치 복귀 — candidate 부재, INTERRUPTED(잔여 창) (sessionId={})", session.getId());
+            }
         }
     }
 
@@ -197,7 +237,11 @@ public class SessionEventService {
         int updated = transitionExecutor.execute(session.getUserId(),
                 now -> sessionRepository.markAgentLost(sessionId, now));
         if (updated == 1) {
-            log.info("판별 ③ 증거 없음 → AGENT_LOST — 유예 후 정리 (sessionId={}, event={})", sessionId, rawEvent);
+            log.info("판별 ③ 증거 없음 → AGENT_LOST — 재디스패치 시도 후 유예 수렴 (sessionId={}, event={})",
+                    sessionId, rawEvent);
+            // [커밋 후] 재디스패치 — 실시간 판별 ③ 전용(stale 회수는 즉시 ABORTED라 트리거 없음).
+            // 실패는 파이프라인이 삼킨다 — webhook 처리 결과에 영향 없음, 수렴은 유예 만료 보장.
+            redispatchService.attemptRecovery(session);
         }
     }
 
