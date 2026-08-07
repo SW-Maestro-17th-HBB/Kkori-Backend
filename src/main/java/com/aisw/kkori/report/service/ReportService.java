@@ -9,6 +9,8 @@ import com.aisw.kkori.report.domain.ReportStatus;
 import com.aisw.kkori.report.domain.WeaknessTagCount;
 import com.aisw.kkori.global.response.PageResponse;
 import com.aisw.kkori.report.dto.ReportDetailResponse;
+import com.aisw.kkori.report.dto.ReportGenerationRequestedMessage;
+import com.aisw.kkori.report.dto.ReportRegenerateResponse;
 import com.aisw.kkori.report.dto.ReportStatsResponse;
 import com.aisw.kkori.report.dto.ReportStatusResponse;
 import com.aisw.kkori.report.dto.ReportSummaryResponse;
@@ -35,9 +37,10 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * 리포트 조회 서비스 (docs/requirements/report/report.md §3).
+ * 리포트 조회·재생성 서비스 (docs/requirements/report/report.md §3).
  *
- * <p>리포트 데이터는 전부 Worker가 쓰고 Spring은 읽기만 한다.
+ * <p>리포트 데이터는 전부 Worker가 쓰고 Spring은 읽기만 한다 — 유일한 예외가
+ * FAILED 재생성(이전 런 흔적 초기화 + PENDING 전환 + 생성 요청 재발행)이다.
  */
 @Service
 @RequiredArgsConstructor
@@ -52,6 +55,7 @@ public class ReportService {
     private final ReportRepository reportRepository;
     private final ReportScoreRepository reportScoreRepository;
     private final ReportRepositoryService reportRepositoryService;
+    private final ReportGenerationRequestPublisher generationRequestPublisher;
 
     /** 이력서 목록과 동일한 상한 (ResumeQueryService 선례). */
     private static final int MAX_PAGE_SIZE = 100;
@@ -113,6 +117,21 @@ public class ReportService {
         return ReportTimelineResponse.of(utterances, feedbacks);
     }
 
+
+    /**
+     * FAILED 재생성 (PRD §1). 이전 런 흔적 초기화·PENDING 전환·생성 요청 재발행을 한 트랜잭션으로
+     * 처리한다 — 발행 실패 시 전부 롤백되어 FAILED가 유지된다(다시 시도 가능, Outbox 미도입 정책).
+     * 리포트 행은 잠그고 읽는다 — 연속 클릭 등 동시 요청은 한 건만 통과하고 나머지는 409로 거부된다.
+     */
+    @Transactional
+    public ReportRegenerateResponse regenerate(Long userId, Long reportId) {
+        Report report = reportRepositoryService.findOwnedFailedForUpdate(userId, reportId);
+        report.restartForRegeneration();
+        reportRepositoryService.updateJobRequestedAtToNow(report.getId());
+        generationRequestPublisher.publishForRegeneration(
+                report.getId(), new ReportGenerationRequestedMessage(report.getInterviewSessionId()));
+        return new ReportRegenerateResponse(report.getId(), report.getStatus());
+    }
 
     /** monthlyDelta의 월 경계 기준 시간대 (PRD §6). */
     private static final ZoneId STATS_ZONE = ZoneId.of("Asia/Seoul");

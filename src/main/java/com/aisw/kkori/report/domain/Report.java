@@ -117,4 +117,20 @@ public class Report extends BaseEntity {
         this.audioAnalyzedAt = audioAnalyzedAt;
         this.completedAt = completedAt;
     }
+
+    /**
+     * FAILED 재생성 시작 상태로 재설정한다 (PRD §1). 반드시 생성 요청 재발행과 같은 트랜잭션에서 호출한다.
+     * 텍스트 경로 산출물만 지우고 deliveryScore·audioAnalyzedAt은 보존한다 — 음성 분석은 결정적
+     * 산식이라 재분석해도 같은 값이 나오므로 이전 런의 음성 결과를 재사용한다.
+     * REPORT_SCORES·REPORT_FEEDBACKS 정리는 Worker가 재저장 시 수행한다(이력서 청크 정리와 동일한 분담).
+     */
+    public void restartForRegeneration() {
+        this.status = ReportStatus.PENDING;
+        this.failedReason = null;
+        this.completedAt = null;
+        this.textAnalyzedAt = null;
+        this.overallScore = null;
+        this.summary = null;
+        this.weaknessTagSummary = null;
+    }
 }

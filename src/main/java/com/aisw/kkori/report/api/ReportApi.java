@@ -3,6 +3,7 @@ package com.aisw.kkori.report.api;
 import com.aisw.kkori.global.response.ApiResponse;
 import com.aisw.kkori.report.domain.ReportStatus;
 import com.aisw.kkori.report.dto.ReportDetailResponse;
+import com.aisw.kkori.report.dto.ReportRegenerateResponse;
 import com.aisw.kkori.report.dto.ReportStatsResponse;
 import com.aisw.kkori.global.response.PageResponse;
 import com.aisw.kkori.report.dto.ReportStatusResponse;
@@ -91,6 +92,27 @@ public interface ReportApi {
             @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "생성 진행 중(RP003)·생성 실패 상태(RP004 — 재생성 필요)"),
     })
     ResponseEntity<ApiResponse<ReportTimelineResponse>> getTimeline(
+            @Parameter(hidden = true) Long userId,
+            @Parameter(description = "리포트 ID", required = true) Long reportId
+    );
+
+    @Operation(
+            summary = "리포트 재생성",
+            description = """
+                    생성 실패(FAILED)한 리포트의 재생성을 요청한다. 이전 런의 텍스트 산출물을 초기화하고
+                    PENDING으로 되돌린 뒤 생성 요청을 재발행한다 — Worker가 텍스트 분석만 다시 수행하며,
+                    이전 런의 음성 결과(deliveryScore)는 보존·재사용된다. PENDING 복귀는 SSE로 push되지
+                    않으므로 이 응답이 유일한 통지다. 같은 리포트에 동시 요청 시 한 건만 처리된다.
+                    """
+    )
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "재생성 요청 성공 — 상태 PENDING 복귀"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403", description = "타인의 리포트(RP002)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "리포트 없음(RP001)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409", description = "생성 진행 중(RP003)·완성된 리포트(RP005 — 재생성 불가)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "500", description = "재생성 요청 처리 실패(RP006) — FAILED 유지, 다시 시도 가능"),
+    })
+    ResponseEntity<ApiResponse<ReportRegenerateResponse>> regenerate(
             @Parameter(hidden = true) Long userId,
             @Parameter(description = "리포트 ID", required = true) Long reportId
     );
