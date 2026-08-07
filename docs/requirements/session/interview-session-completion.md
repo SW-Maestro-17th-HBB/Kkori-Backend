@@ -276,7 +276,7 @@ LiveKit Cloud가 발송하는 webhook을 수신·검증해 이벤트→전이 �
 
 ### 제약사항
 
-- `AGENT_LOST` 재dispatch·복원은 범위 밖(후속 스토리) — 본 스토리의 `AGENT_LOST`는 판별 결과의 보존과 유예 정리까지다.
+- ~~`AGENT_LOST` 재dispatch·복원은 범위 밖(후속 스토리)~~ — **HBB1-308로 도입 완료**: 재디스패치 파이프라인·복귀 전이는 `interview-session-reconnection.md` 기능 3 소관. 본 문서의 `AGENT_LOST`는 판별 결과의 보존과 유예 정리까지다.
 - Spring은 표식·transcript에 어떤 쓰기도 하지 않는다(TTL 연장·삭제 포함).
 
 ### 기타 요구사항

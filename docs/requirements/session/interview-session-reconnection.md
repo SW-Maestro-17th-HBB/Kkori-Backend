@@ -184,7 +184,7 @@ HBB1-294 매핑 표에 대한 증분이다. 표기 없는 행은 현행 유지�
 
 ### 인터페이스 요구사항
 
-- 엔드포인트: `POST /api/v1/sessions/{id}/rejoin` (인증 필요) — `200 OK`, `{ success: true, data: { livekitToken, livekitUrl, livekitRoom } }` (생성 응답과 동일 필드명).
+- 엔드포인트: `POST /api/v1/sessions/{id}/rejoin` (인증 필요) — `200 OK`, `{ success: true, data: { id, livekitToken, livekitUrl, livekitRoom } }` (생성 응답과 동일 구조·필드명).
 - 프론트는 S009를 사유 불문 일괄 "세션 종료됨"으로 처리한다 — 사유별 분기 계약 없음(Swagger에 명시).
 - 프론트 계약: 재입장 후 일정 시간 내 AGENT participant를 관측하지 못하면 퇴장·종료 화면으로 처리한다(무한 대기 금지 — 고아 룸 완화). 구체 대기값·UI는 프론트 스토리 소관이며, 본 계약은 "AGENT 미관측 무한 대기 금지"까지다.
 - 에러 코드: 공통: 에러 코드 참조.
