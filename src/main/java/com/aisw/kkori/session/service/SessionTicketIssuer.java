@@ -10,11 +10,18 @@ package com.aisw.kkori.session.service;
 public interface SessionTicketIssuer {
 
     /**
-     * 룸 입장 토큰을 발급한다.
+     * 룸 입장 토큰을 발급한다 (기본 TTL — {@code livekit.token-ttl}).
      *
      * @param identity 참가자 신원 — 세션 파생 규칙({@code candidate-{sessionId}})은 도메인이 확정한다
      * @param roomName 입장 대상 룸 이름
      * @return 서명된 접속 토큰과 서버 URL
      */
     SessionTicket issue(String identity, String roomName);
+
+    /**
+     * TTL을 지정해 룸 입장 토큰을 발급한다 — 재입장 토큰(HBB1-308)의 deadline 기준 동적 TTL용.
+     * 만료가 재연결 deadline과 일치해야 창 소진 후의 좀비 입장 창이 열리지 않는다(계약 —
+     * 값 정합 표).
+     */
+    SessionTicket issue(String identity, String roomName, java.time.Duration ttl);
 }
