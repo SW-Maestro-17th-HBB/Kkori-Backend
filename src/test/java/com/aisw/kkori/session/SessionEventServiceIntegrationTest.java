@@ -9,6 +9,8 @@ import com.aisw.kkori.session.service.SessionEventService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Instant;
@@ -399,15 +401,17 @@ class SessionEventServiceIntegrationTest extends SessionCompletionTestSupport {
             verify(roomManager, never()).probeRoomPresence(anyString(), anyString());
         }
 
-        @Test
+        @ParameterizedTest(name = "{0}의 candidate joined는 no-op")
+        @EnumSource(value = SessionStatus.class, names = {"ACTIVE", "PENDING"})
         @DisplayName("ACTIVE·PENDING의 candidate joined는 no-op (구 토큰 재입장 흡수 유지)")
-        void otherStatesAreNoop() {
-            long userId = saveUser("kakao-ev-34");
-            long sessionId = sessionInStatus(userId, null, SessionStatus.ACTIVE, "room-ev-34");
+        void otherStatesAreNoop(SessionStatus status) {
+            long userId = saveUser("kakao-ev-34-" + status);
+            String room = "room-ev-34-" + status;
+            long sessionId = sessionInStatus(userId, null, status, room);
 
-            handle(SessionWebhookSignal.Type.CANDIDATE_JOINED, "room-ev-34");
+            handle(SessionWebhookSignal.Type.CANDIDATE_JOINED, room);
 
-            assertThat(statusOfSession(sessionId)).isEqualTo("ACTIVE");
+            assertThat(statusOfSession(sessionId)).isEqualTo(status.name());
             verify(roomManager, never()).probeRoomPresence(anyString(), anyString());
         }
     }

@@ -457,9 +457,13 @@ class SessionSweeperTest extends SessionCompletionTestSupport {
 
         expiredSweeper().sweep();
         assertThat(statusOfSession(sessionId)).isEqualTo("ACTIVE");
+        verify(roomManager, times(1)).probeRoomPresence("room-sw-29", candidateOf(sessionId));
 
-        // 상한(45m×4=3h) 경과 — 대조 없이 ABORTED (진행 중 관측이 있어도 상한이 이긴다)
+        // 상한(45m×4=3h) 경과 — 진행 중 관측(candidate+AGENT)이 있어도 대조 자체를 하지 않고 ABORTED
+        when(roomManager.probeRoomPresence("room-sw-29", candidateOf(sessionId)))
+                .thenReturn(RoomPresence.of(true, true, null));
         sweeperAt(Instant.now().plus(Duration.ofHours(4))).sweep();
         assertThat(statusOfSession(sessionId)).isEqualTo("ABORTED");
+        verify(roomManager, times(1)).probeRoomPresence("room-sw-29", candidateOf(sessionId));
     }
 }
