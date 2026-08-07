@@ -11,6 +11,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -115,7 +116,9 @@ class SessionRejoinApiTest extends SessionCompletionTestSupport {
     void duplicateIssuanceIsStateless() throws Exception {
         long userId = saveUser("kakao-rj-6");
         long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-rj-6");
-        Instant disconnectedAt = Instant.now();
+        // DB 왕복 동등 비교라 마이크로초로 절삭한다 — Linux(CI)의 Instant.now()는 나노초 정밀도라
+        // timestamptz(µs) 저장 시 절삭되어 원본과 불일치한다 (전이 시각을 MICROS로 다루는 이유와 동일)
+        Instant disconnectedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
         setSessionInstant(sessionId, "disconnected_at", disconnectedAt);
 
         mockMvc.perform(post(rejoinUri(sessionId)).header("Authorization", bearerOf(userId)))
