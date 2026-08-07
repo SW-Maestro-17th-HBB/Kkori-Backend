@@ -56,3 +56,4 @@ session:
   agent-lost-grace: ${SESSION_AGENT_LOST_GRACE}
   stale-recovery-timeout: ${SESSION_STALE_RECOVERY_TIMEOUT}
   sweep-interval: ${SESSION_SWEEP_INTERVAL}
+  reconnect-window: ${SESSION_RECONNECT_WINDOW}

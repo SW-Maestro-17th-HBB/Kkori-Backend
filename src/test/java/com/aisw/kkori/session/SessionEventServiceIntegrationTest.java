@@ -3,6 +3,7 @@ package com.aisw.kkori.session;
 import com.aisw.kkori.LiveKitWebhookTestSigner;
 import com.aisw.kkori.global.livekit.LiveKitProperties;
 import com.aisw.kkori.session.domain.SessionStatus;
+import com.aisw.kkori.session.dto.RoomPresence;
 import com.aisw.kkori.session.dto.SessionWebhookSignal;
 import com.aisw.kkori.session.service.SessionEventService;
 import org.junit.jupiter.api.DisplayName;
@@ -13,9 +14,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -227,6 +230,185 @@ class SessionEventServiceIntegrationTest extends SessionCompletionTestSupport {
             handle(SessionWebhookSignal.Type.AGENT_LEFT, "room-ev-14");
 
             assertThat(statusOfSession(sessionId)).isEqualTo("ABORTED");
+        }
+
+        @Test
+        @DisplayName("INTERRUPTED에서도 판별이 실행되고 ③은 disconnected_at을 보존한다 (교차곱 — HBB1-308)")
+        void interruptedIsArbitratedPreservingAnchor() {
+            long userId = saveUser("kakao-ev-17");
+            long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-ev-17");
+            Instant disconnectedAt = Instant.parse("2026-08-01T10:00:00Z");
+            setSessionInstant(sessionId, "disconnected_at", disconnectedAt);
+
+            handle(SessionWebhookSignal.Type.AGENT_LEFT, "room-ev-17");
+
+            assertThat(statusOfSession(sessionId)).isEqualTo("AGENT_LOST");
+            assertThat(sessionInstant(sessionId, "agent_lost_at")).isNotNull();
+            assertThat(sessionInstant(sessionId, "disconnected_at")).isEqualTo(disconnectedAt);
+        }
+    }
+
+    @Nested
+    @DisplayName("participant_left(candidate) — INTERRUPTED 전이 (HBB1-308)")
+    class CandidateLeft {
+
+        @Test
+        @DisplayName("ACTIVE → INTERRUPTED + disconnected_at 기록 (즉시 대조가 candidate 부재를 확인)")
+        void activeInterrupts() {
+            long userId = saveUser("kakao-ev-20");
+            long sessionId = sessionInStatus(userId, null, SessionStatus.ACTIVE, "room-ev-20");
+            when(roomManager.probeRoomPresence("room-ev-20", "candidate-" + sessionId))
+                    .thenReturn(RoomPresence.of(true, false, null));
+
+            handle(SessionWebhookSignal.Type.CANDIDATE_LEFT, "room-ev-20");
+
+            assertThat(statusOfSession(sessionId)).isEqualTo("INTERRUPTED");
+            assertThat(sessionInstant(sessionId, "disconnected_at")).isNotNull();
+        }
+
+        @Test
+        @DisplayName("즉시 대조 — candidate+AGENT 실존 시 바로 ACTIVE 복원 (가짜 INTERRUPTED 보정)")
+        void immediateProbeRestores() {
+            long userId = saveUser("kakao-ev-21");
+            long sessionId = sessionInStatus(userId, null, SessionStatus.ACTIVE, "room-ev-21");
+            when(roomManager.probeRoomPresence("room-ev-21", "candidate-" + sessionId))
+                    .thenReturn(RoomPresence.of(true, true, null));
+
+            handle(SessionWebhookSignal.Type.CANDIDATE_LEFT, "room-ev-21");
+
+            assertThat(statusOfSession(sessionId)).isEqualTo("ACTIVE");
+            assertThat(sessionInstant(sessionId, "disconnected_at")).isNull();
+        }
+
+        @Test
+        @DisplayName("즉시 대조 실패는 무시된다 — INTERRUPTED 유지, 수렴은 스위퍼 몫")
+        void immediateProbeFailureKeepsInterrupted() {
+            long userId = saveUser("kakao-ev-22");
+            long sessionId = sessionInStatus(userId, null, SessionStatus.ACTIVE, "room-ev-22");
+            when(roomManager.probeRoomPresence("room-ev-22", "candidate-" + sessionId))
+                    .thenReturn(RoomPresence.unknown());
+
+            handle(SessionWebhookSignal.Type.CANDIDATE_LEFT, "room-ev-22");
+
+            assertThat(statusOfSession(sessionId)).isEqualTo("INTERRUPTED");
+        }
+
+        @Test
+        @DisplayName("AGENT_LOST 중 이탈은 disconnected_at만 기록한다 — first-wins (재연결 deadline 앵커)")
+        void agentLostRecordsDisconnectedAtOnce() {
+            long userId = saveUser("kakao-ev-23");
+            long sessionId = sessionInStatus(userId, null, SessionStatus.AGENT_LOST, "room-ev-23");
+
+            handle(SessionWebhookSignal.Type.CANDIDATE_LEFT, "room-ev-23");
+            Instant first = sessionInstant(sessionId, "disconnected_at");
+            assertThat(first).isNotNull();
+            assertThat(statusOfSession(sessionId)).isEqualTo("AGENT_LOST");
+
+            handle(SessionWebhookSignal.Type.CANDIDATE_LEFT, "room-ev-23");
+            assertThat(sessionInstant(sessionId, "disconnected_at")).isEqualTo(first);
+        }
+
+        @Test
+        @DisplayName("INTERRUPTED 중 중복 이탈은 no-op — disconnected_at 불변 (창 연장 금지)")
+        void interruptedDuplicateKeepsAnchor() {
+            long userId = saveUser("kakao-ev-24");
+            long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-ev-24");
+            Instant anchor = Instant.parse("2026-08-01T09:00:00Z");
+            setSessionInstant(sessionId, "disconnected_at", anchor);
+
+            handle(SessionWebhookSignal.Type.CANDIDATE_LEFT, "room-ev-24");
+
+            assertThat(statusOfSession(sessionId)).isEqualTo("INTERRUPTED");
+            assertThat(sessionInstant(sessionId, "disconnected_at")).isEqualTo(anchor);
+        }
+
+        @Test
+        @DisplayName("PENDING의 candidate 이탈은 no-op — 선입장 이탈은 empty timeout이 수렴")
+        void pendingIsNoop() {
+            long userId = saveUser("kakao-ev-25");
+            long sessionId = sessionInStatus(userId, null, SessionStatus.PENDING, "room-ev-25");
+
+            handle(SessionWebhookSignal.Type.CANDIDATE_LEFT, "room-ev-25");
+
+            assertThat(statusOfSession(sessionId)).isEqualTo("PENDING");
+            assertThat(sessionInstant(sessionId, "disconnected_at")).isNull();
+        }
+    }
+
+    @Nested
+    @DisplayName("participant_joined(candidate) — 대조 복귀 (HBB1-308)")
+    class CandidateJoined {
+
+        @Test
+        @DisplayName("INTERRUPTED + candidate·AGENT 관측 → ACTIVE 복귀, disconnected_at 초기화, started_at 불변")
+        void resumesWhenBothPresent() {
+            long userId = saveUser("kakao-ev-30");
+            long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-ev-30");
+            Instant startedAt = Instant.parse("2026-08-01T08:00:00Z");
+            setSessionInstant(sessionId, "started_at", startedAt);
+            setSessionInstant(sessionId, "disconnected_at", Instant.now());
+            when(roomManager.probeRoomPresence("room-ev-30", "candidate-" + sessionId))
+                    .thenReturn(RoomPresence.of(true, true, null));
+
+            handle(SessionWebhookSignal.Type.CANDIDATE_JOINED, "room-ev-30");
+
+            assertThat(statusOfSession(sessionId)).isEqualTo("ACTIVE");
+            assertThat(sessionInstant(sessionId, "disconnected_at")).isNull();
+            assertThat(sessionInstant(sessionId, "started_at")).isEqualTo(startedAt);
+        }
+
+        @Test
+        @DisplayName("candidate만 관측(AGENT 부재)이면 INTERRUPTED 유지 — 에이전트 없는 ACTIVE 금지")
+        void keepsInterruptedWhenAgentAbsent() {
+            long userId = saveUser("kakao-ev-31");
+            long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-ev-31");
+            setSessionInstant(sessionId, "disconnected_at", Instant.now());
+            when(roomManager.probeRoomPresence("room-ev-31", "candidate-" + sessionId))
+                    .thenReturn(RoomPresence.of(false, true, null));
+
+            handle(SessionWebhookSignal.Type.CANDIDATE_JOINED, "room-ev-31");
+
+            assertThat(statusOfSession(sessionId)).isEqualTo("INTERRUPTED");
+            assertThat(sessionInstant(sessionId, "disconnected_at")).isNotNull();
+        }
+
+        @Test
+        @DisplayName("대조 실패는 500으로 끝나 webhook 재전송을 유도한다 (전이는 멱등)")
+        void probeFailureThrows() {
+            long userId = saveUser("kakao-ev-32");
+            long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-ev-32");
+            setSessionInstant(sessionId, "disconnected_at", Instant.now());
+            when(roomManager.probeRoomPresence("room-ev-32", "candidate-" + sessionId))
+                    .thenReturn(RoomPresence.unknown());
+
+            assertThatThrownBy(() -> handle(SessionWebhookSignal.Type.CANDIDATE_JOINED, "room-ev-32"))
+                    .isInstanceOf(IllegalStateException.class);
+
+            assertThat(statusOfSession(sessionId)).isEqualTo("INTERRUPTED");
+        }
+
+        @Test
+        @DisplayName("AGENT_LOST의 candidate joined는 no-op — 대조 자체를 하지 않는다")
+        void agentLostIsNoop() {
+            long userId = saveUser("kakao-ev-33");
+            long sessionId = sessionInStatus(userId, null, SessionStatus.AGENT_LOST, "room-ev-33");
+
+            handle(SessionWebhookSignal.Type.CANDIDATE_JOINED, "room-ev-33");
+
+            assertThat(statusOfSession(sessionId)).isEqualTo("AGENT_LOST");
+            verify(roomManager, never()).probeRoomPresence(anyString(), anyString());
+        }
+
+        @Test
+        @DisplayName("ACTIVE·PENDING의 candidate joined는 no-op (구 토큰 재입장 흡수 유지)")
+        void otherStatesAreNoop() {
+            long userId = saveUser("kakao-ev-34");
+            long sessionId = sessionInStatus(userId, null, SessionStatus.ACTIVE, "room-ev-34");
+
+            handle(SessionWebhookSignal.Type.CANDIDATE_JOINED, "room-ev-34");
+
+            assertThat(statusOfSession(sessionId)).isEqualTo("ACTIVE");
+            verify(roomManager, never()).probeRoomPresence(anyString(), anyString());
         }
     }
 

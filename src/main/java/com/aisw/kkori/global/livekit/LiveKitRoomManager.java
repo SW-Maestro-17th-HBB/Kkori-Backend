@@ -3,6 +3,7 @@ package com.aisw.kkori.global.livekit;
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.session.dto.AgentPresence;
+import com.aisw.kkori.session.dto.RoomPresence;
 import com.aisw.kkori.session.service.SessionRoomManager;
 import io.livekit.server.RoomServiceClient;
 import livekit.LivekitModels.ParticipantInfo;
@@ -99,5 +100,34 @@ public class LiveKitRoomManager implements SessionRoomManager {
                 // joined_at은 unix 초 — 0(미설정)이면 호출측이 현재 시각으로 보수 적용한다
                 .map(p -> AgentPresence.present(p.getJoinedAt() > 0 ? Instant.ofEpochSecond(p.getJoinedAt()) : null))
                 .orElseGet(AgentPresence::absent);
+    }
+
+    @Override
+    public RoomPresence probeRoomPresence(String roomName, String candidateIdentity) {
+        Response<List<ParticipantInfo>> response;
+        try {
+            response = client.listParticipants(roomName).execute();
+        } catch (Exception e) {
+            // never-throw 계약 — 조회 실패는 observed=false(판정은 호출측 몫)
+            log.warn("LiveKit 참가자 조회 통신 실패 (room={}): {}", roomName, e.getClass().getSimpleName());
+            return RoomPresence.unknown();
+        }
+        if (response.code() == 404) {
+            // twirp not_found — 룸 미존재는 둘 다 부재인 확정 관측이다
+            return RoomPresence.of(false, false, null);
+        }
+        if (!response.isSuccessful() || response.body() == null) {
+            log.warn("LiveKit 참가자 조회 실패 (room={}, http={})", roomName, response.code());
+            return RoomPresence.unknown();
+        }
+        List<ParticipantInfo> participants = response.body();
+        Instant agentJoinedAt = participants.stream()
+                .filter(p -> p.getKind() == ParticipantInfo.Kind.AGENT)
+                .findFirst()
+                .map(p -> p.getJoinedAt() > 0 ? Instant.ofEpochSecond(p.getJoinedAt()) : null)
+                .orElse(null);
+        boolean agentPresent = participants.stream().anyMatch(p -> p.getKind() == ParticipantInfo.Kind.AGENT);
+        boolean candidatePresent = participants.stream().anyMatch(p -> candidateIdentity.equals(p.getIdentity()));
+        return RoomPresence.of(agentPresent, candidatePresent, agentJoinedAt);
     }
 }

@@ -33,9 +33,9 @@ class LiveKitWebhookVerifierTest {
     @DisplayName("이벤트·participant kind가 도메인 신호로 매핑된다")
     @CsvSource({
             "participant_joined, AGENT, AGENT_JOINED",
-            "participant_joined, STANDARD, IGNORE",
+            "participant_joined, STANDARD, CANDIDATE_JOINED",
             "participant_left, AGENT, AGENT_LEFT",
-            "participant_left, STANDARD, IGNORE",
+            "participant_left, STANDARD, CANDIDATE_LEFT",
             "participant_connection_aborted, AGENT, AGENT_LEFT",
             "participant_connection_aborted, STANDARD, IGNORE",
     })
@@ -48,6 +48,21 @@ class LiveKitWebhookVerifierTest {
         if (expected != SessionWebhookSignal.Type.IGNORE) {
             assertThat(signal.roomName()).isEqualTo("room-w");
         }
+    }
+
+    @Test
+    @DisplayName("candidate left의 DUPLICATE_IDENTITY는 IGNORE — 동일 identity 재입장이 걷어찬 유령 퇴장 (HBB1-308)")
+    void duplicateIdentityLeftIsIgnored() {
+        String ghost = "{\"event\":\"participant_left\",\"room\":{\"name\":\"room-w\"},"
+                + "\"participant\":{\"identity\":\"p\",\"kind\":\"STANDARD\",\"disconnectReason\":\"DUPLICATE_IDENTITY\"}}";
+        assertThat(verifier.verify(ghost, sign(ghost, API_SECRET)).type())
+                .isEqualTo(SessionWebhookSignal.Type.IGNORE);
+
+        // 그 외 reason은 정상 이탈 신호다 — reason 가드가 과차단하지 않는다
+        String left = "{\"event\":\"participant_left\",\"room\":{\"name\":\"room-w\"},"
+                + "\"participant\":{\"identity\":\"p\",\"kind\":\"STANDARD\",\"disconnectReason\":\"CLIENT_INITIATED\"}}";
+        assertThat(verifier.verify(left, sign(left, API_SECRET)).type())
+                .isEqualTo(SessionWebhookSignal.Type.CANDIDATE_LEFT);
     }
 
     @Test

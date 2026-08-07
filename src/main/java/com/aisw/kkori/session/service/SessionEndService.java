@@ -22,10 +22,12 @@ import java.util.Set;
  * 사용자 명시 종료 (PRD interview-session-completion.md 기능 2).
  *
  * <p>{@code /end}는 "이 세션을 끝내달라"는 의도 표명이며 <b>상태와 무관하게 terminal 수렴을
- * 보장</b>한다 — 상태별로 종료 방법이 다를 뿐이다: ACTIVE는 SendData로 에이전트 정상 종료를
- * 유도하고(실제 확정은 room_finished, 미처리는 fallback 스위퍼가 수렴), 소실 관측
- * 상태(AGENT_LOST·INTERRUPTED)는 즉시 ABORTED + 룸 삭제, terminal은 멱등 no-op에 룸 삭제만
- * 재시도한다(선기록 후 삭제 실패로 잔존한 룸의 기회적 복구 경로).
+ * 보장</b>한다 — 상태별로 종료 방법이 다를 뿐이다: ACTIVE·INTERRUPTED는 SendData로 에이전트
+ * 정상 종료를 유도하고(실제 확정은 room_finished, 미처리는 fallback 스위퍼가 수렴 —
+ * INTERRUPTED는 HBB1-308 개정: 에이전트가 재연결 창 동안 살아 대기하므로 candidate 부재
+ * 상태로도 클로징·flush가 수행되어 산출물이 보존된다), 소실 관측 상태(AGENT_LOST)는 즉시
+ * ABORTED + 룸 삭제, terminal은 멱등 no-op에 룸 삭제만 재시도한다(선기록 후 삭제 실패로
+ * 잔존한 룸의 기회적 복구 경로).
  *
  * <p><b>PENDING은 관측 상태일 뿐이라 에이전트 부재를 단정하지 않는다</b>(joined 유실 병리 —
  * stale PENDING과 동일 보호): 행 있음 → ENDED, 행 없음 → 룸 참가자 대조로 AGENT 관측 시
@@ -42,9 +44,8 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class SessionEndService {
 
-    /** 소실이 관측된 상태(판별 ③ 경유) — 부재가 증거 기반이라 대조 없이 즉시 정리한다. */
-    private static final Set<SessionStatus> LOSS_OBSERVED =
-            Set.of(SessionStatus.AGENT_LOST, SessionStatus.INTERRUPTED);
+    // INTERRUPTED는 HBB1-308로 ACTIVE 동일 취급이 되었다 — 즉시 정리 대상은 AGENT_LOST뿐이다
+    // (에이전트 소실이 판별 ③으로 관측된 상태 — 부재가 증거 기반).
 
     private final InterviewSessionRepository sessionRepository;
     private final UserRepository userRepository;
@@ -90,15 +91,17 @@ public class SessionEndService {
         InterviewSession session = sessionRepository.findById(sessionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
         return switch (session.getStatus()) {
-            case ACTIVE -> {
+            // INTERRUPTED 포함(HBB1-308) — 에이전트가 살아 대기 중이라 SendData가 도달하고,
+            // 진행된 면접 산출물(행·리포트)이 클로징·flush로 보존된다(즉시 ABORTED는 내용 손실)
+            case ACTIVE, INTERRUPTED -> {
                 // first-wins — 중복 /end는 재발신하되(에이전트 처리는 멱등) fallback 창을 연장하지 않는다
                 sessionRepository.recordEndRequested(sessionId, now);
                 yield EndAction.SEND_END_SIGNAL;
             }
             case PENDING -> planPending(sessionId, resolution, now);
-            case AGENT_LOST, INTERRUPTED -> {
-                sessionRepository.finishFrom(sessionId, LOSS_OBSERVED, SessionStatus.ABORTED, now);
-                log.info("소실 관측 세션 즉시 종료 — {} → ABORTED (sessionId={})", session.getStatus(), sessionId);
+            case AGENT_LOST -> {
+                sessionRepository.finishFrom(sessionId, Set.of(SessionStatus.AGENT_LOST), SessionStatus.ABORTED, now);
+                log.info("소실 관측 세션 즉시 종료 — AGENT_LOST → ABORTED (sessionId={})", sessionId);
                 yield EndAction.CLEAN_ROOM;
             }
             // terminal — 멱등 no-op + 룸 삭제 재시도(잔존 룸 기회적 복구)

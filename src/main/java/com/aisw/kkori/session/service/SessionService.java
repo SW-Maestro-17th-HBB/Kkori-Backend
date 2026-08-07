@@ -50,7 +50,6 @@ import java.util.UUID;
 public class SessionService {
 
     private static final String ROOM_PREFIX = "room-";
-    private static final String IDENTITY_PREFIX = "candidate-";
 
     private final UserRepository userRepository;
     private final InterviewSessionRepository sessionRepository;
@@ -90,7 +89,7 @@ public class SessionService {
         // 커밋된 PENDING은 남으며 다음 생성의 자동 교체가 수렴시킨다. 어떤 결과든 교체된 기존
         // 세션의 룸은 정리를 시도한다.
         try {
-            SessionTicket ticket = ticketIssuer.issue(IDENTITY_PREFIX + plan.sessionId(), roomName);
+            SessionTicket ticket = ticketIssuer.issue(CandidateIdentity.of(plan.sessionId()), roomName);
             agentDispatcher.dispatch(roomName, plan.dispatchMetadata());
 
             // 승계(superseded) 재확인 — user 잠금은 트랜잭션 구간만 직렬화하므로, 커밋과 디스패치
