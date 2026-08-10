@@ -36,10 +36,15 @@ public class LiveKitTokenIssuer implements SessionTicketIssuer {
 
     @Override
     public SessionTicket issue(String identity, String roomName) {
+        return issue(identity, roomName, properties.tokenTtl());
+    }
+
+    @Override
+    public SessionTicket issue(String identity, String roomName, java.time.Duration ttl) {
         try {
             AccessToken token = new AccessToken(properties.apiKey(), properties.apiSecret());
             token.setIdentity(identity);
-            token.setTtl(properties.tokenTtl().toMillis());
+            token.setTtl(ttl.toMillis());
             token.addGrants(
                     new RoomJoin(true),
                     new RoomName(roomName),

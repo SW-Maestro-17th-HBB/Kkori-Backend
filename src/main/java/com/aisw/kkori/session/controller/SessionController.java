@@ -5,6 +5,7 @@ import com.aisw.kkori.session.api.SessionApi;
 import com.aisw.kkori.session.dto.InterviewSessionCreateRequest;
 import com.aisw.kkori.session.dto.InterviewSessionCreateResponse;
 import com.aisw.kkori.session.service.SessionEndService;
+import com.aisw.kkori.session.service.SessionRejoinService;
 import com.aisw.kkori.session.service.SessionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,7 @@ public class SessionController implements SessionApi {
 
     private final SessionService sessionService;
     private final SessionEndService sessionEndService;
+    private final SessionRejoinService sessionRejoinService;
 
     /** 면접 세션 생성 — 유형·직무·이력서를 검증하고 세션 레코드와 룸·입장 토큰을 발급한다. */
     @Override
@@ -46,5 +48,13 @@ public class SessionController implements SessionApi {
                                  @PathVariable Long sessionId) {
         sessionEndService.end(userId, sessionId);
         return ApiResponse.success();
+    }
+
+    /** 면접 세션 재입장 토큰 발급 — 같은 identity, 재연결 deadline 기준 TTL (HBB1-308). */
+    @Override
+    @PostMapping("/{sessionId}/rejoin")
+    public ApiResponse<InterviewSessionCreateResponse> rejoin(@AuthenticationPrincipal Long userId,
+                                                              @PathVariable Long sessionId) {
+        return ApiResponse.success(sessionRejoinService.rejoin(userId, sessionId));
     }
 }

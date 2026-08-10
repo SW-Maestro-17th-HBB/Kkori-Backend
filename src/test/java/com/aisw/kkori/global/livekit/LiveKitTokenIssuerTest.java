@@ -82,6 +82,19 @@ class LiveKitTokenIssuerTest {
     }
 
     @Test
+    void explicitTtlOverridesConfiguredDefault() {
+        // 재입장 토큰(HBB1-308)의 deadline 기준 동적 TTL 경로 — 설정 기본값(1h)이 아니라 지정값이 서명된다
+        Duration override = Duration.ofSeconds(90);
+
+        Instant before = Instant.now();
+        SessionTicket ticket = issuer(Duration.ofHours(1)).issue("candidate-1", "room-1", override);
+        Instant after = Instant.now();
+
+        Instant exp = parse(ticket.token()).getExpiration().toInstant();
+        assertThat(exp).isBetween(before.plus(override).minusSeconds(1), after.plus(override).plusSeconds(1));
+    }
+
+    @Test
     void eachIssueUsesGivenRoomName() {
         LiveKitTokenIssuer issuer = issuer(Duration.ofHours(1));
 

@@ -14,6 +14,8 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.ResultActions;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -46,6 +48,7 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
         long userId = saveUser("kakao-s-1");
         long resumeId = embeddedResume(userId);
 
+        Instant issuedAfter = Instant.now();
         ResultActions result = mockMvc.perform(post(SESSIONS_URI)
                         .header(HttpHeaders.AUTHORIZATION, bearerOf(userId))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -70,6 +73,11 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
 
         verify(roomManager).createRoom(roomName);
         assertThat(subjectOf(dataText(result, "livekitToken"))).isEqualTo("candidate-" + sessionId);
+
+        // 최초 생성 토큰 TTL 회귀 (HBB1-308 — 1h→10m 단축): exp ≈ 발급 시각 + livekit.token-ttl(테스트 기본 10m)
+        Instant exp = Instant.ofEpochSecond(expOf(dataText(result, "livekitToken")));
+        assertThat(exp).isBetween(issuedAfter.plus(Duration.ofMinutes(10)).minusSeconds(5),
+                Instant.now().plus(Duration.ofMinutes(10)).plusSeconds(5));
     }
 
     @Test
@@ -526,5 +534,10 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
     private String subjectOf(String jwt) throws Exception {
         String payload = new String(Base64.getUrlDecoder().decode(jwt.split("\\.")[1]), StandardCharsets.UTF_8);
         return objectMapper.readTree(payload).path("sub").asText();
+    }
+
+    private long expOf(String jwt) throws Exception {
+        String payload = new String(Base64.getUrlDecoder().decode(jwt.split("\\.")[1]), StandardCharsets.UTF_8);
+        return objectMapper.readTree(payload).path("exp").asLong();
     }
 }

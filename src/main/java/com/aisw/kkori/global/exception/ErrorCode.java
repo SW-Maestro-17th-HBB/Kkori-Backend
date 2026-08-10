@@ -65,6 +65,7 @@ public enum ErrorCode {
     SESSION_FORBIDDEN(HttpStatus.FORBIDDEN, "S007", "해당 면접 세션에 대한 권한이 없습니다."),
     SESSION_END_SIGNAL_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "S008",
             "종료 요청 처리에 실패했습니다. 잠시 후 다시 시도해 주세요."),
+    SESSION_NOT_REJOINABLE(HttpStatus.CONFLICT, "S009", "재입장할 수 없는 세션입니다. 면접이 이미 종료되었을 수 있습니다."),
 
     // 리포트 (RP) — docs/requirements/report/report.md (R은 이력서가 사용 중이라 두 글자 접두사)
     REPORT_NOT_FOUND(HttpStatus.NOT_FOUND, "RP001", "리포트를 찾을 수 없습니다."),

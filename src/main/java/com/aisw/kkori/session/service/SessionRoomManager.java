@@ -1,6 +1,7 @@
 package com.aisw.kkori.session.service;
 
 import com.aisw.kkori.session.dto.AgentPresence;
+import com.aisw.kkori.session.dto.RoomPresence;
 
 /**
  * 세션 전용 룸의 준비·정리·관측 추상. 실제 호출은 벤더 어댑터({@code global.livekit.LiveKitRoomManager})가
@@ -28,4 +29,11 @@ public interface SessionRoomManager {
      * <b>예외를 던지지 않는다</b> — 조회 실패는 {@code UNKNOWN}으로 반환한다(호출측이 회차를 건너뛴다).
      */
     AgentPresence probeAgentPresence(String roomName);
+
+    /**
+     * 룸의 AGENT·candidate를 함께 관측한다 — 재연결(HBB1-308) 대조 지점들의 공통 재료.
+     * candidate는 identity 일치로 판별한다. <b>예외를 던지지 않는다</b> — 조회 실패는
+     * {@code observed=false}로 반환한다(판정은 호출측 몫).
+     */
+    RoomPresence probeRoomPresence(String roomName, String candidateIdentity);
 }

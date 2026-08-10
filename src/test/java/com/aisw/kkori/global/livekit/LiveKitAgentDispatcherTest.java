@@ -153,6 +153,59 @@ class LiveKitAgentDispatcherTest {
     }
 
     @Test
+    @DisplayName("listDispatchIds — 응답의 dispatch id 목록을 반환하고, 요청 protobuf에 room이 실린다")
+    void listDispatchIdsCarriesRoomAndReturnsIds() throws Exception {
+        LivekitAgentDispatch.ListAgentDispatchResponse listed =
+                LivekitAgentDispatch.ListAgentDispatchResponse.newBuilder()
+                        .addAgentDispatches(LivekitAgentDispatch.AgentDispatch.newBuilder().setId("AD_1"))
+                        .addAgentDispatches(LivekitAgentDispatch.AgentDispatch.newBuilder().setId("AD_2"))
+                        .build();
+        Buffer body = new Buffer();
+        body.write(listed.toByteArray());
+        server.enqueue(new MockResponse().setResponseCode(200)
+                .setHeader("Content-Type", "application/protobuf").setBody(body));
+
+        assertThat(dispatcher.listDispatchIds("room-1")).containsExactly("AD_1", "AD_2");
+
+        LivekitAgentDispatch.ListAgentDispatchRequest sent =
+                LivekitAgentDispatch.ListAgentDispatchRequest.parseFrom(
+                        server.takeRequest().getBody().readByteArray());
+        assertThat(sent.getRoom()).isEqualTo("room-1");
+    }
+
+    @Test
+    @DisplayName("deleteDispatch — 요청 protobuf의 room·dispatch_id 필드가 각자 제자리에 실린다 (인자 순서 회귀 고정)")
+    void deleteDispatchCarriesFieldsInRightPlaces() throws Exception {
+        server.enqueue(createdDispatchResponse("room-1"));
+
+        assertThatCode(() -> dispatcher.deleteDispatch("room-1", "AD_target")).doesNotThrowAnyException();
+
+        // SDK 시그니처는 deleteDispatch(room, dispatchId) — getDispatch(id, room)과 순서가 달라
+        // 뒤바꾸면 room에 dispatch id가 실려 삭제가 항상 실패한다(재디스패치 CAS만 소진되는 병리)
+        LivekitAgentDispatch.DeleteAgentDispatchRequest sent =
+                LivekitAgentDispatch.DeleteAgentDispatchRequest.parseFrom(
+                        server.takeRequest().getBody().readByteArray());
+        assertThat(sent.getRoom()).isEqualTo("room-1");
+        assertThat(sent.getDispatchId()).isEqualTo("AD_target");
+    }
+
+    @Test
+    @DisplayName("list·delete의 non-2xx 응답은 S004로 매핑된다 — 호출측(재디스패치)은 생성을 포기한다")
+    void listAndDeleteMapNon2xxToS004() {
+        server.enqueue(new MockResponse().setResponseCode(500).setBody("internal"));
+        assertThatThrownBy(() -> dispatcher.listDispatchIds("room-1"))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.SESSION_DISPATCH_FAILED));
+
+        server.enqueue(new MockResponse().setResponseCode(404).setBody("not found"));
+        assertThatThrownBy(() -> dispatcher.deleteDispatch("room-1", "AD_target"))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.SESSION_DISPATCH_FAILED));
+    }
+
+    @Test
     @DisplayName("실패 로그에 metadata 전문·API Secret은 없고, UTF-8 바이트 수는 기록된다")
     void failureLogCarriesByteCountButNeverPayloadOrSecret() {
         server.enqueue(new MockResponse().setResponseCode(500).setBody("internal"));

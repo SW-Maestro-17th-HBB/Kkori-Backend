@@ -52,6 +52,11 @@ abstract class SessionCompletionTestSupport extends InterviewSessionIntegrationT
                 Timestamp.from(value), sessionId);
     }
 
+    /** 대조 스텁 매칭용 identity — 파생 규칙의 소유자(CandidateIdentity)에 위임해 규칙 변경 시 함께 움직인다. */
+    String candidateOf(long sessionId) {
+        return com.aisw.kkori.session.service.CandidateIdentity.of(sessionId);
+    }
+
     Instant sessionInstant(long sessionId, String column) {
         Timestamp value = jdbcTemplate.queryForObject(
                 "SELECT " + column + " FROM interview_session WHERE id = ?", Timestamp.class, sessionId);

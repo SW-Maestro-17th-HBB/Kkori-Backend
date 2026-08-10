@@ -3,6 +3,7 @@ package com.aisw.kkori.session;
 import com.aisw.kkori.session.config.SessionProperties;
 import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.dto.AgentPresence;
+import com.aisw.kkori.session.dto.RoomPresence;
 import com.aisw.kkori.session.repository.InterviewTranscriptReader;
 import com.aisw.kkori.session.service.SessionSweeper;
 import com.aisw.kkori.session.service.SessionTransitionExecutor;
@@ -34,6 +35,7 @@ class SessionSweeperTest extends SessionCompletionTestSupport {
     private static final Duration FALLBACK = Duration.ofSeconds(180);
     private static final Duration GRACE = Duration.ofSeconds(60);
     private static final Duration STALE = Duration.ofMinutes(45);
+    private static final Duration WINDOW = Duration.ofMinutes(3);
 
     @Autowired
     private InterviewTranscriptReader transcriptReader;
@@ -47,7 +49,7 @@ class SessionSweeperTest extends SessionCompletionTestSupport {
     /** 모든 앵커(지금 기록)가 임계를 지난 것으로 보이는 미래 시점의 스위퍼. */
     private SessionSweeper sweeperAt(Instant now) {
         return new SessionSweeper(sessionRepository, transcriptReader, markerReader, roomManager,
-                transitionExecutor, new SessionProperties(FALLBACK, GRACE, STALE, Duration.ofSeconds(10)),
+                transitionExecutor, new SessionProperties(FALLBACK, GRACE, STALE, Duration.ofSeconds(10), WINDOW),
                 Clock.fixed(now, ZoneOffset.UTC));
     }
 
@@ -133,6 +135,8 @@ class SessionSweeperTest extends SessionCompletionTestSupport {
         long userId = saveUser("kakao-sw-6");
         long sessionId = sessionInStatus(userId, null, SessionStatus.ACTIVE, "room-sw-6");
         setSessionInstant(sessionId, "started_at", Instant.now());
+        when(roomManager.probeRoomPresence("room-sw-6", candidateOf(sessionId)))
+                .thenReturn(RoomPresence.of(false, false, null));
 
         expiredSweeper().sweep();
 
@@ -150,7 +154,7 @@ class SessionSweeperTest extends SessionCompletionTestSupport {
 
         // fallback 컷오프는 미도래(거대 타임아웃), stale 컷오프는 경과 — stale이 선점하면 안 된다
         new SessionSweeper(sessionRepository, transcriptReader, markerReader, roomManager, transitionExecutor,
-                new SessionProperties(Duration.ofDays(999), GRACE, STALE, Duration.ofSeconds(10)),
+                new SessionProperties(Duration.ofDays(999), GRACE, STALE, Duration.ofSeconds(10), WINDOW),
                 Clock.fixed(Instant.now().plus(Duration.ofHours(2)), ZoneOffset.UTC))
                 .sweep();
 
@@ -257,5 +261,206 @@ class SessionSweeperTest extends SessionCompletionTestSupport {
 
         assertThat(statusOfSession(pendingId)).isEqualTo("PENDING");
         assertThat(statusOfSession(activeId)).isEqualTo("ACTIVE");
+    }
+
+    // ─── HBB1-308: INTERRUPTED 유예 · stale ACTIVE 대조 ───
+
+    /** INTERRUPTED 유예 컷오프(창 3m + 마진 45s)는 지났지만 대조 상한((창+마진)×4 = 15m)은 안 지난 시점. */
+    private SessionSweeper interruptedGraceSweeper() {
+        return sweeperAt(Instant.now().plus(Duration.ofMinutes(5)));
+    }
+
+
+    @Test
+    @DisplayName("INTERRUPTED 유예 — 행 있으면 ENDED (이탈 중 정상 종료의 room_finished 유실 보정)")
+    void interruptedGraceEndsWithTranscript() {
+        long userId = saveUser("kakao-sw-20");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-sw-20");
+        setSessionInstant(sessionId, "disconnected_at", Instant.now());
+        seedTranscript(sessionId);
+
+        interruptedGraceSweeper().sweep();
+
+        assertThat(statusOfSession(sessionId)).isEqualTo("ENDED");
+        verify(roomManager).deleteRoomQuietly("room-sw-20");
+    }
+
+    @Test
+    @DisplayName("INTERRUPTED 유예 — 표식 있으면 ABORTED (RECONNECT_TIMEOUT 등 cause 불분기)")
+    void interruptedGraceAbortsWithMarker() {
+        long userId = saveUser("kakao-sw-21");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-sw-21");
+        setSessionInstant(sessionId, "disconnected_at", Instant.now());
+        seedMarker(sessionId, "RECONNECT_TIMEOUT");
+
+        interruptedGraceSweeper().sweep();
+
+        assertThat(statusOfSession(sessionId)).isEqualTo("ABORTED");
+        verify(roomManager).deleteRoomQuietly("room-sw-21");
+    }
+
+    @Test
+    @DisplayName("INTERRUPTED 유예 대조 — candidate+AGENT 관측 시 ACTIVE 복원 (가짜 INTERRUPTED 최종 보정)")
+    void interruptedGraceRestoresWhenBothPresent() {
+        long userId = saveUser("kakao-sw-22");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-sw-22");
+        setSessionInstant(sessionId, "disconnected_at", Instant.now());
+        when(roomManager.probeRoomPresence("room-sw-22", candidateOf(sessionId)))
+                .thenReturn(RoomPresence.of(true, true, null));
+
+        interruptedGraceSweeper().sweep();
+
+        assertThat(statusOfSession(sessionId)).isEqualTo("ACTIVE");
+        assertThat(sessionInstant(sessionId, "disconnected_at")).isNull();
+        verify(roomManager, never()).deleteRoomQuietly(anyString());
+    }
+
+    @Test
+    @DisplayName("INTERRUPTED 유예 대조 — candidate만 관측은 skip (에이전트 소실 판별 경로에 양보)")
+    void interruptedGraceSkipsWhenCandidateOnly() {
+        long userId = saveUser("kakao-sw-23");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-sw-23");
+        setSessionInstant(sessionId, "disconnected_at", Instant.now());
+        when(roomManager.probeRoomPresence("room-sw-23", candidateOf(sessionId)))
+                .thenReturn(RoomPresence.of(false, true, null));
+
+        interruptedGraceSweeper().sweep();
+
+        assertThat(statusOfSession(sessionId)).isEqualTo("INTERRUPTED");
+        verify(roomManager, never()).deleteRoomQuietly(anyString());
+    }
+
+    @Test
+    @DisplayName("INTERRUPTED 유예 대조 — 부재·룸 미존재는 ABORTED + 룸 삭제")
+    void interruptedGraceAbortsWhenAbsent() {
+        long userId = saveUser("kakao-sw-24");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-sw-24");
+        setSessionInstant(sessionId, "disconnected_at", Instant.now());
+        when(roomManager.probeRoomPresence("room-sw-24", candidateOf(sessionId)))
+                .thenReturn(RoomPresence.of(false, false, null));
+
+        interruptedGraceSweeper().sweep();
+
+        assertThat(statusOfSession(sessionId)).isEqualTo("ABORTED");
+        assertThat(sessionInstant(sessionId, "ended_at")).isNotNull();
+        verify(roomManager).deleteRoomQuietly("room-sw-24");
+    }
+
+    @Test
+    @DisplayName("INTERRUPTED 유예 — 대조 실패는 skip하되 상한(창 4배) 경과 후 대조 없이 정리된다")
+    void interruptedGraceCeilingConvergesDespiteUnknown() {
+        long userId = saveUser("kakao-sw-25");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-sw-25");
+        setSessionInstant(sessionId, "disconnected_at", Instant.now());
+        when(roomManager.probeRoomPresence("room-sw-25", candidateOf(sessionId)))
+                .thenReturn(RoomPresence.unknown());
+
+        interruptedGraceSweeper().sweep();
+        assertThat(statusOfSession(sessionId)).isEqualTo("INTERRUPTED");
+        verify(roomManager, times(1)).probeRoomPresence("room-sw-25", candidateOf(sessionId));
+
+        // 상한((3m+45s)×4=15m) 경과 — 대조를 시도하지 않고 확정 (수렴의 LiveKit 가용성 비의존)
+        sweeperAt(Instant.now().plus(Duration.ofMinutes(20))).sweep();
+        assertThat(statusOfSession(sessionId)).isEqualTo("ABORTED");
+        verify(roomManager, times(1)).probeRoomPresence("room-sw-25", candidateOf(sessionId));
+    }
+
+    @Test
+    @DisplayName("INTERRUPTED — end_requested_at 있는 세션은 유예 스위퍼가 건드리지 않는다 (fallback 전담)")
+    void interruptedRespectsFallbackOwnership() {
+        long userId = saveUser("kakao-sw-26");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-sw-26");
+        setSessionInstant(sessionId, "disconnected_at", Instant.now());
+        setSessionInstant(sessionId, "end_requested_at", Instant.now());
+
+        // fallback 컷오프 미도래·유예 컷오프 경과 — 유예가 /end의 정상 종료 창을 선점하면 안 된다
+        new SessionSweeper(sessionRepository, transcriptReader, markerReader, roomManager, transitionExecutor,
+                new SessionProperties(Duration.ofDays(999), GRACE, STALE, Duration.ofSeconds(10), WINDOW),
+                Clock.fixed(Instant.now().plus(Duration.ofMinutes(5)), ZoneOffset.UTC))
+                .sweep();
+
+        assertThat(statusOfSession(sessionId)).isEqualTo("INTERRUPTED");
+    }
+
+    @Test
+    @DisplayName("fallback — INTERRUPTED도 대상이다 (/end의 ACTIVE 동일 취급 확장)")
+    void fallbackCoversInterrupted() {
+        long userId = saveUser("kakao-sw-27");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-sw-27");
+        setSessionInstant(sessionId, "disconnected_at", Instant.now());
+        setSessionInstant(sessionId, "end_requested_at", Instant.now());
+
+        expiredSweeper().sweep();
+
+        assertThat(statusOfSession(sessionId)).isEqualTo("ABORTED");
+        verify(roomManager).deleteRoomQuietly("room-sw-27");
+    }
+
+    @Test
+    @DisplayName("AGENT_LOST 유예 — 이탈 관측 세션은 재연결 deadline(+마진) 전에 정리하지 않는다 (deadline 충돌 방지)")
+    void agentLostGraceWaitsForReconnectDeadline() {
+        long userId = saveUser("kakao-sw-30");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.AGENT_LOST, "room-sw-30");
+        setSessionInstant(sessionId, "agent_lost_at", Instant.now());
+        setSessionInstant(sessionId, "disconnected_at", Instant.now());
+
+        // 유예(90s… 테스트값 60s)는 지났지만 재연결 deadline(3m + 45s)은 미도래 — 기다린다
+        sweeperAt(Instant.now().plus(Duration.ofMinutes(2))).sweep();
+        assertThat(statusOfSession(sessionId)).isEqualTo("AGENT_LOST");
+
+        // 두 deadline 모두 경과 — 정리
+        sweeperAt(Instant.now().plus(Duration.ofMinutes(5))).sweep();
+        assertThat(statusOfSession(sessionId)).isEqualTo("ABORTED");
+        verify(roomManager).deleteRoomQuietly("room-sw-30");
+    }
+
+    @Test
+    @DisplayName("AGENT_LOST 유예 — 정리 전 행 재판별로 행 있으면 ENDED (webhook 전량 유실 병리 보정)")
+    void agentLostGraceEndsWithTranscript() {
+        long userId = saveUser("kakao-sw-31");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.AGENT_LOST, "room-sw-31");
+        setSessionInstant(sessionId, "agent_lost_at", Instant.now());
+        seedTranscript(sessionId);
+
+        expiredSweeper().sweep();
+
+        assertThat(statusOfSession(sessionId)).isEqualTo("ENDED");
+        verify(roomManager).deleteRoomQuietly("room-sw-31");
+    }
+
+    @Test
+    @DisplayName("stale ACTIVE ③ 대조 — 진행 중 면접(candidate+AGENT) 관측 시 이번 회차 skip")
+    void staleActiveSkipsWhenInterviewObserved() {
+        long userId = saveUser("kakao-sw-28");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.ACTIVE, "room-sw-28");
+        setSessionInstant(sessionId, "started_at", Instant.now());
+        when(roomManager.probeRoomPresence("room-sw-28", candidateOf(sessionId)))
+                .thenReturn(RoomPresence.of(true, true, null));
+
+        expiredSweeper().sweep();
+
+        assertThat(statusOfSession(sessionId)).isEqualTo("ACTIVE");
+        verify(roomManager, never()).deleteRoomQuietly(anyString());
+    }
+
+    @Test
+    @DisplayName("stale ACTIVE ③ — 대조 실패는 skip, 상한(임계 4배) 경과 시 대조 없이 정리 (hang 무한 skip 차단)")
+    void staleActiveCeilingConvergesDespiteObservation() {
+        long userId = saveUser("kakao-sw-29");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.ACTIVE, "room-sw-29");
+        setSessionInstant(sessionId, "started_at", Instant.now());
+        when(roomManager.probeRoomPresence("room-sw-29", candidateOf(sessionId)))
+                .thenReturn(RoomPresence.unknown());
+
+        expiredSweeper().sweep();
+        assertThat(statusOfSession(sessionId)).isEqualTo("ACTIVE");
+        verify(roomManager, times(1)).probeRoomPresence("room-sw-29", candidateOf(sessionId));
+
+        // 상한(45m×4=3h) 경과 — 진행 중 관측(candidate+AGENT)이 있어도 대조 자체를 하지 않고 ABORTED
+        when(roomManager.probeRoomPresence("room-sw-29", candidateOf(sessionId)))
+                .thenReturn(RoomPresence.of(true, true, null));
+        sweeperAt(Instant.now().plus(Duration.ofHours(4))).sweep();
+        assertThat(statusOfSession(sessionId)).isEqualTo("ABORTED");
+        verify(roomManager, times(1)).probeRoomPresence("room-sw-29", candidateOf(sessionId));
     }
 }

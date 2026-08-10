@@ -73,6 +73,41 @@ public class LiveKitAgentDispatcher implements SessionAgentDispatcher {
         }
     }
 
+    @Override
+    public java.util.List<String> listDispatchIds(String roomName) {
+        Response<java.util.List<LivekitAgentDispatch.AgentDispatch>> response;
+        try {
+            response = client.listDispatch(roomName).execute();
+        } catch (IOException | RuntimeException e) {
+            log.warn("dispatch 목록 조회 통신 실패 (room={}): {}", roomName, e.getClass().getSimpleName());
+            throw new BusinessException(ErrorCode.SESSION_DISPATCH_FAILED);
+        }
+        if (!response.isSuccessful() || response.body() == null) {
+            log.warn("dispatch 목록 조회 실패 (room={}, http={})", roomName, response.code());
+            throw new BusinessException(ErrorCode.SESSION_DISPATCH_FAILED);
+        }
+        return response.body().stream().map(LivekitAgentDispatch.AgentDispatch::getId).toList();
+    }
+
+    @Override
+    public void deleteDispatch(String roomName, String dispatchId) {
+        Response<LivekitAgentDispatch.AgentDispatch> response;
+        try {
+            // SDK 시그니처는 (roomName, dispatchId) 순서다 — 바이트코드로 확인(setRoom←1번째 인자,
+            // setDispatchId←2번째). getDispatch(id, room)과 순서가 다르니 유추 금지, 어댑터 테스트가 고정한다
+            response = client.deleteDispatch(roomName, dispatchId).execute();
+        } catch (IOException | RuntimeException e) {
+            log.warn("dispatch 삭제 통신 실패 (room={}, dispatchId={}): {}",
+                    roomName, dispatchId, e.getClass().getSimpleName());
+            throw new BusinessException(ErrorCode.SESSION_DISPATCH_FAILED);
+        }
+        if (!response.isSuccessful()) {
+            log.warn("dispatch 삭제 실패 (room={}, dispatchId={}, http={})",
+                    roomName, dispatchId, response.code());
+            throw new BusinessException(ErrorCode.SESSION_DISPATCH_FAILED);
+        }
+    }
+
     private static int utf8Bytes(String metadata) {
         return metadata.getBytes(StandardCharsets.UTF_8).length;
     }

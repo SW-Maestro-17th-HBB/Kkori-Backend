@@ -60,4 +60,29 @@ public interface SessionApi {
     ApiResponse<Void> end(
             @Parameter(hidden = true) Long userId,
             @Parameter(description = "종료할 세션 id") Long sessionId);
+
+    @Operation(summary = "면접 세션 재입장 토큰 발급",
+            description = """
+                    연결이 끊긴(INTERRUPTED — 에이전트 소실 중이면 AGENT_LOST 포함) 세션에 다시 입장할
+                    토큰을 발급한다. identity는 최초 입장과 동일한 candidate-{sessionId}로 고정되며(면접관
+                    에이전트의 재개 판정 기반), 토큰 만료는 재연결 deadline(이탈 시각 + 재연결 창)과
+                    일치한다 — 창이 지나면 발급이 거부되고 세션은 자동 종료로 수렴한다.
+                    응답 필드는 세션 생성과 동일하다(livekitToken·livekitUrl·livekitRoom).
+                    **S009는 사유 불문 "세션 종료됨"으로 일괄 처리한다** — 사유별 분기 계약 없음.
+                    재입장 후 일정 시간 내 면접관(AGENT)이 관측되지 않으면 무한 대기 없이 퇴장·종료
+                    화면으로 처리해야 한다(고아 룸 완화 — 구체 대기값은 프론트 재량).""",
+            security = @SecurityRequirement(name = "bearerAuth"))
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200",
+                    description = "재입장 토큰 발급 — id·livekitToken·livekitUrl·livekitRoom 반환"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "403",
+                    description = "타인의 세션(S007)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404",
+                    description = "세션 없음(S006)"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "409",
+                    description = "재입장 불가(S009) — 상태 부적합·이탈 미관측·재연결 창 만료"),
+    })
+    ApiResponse<InterviewSessionCreateResponse> rejoin(
+            @Parameter(hidden = true) Long userId,
+            @Parameter(description = "재입장할 세션 id") Long sessionId);
 }

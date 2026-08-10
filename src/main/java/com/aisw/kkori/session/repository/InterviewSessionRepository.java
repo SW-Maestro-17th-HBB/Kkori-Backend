@@ -92,7 +92,8 @@ public interface InterviewSessionRepository extends JpaRepository<InterviewSessi
             """)
     int finishStaleActive(@Param("id") Long id, @Param("to") SessionStatus to, @Param("now") Instant now);
 
-    /** 판별 ③ — AGENT_LOST 전이(유예 앵커 기록). 대상은 PENDING·ACTIVE뿐이다. */
+    /** 판별 ③ — AGENT_LOST 전이(유예 앵커 기록). 대상은 PENDING·ACTIVE·INTERRUPTED(HBB1-308).
+     * disconnectedAt은 건드리지 않는다 — INTERRUPTED발 전이의 재연결 deadline 앵커 보존(계약). */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             update InterviewSession s
@@ -101,24 +102,136 @@ public interface InterviewSessionRepository extends JpaRepository<InterviewSessi
                 s.updatedAt = :now
             where s.id = :id
               and s.status in (com.aisw.kkori.session.domain.SessionStatus.PENDING,
-                               com.aisw.kkori.session.domain.SessionStatus.ACTIVE)
+                               com.aisw.kkori.session.domain.SessionStatus.ACTIVE,
+                               com.aisw.kkori.session.domain.SessionStatus.INTERRUPTED)
             """)
     int markAgentLost(@Param("id") Long id, @Param("now") Instant now);
 
-    /** 종료 요청 시각 기록 — first-wins(이미 있으면 no-op)라 중복 /end가 fallback 창을 연장하지 않는다. */
+    // ── 재연결 전이 (PRD interview-session-reconnection.md 기능 1) ──
+
+    /** candidate 이탈 — ACTIVE → INTERRUPTED (`disconnected_at` = 현재 episode 이탈 관측 시각). */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.status = com.aisw.kkori.session.domain.SessionStatus.INTERRUPTED,
+                s.disconnectedAt = :now,
+                s.updatedAt = :now
+            where s.id = :id
+              and s.status = com.aisw.kkori.session.domain.SessionStatus.ACTIVE
+            """)
+    int interrupt(@Param("id") Long id, @Param("now") Instant now);
+
+    /**
+     * 복귀 — INTERRUPTED → ACTIVE, `disconnected_at` 초기화(다음 이탈이 새 episode 창을 연다).
+     * `started_at`·`end_requested_at`은 불변(최초 보존 — 재앵커·fallback 창 연장 없음).
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.status = com.aisw.kkori.session.domain.SessionStatus.ACTIVE,
+                s.disconnectedAt = null,
+                s.updatedAt = :now
+            where s.id = :id
+              and s.status = com.aisw.kkori.session.domain.SessionStatus.INTERRUPTED
+            """)
+    int resumeFromInterrupted(@Param("id") Long id, @Param("now") Instant now);
+
+    /** AGENT_LOST 중 candidate 이탈 — 이탈 관측 시각만 기록(null일 때만 — 창 연장 금지). */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.disconnectedAt = :now,
+                s.updatedAt = :now
+            where s.id = :id
+              and s.status = com.aisw.kkori.session.domain.SessionStatus.AGENT_LOST
+              and s.disconnectedAt is null
+            """)
+    int recordDisconnectedIfAbsent(@Param("id") Long id, @Param("now") Instant now);
+
+    /** INTERRUPTED 유예 만료 전용 terminal 확정 — end_requested_at 있는 세션은 fallback 전담(우선순위 분리). */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.status = :to,
+                s.endedAt = :now,
+                s.updatedAt = :now
+            where s.id = :id
+              and s.status = com.aisw.kkori.session.domain.SessionStatus.INTERRUPTED
+              and s.endRequestedAt is null
+            """)
+    int finishInterruptedGrace(@Param("id") Long id, @Param("to") SessionStatus to, @Param("now") Instant now);
+
+    /** INTERRUPTED 유예 만료 후보 — end_requested_at 있는 세션 제외(fallback 전담). */
+    List<InterviewSession> findByStatusAndEndRequestedAtIsNullAndDisconnectedAtLessThanEqual(
+            SessionStatus status, Instant cutoff);
+
+    // ── 재디스패치 (PRD interview-session-reconnection.md 기능 3) ──
+
+    /**
+     * 재디스패치 CAS — at-most-once 권한 획득. AGENT 사전 확인에서 부재가 확인된 뒤에만
+     * 시도한다(관측 기반 복원은 이 마커를 소진하지 않는다 — 복원된 에이전트의 후속 소실이
+     * 온전한 재디스패치 기회를 가진다).
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.redispatchedAt = :now,
+                s.updatedAt = :now
+            where s.id = :id
+              and s.status = com.aisw.kkori.session.domain.SessionStatus.AGENT_LOST
+              and s.redispatchedAt is null
+            """)
+    int claimRedispatch(@Param("id") Long id, @Param("now") Instant now);
+
+    /**
+     * AGENT_LOST → ACTIVE 복귀 (joined(agent) 대조·사전 확인 공용 — candidate 재실).
+     * started_at은 보존하되 null(PENDING발 AGENT_LOST)이면 현재 시각을 기록한다.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.status = com.aisw.kkori.session.domain.SessionStatus.ACTIVE,
+                s.disconnectedAt = null,
+                s.startedAt = coalesce(s.startedAt, :now),
+                s.updatedAt = :now
+            where s.id = :id
+              and s.status = com.aisw.kkori.session.domain.SessionStatus.AGENT_LOST
+            """)
+    int resumeAgentLostToActive(@Param("id") Long id, @Param("now") Instant now);
+
+    /**
+     * AGENT_LOST → INTERRUPTED (candidate 부재 — 잔여 재연결 창으로). disconnected_at은
+     * 보존(first-wins — 재연결 deadline·기발급 재입장 토큰의 앵커)하되 null이면 지금 창을 연다.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.status = com.aisw.kkori.session.domain.SessionStatus.INTERRUPTED,
+                s.disconnectedAt = coalesce(s.disconnectedAt, :now),
+                s.startedAt = coalesce(s.startedAt, :now),
+                s.updatedAt = :now
+            where s.id = :id
+              and s.status = com.aisw.kkori.session.domain.SessionStatus.AGENT_LOST
+            """)
+    int resumeAgentLostToInterrupted(@Param("id") Long id, @Param("now") Instant now);
+
+    /** 종료 요청 시각 기록 — first-wins(이미 있으면 no-op)라 중복 /end가 fallback 창을 연장하지 않는다.
+     * INTERRUPTED 포함(HBB1-308 — /end의 ACTIVE 동일 취급). */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             update InterviewSession s
             set s.endRequestedAt = :now,
                 s.updatedAt = :now
             where s.id = :id
-              and s.status = com.aisw.kkori.session.domain.SessionStatus.ACTIVE
+              and s.status in (com.aisw.kkori.session.domain.SessionStatus.ACTIVE,
+                               com.aisw.kkori.session.domain.SessionStatus.INTERRUPTED)
               and s.endRequestedAt is null
             """)
     int recordEndRequested(@Param("id") Long id, @Param("now") Instant now);
 
-    /** fallback 후보 — /end 수리 후 room_finished가 오지 않은 ACTIVE. */
-    List<InterviewSession> findByStatusAndEndRequestedAtLessThanEqual(SessionStatus status, Instant cutoff);
+    /** fallback 후보 — /end 수리 후 room_finished가 오지 않은 ACTIVE·INTERRUPTED(HBB1-308 확장). */
+    List<InterviewSession> findByStatusInAndEndRequestedAtLessThanEqual(
+            Collection<SessionStatus> statuses, Instant cutoff);
 
     /** 유예 만료 후보. */
     List<InterviewSession> findByStatusAndAgentLostAtLessThanEqual(SessionStatus status, Instant cutoff);

@@ -154,6 +154,22 @@ class SessionEndApiTest extends SessionCompletionTestSupport {
     }
 
     @Test
+    @DisplayName("INTERRUPTED 세션 /end는 ACTIVE 동일 취급 — SendData 발신, 즉시 ABORTED 아님 (HBB1-308)")
+    void interruptedTreatedAsActive() throws Exception {
+        long userId = saveUser("kakao-end-13");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-end-13");
+        setSessionInstant(sessionId, "disconnected_at", Instant.now());
+
+        mockMvc.perform(post(endUri(sessionId)).header("Authorization", bearerOf(userId)))
+                .andExpect(status().isAccepted());
+
+        assertThat(statusOfSession(sessionId)).isEqualTo("INTERRUPTED");
+        assertThat(sessionInstant(sessionId, "end_requested_at")).isNotNull();
+        verify(endSignalSender).send("room-end-13", sessionId);
+        verify(roomManager, never()).deleteRoomQuietly(anyString());
+    }
+
+    @Test
     @DisplayName("AGENT_LOST 세션 /end도 즉시 ABORTED + 룸 삭제")
     void agentLostAbortedImmediately() throws Exception {
         long userId = saveUser("kakao-end-4");

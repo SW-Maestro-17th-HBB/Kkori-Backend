@@ -33,9 +33,9 @@ class LiveKitWebhookVerifierTest {
     @DisplayName("이벤트·participant kind가 도메인 신호로 매핑된다")
     @CsvSource({
             "participant_joined, AGENT, AGENT_JOINED",
-            "participant_joined, STANDARD, IGNORE",
+            "participant_joined, STANDARD, CANDIDATE_JOINED",
             "participant_left, AGENT, AGENT_LEFT",
-            "participant_left, STANDARD, IGNORE",
+            "participant_left, STANDARD, CANDIDATE_LEFT",
             "participant_connection_aborted, AGENT, AGENT_LEFT",
             "participant_connection_aborted, STANDARD, IGNORE",
     })
@@ -48,6 +48,20 @@ class LiveKitWebhookVerifierTest {
         if (expected != SessionWebhookSignal.Type.IGNORE) {
             assertThat(signal.roomName()).isEqualTo("room-w");
         }
+    }
+
+    @ParameterizedTest(name = "reason={0} → {1}")
+    @DisplayName("candidate left의 reason 가드 — DUPLICATE_IDENTITY(유령 퇴장)만 IGNORE, 그 외는 이탈 신호 (HBB1-308)")
+    @CsvSource({
+            "DUPLICATE_IDENTITY, IGNORE",
+            "CLIENT_INITIATED, CANDIDATE_LEFT",
+    })
+    void candidateLeftReasonGuard(String reason, SessionWebhookSignal.Type expected) {
+        String body = "{\"event\":\"participant_left\",\"room\":{\"name\":\"room-w\"},"
+                + "\"participant\":{\"identity\":\"p\",\"kind\":\"STANDARD\",\"disconnectReason\":\"%s\"}}"
+                .formatted(reason);
+
+        assertThat(verifier.verify(body, sign(body, API_SECRET)).type()).isEqualTo(expected);
     }
 
     @Test
