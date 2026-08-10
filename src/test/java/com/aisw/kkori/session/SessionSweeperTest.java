@@ -135,7 +135,7 @@ class SessionSweeperTest extends SessionCompletionTestSupport {
         long userId = saveUser("kakao-sw-6");
         long sessionId = sessionInStatus(userId, null, SessionStatus.ACTIVE, "room-sw-6");
         setSessionInstant(sessionId, "started_at", Instant.now());
-        when(roomManager.probeRoomPresence("room-sw-6", "candidate-" + sessionId))
+        when(roomManager.probeRoomPresence("room-sw-6", candidateOf(sessionId)))
                 .thenReturn(RoomPresence.of(false, false, null));
 
         expiredSweeper().sweep();
@@ -265,14 +265,11 @@ class SessionSweeperTest extends SessionCompletionTestSupport {
 
     // ─── HBB1-308: INTERRUPTED 유예 · stale ACTIVE 대조 ───
 
-    /** INTERRUPTED 유예 컷오프(창 3m + 마진 45s)는 지났지만 대조 상한(창 4배 = 12m)은 안 지난 시점. */
+    /** INTERRUPTED 유예 컷오프(창 3m + 마진 45s)는 지났지만 대조 상한((창+마진)×4 = 15m)은 안 지난 시점. */
     private SessionSweeper interruptedGraceSweeper() {
         return sweeperAt(Instant.now().plus(Duration.ofMinutes(5)));
     }
 
-    private String candidateOf(long sessionId) {
-        return "candidate-" + sessionId;
-    }
 
     @Test
     @DisplayName("INTERRUPTED 유예 — 행 있으면 ENDED (이탈 중 정상 종료의 room_finished 유실 보정)")
@@ -362,7 +359,7 @@ class SessionSweeperTest extends SessionCompletionTestSupport {
         assertThat(statusOfSession(sessionId)).isEqualTo("INTERRUPTED");
         verify(roomManager, times(1)).probeRoomPresence("room-sw-25", candidateOf(sessionId));
 
-        // 상한(3m×4=12m) 경과 — 대조를 시도하지 않고 확정 (수렴의 LiveKit 가용성 비의존)
+        // 상한((3m+45s)×4=15m) 경과 — 대조를 시도하지 않고 확정 (수렴의 LiveKit 가용성 비의존)
         sweeperAt(Instant.now().plus(Duration.ofMinutes(20))).sweep();
         assertThat(statusOfSession(sessionId)).isEqualTo("ABORTED");
         verify(roomManager, times(1)).probeRoomPresence("room-sw-25", candidateOf(sessionId));

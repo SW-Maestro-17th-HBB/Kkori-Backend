@@ -1,5 +1,7 @@
 package com.aisw.kkori.session;
 
+import com.aisw.kkori.global.exception.BusinessException;
+import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.dto.RoomPresence;
 import com.aisw.kkori.session.dto.SessionWebhookSignal;
@@ -14,6 +16,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -37,9 +40,6 @@ class SessionRedispatchTest extends SessionCompletionTestSupport {
         eventService.handle(new SessionWebhookSignal(SessionWebhookSignal.Type.AGENT_LEFT, room, "test-event"));
     }
 
-    private String candidateOf(long sessionId) {
-        return "candidate-" + sessionId;
-    }
 
     @Test
     @DisplayName("판별 ③ 후 부재 확인 관통 시 재디스패치된다 — 재조립 metadata 자구 동일, CAS 기록")
@@ -75,6 +75,24 @@ class SessionRedispatchTest extends SessionCompletionTestSupport {
 
         verify(agentDispatcher).deleteDispatch("room-rd-2", "dispatch-old");
         verify(agentDispatcher).dispatch(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("dispatch 정리 실패(S004) — 생성을 포기하고 CAS만 소진된 채 유예 수렴에 맡긴다, webhook 처리는 무예외")
+    void deleteFailureAbandonsCreateWithoutPropagating() {
+        long userId = saveUser("kakao-rd-11");
+        long sessionId = sessionInStatus(userId, null, SessionStatus.ACTIVE, "room-rd-11");
+        when(roomManager.probeRoomPresence("room-rd-11", candidateOf(sessionId)))
+                .thenReturn(RoomPresence.of(false, false, null));
+        when(agentDispatcher.listDispatchIds("room-rd-11")).thenReturn(List.of("dispatch-old"));
+        doThrow(new BusinessException(ErrorCode.SESSION_DISPATCH_FAILED))
+                .when(agentDispatcher).deleteDispatch("room-rd-11", "dispatch-old");
+
+        agentLeft("room-rd-11"); // 파이프라인이 실패를 삼킨다 — webhook 처리 결과에 무영향
+
+        assertThat(statusOfSession(sessionId)).isEqualTo("AGENT_LOST");
+        assertThat(sessionInstant(sessionId, "redispatched_at")).isNotNull();
+        verify(agentDispatcher, never()).dispatch(anyString(), anyString());
     }
 
     @Test

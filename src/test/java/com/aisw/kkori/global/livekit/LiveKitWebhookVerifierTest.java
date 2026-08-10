@@ -50,19 +50,18 @@ class LiveKitWebhookVerifierTest {
         }
     }
 
-    @Test
-    @DisplayName("candidate left의 DUPLICATE_IDENTITY는 IGNORE — 동일 identity 재입장이 걷어찬 유령 퇴장 (HBB1-308)")
-    void duplicateIdentityLeftIsIgnored() {
-        String ghost = "{\"event\":\"participant_left\",\"room\":{\"name\":\"room-w\"},"
-                + "\"participant\":{\"identity\":\"p\",\"kind\":\"STANDARD\",\"disconnectReason\":\"DUPLICATE_IDENTITY\"}}";
-        assertThat(verifier.verify(ghost, sign(ghost, API_SECRET)).type())
-                .isEqualTo(SessionWebhookSignal.Type.IGNORE);
+    @ParameterizedTest(name = "reason={0} → {1}")
+    @DisplayName("candidate left의 reason 가드 — DUPLICATE_IDENTITY(유령 퇴장)만 IGNORE, 그 외는 이탈 신호 (HBB1-308)")
+    @CsvSource({
+            "DUPLICATE_IDENTITY, IGNORE",
+            "CLIENT_INITIATED, CANDIDATE_LEFT",
+    })
+    void candidateLeftReasonGuard(String reason, SessionWebhookSignal.Type expected) {
+        String body = "{\"event\":\"participant_left\",\"room\":{\"name\":\"room-w\"},"
+                + "\"participant\":{\"identity\":\"p\",\"kind\":\"STANDARD\",\"disconnectReason\":\"%s\"}}"
+                .formatted(reason);
 
-        // 그 외 reason은 정상 이탈 신호다 — reason 가드가 과차단하지 않는다
-        String left = "{\"event\":\"participant_left\",\"room\":{\"name\":\"room-w\"},"
-                + "\"participant\":{\"identity\":\"p\",\"kind\":\"STANDARD\",\"disconnectReason\":\"CLIENT_INITIATED\"}}";
-        assertThat(verifier.verify(left, sign(left, API_SECRET)).type())
-                .isEqualTo(SessionWebhookSignal.Type.CANDIDATE_LEFT);
+        assertThat(verifier.verify(body, sign(body, API_SECRET)).type()).isEqualTo(expected);
     }
 
     @Test

@@ -259,7 +259,7 @@ class SessionEventServiceIntegrationTest extends SessionCompletionTestSupport {
         void activeInterrupts() {
             long userId = saveUser("kakao-ev-20");
             long sessionId = sessionInStatus(userId, null, SessionStatus.ACTIVE, "room-ev-20");
-            when(roomManager.probeRoomPresence("room-ev-20", "candidate-" + sessionId))
+            when(roomManager.probeRoomPresence("room-ev-20", candidateOf(sessionId)))
                     .thenReturn(RoomPresence.of(true, false, null));
 
             handle(SessionWebhookSignal.Type.CANDIDATE_LEFT, "room-ev-20");
@@ -273,7 +273,7 @@ class SessionEventServiceIntegrationTest extends SessionCompletionTestSupport {
         void immediateProbeRestores() {
             long userId = saveUser("kakao-ev-21");
             long sessionId = sessionInStatus(userId, null, SessionStatus.ACTIVE, "room-ev-21");
-            when(roomManager.probeRoomPresence("room-ev-21", "candidate-" + sessionId))
+            when(roomManager.probeRoomPresence("room-ev-21", candidateOf(sessionId)))
                     .thenReturn(RoomPresence.of(true, true, null));
 
             handle(SessionWebhookSignal.Type.CANDIDATE_LEFT, "room-ev-21");
@@ -287,7 +287,7 @@ class SessionEventServiceIntegrationTest extends SessionCompletionTestSupport {
         void immediateProbeFailureKeepsInterrupted() {
             long userId = saveUser("kakao-ev-22");
             long sessionId = sessionInStatus(userId, null, SessionStatus.ACTIVE, "room-ev-22");
-            when(roomManager.probeRoomPresence("room-ev-22", "candidate-" + sessionId))
+            when(roomManager.probeRoomPresence("room-ev-22", candidateOf(sessionId)))
                     .thenReturn(RoomPresence.unknown());
 
             handle(SessionWebhookSignal.Type.CANDIDATE_LEFT, "room-ev-22");
@@ -349,7 +349,7 @@ class SessionEventServiceIntegrationTest extends SessionCompletionTestSupport {
             Instant startedAt = Instant.parse("2026-08-01T08:00:00Z");
             setSessionInstant(sessionId, "started_at", startedAt);
             setSessionInstant(sessionId, "disconnected_at", Instant.now());
-            when(roomManager.probeRoomPresence("room-ev-30", "candidate-" + sessionId))
+            when(roomManager.probeRoomPresence("room-ev-30", candidateOf(sessionId)))
                     .thenReturn(RoomPresence.of(true, true, null));
 
             handle(SessionWebhookSignal.Type.CANDIDATE_JOINED, "room-ev-30");
@@ -365,7 +365,7 @@ class SessionEventServiceIntegrationTest extends SessionCompletionTestSupport {
             long userId = saveUser("kakao-ev-31");
             long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-ev-31");
             setSessionInstant(sessionId, "disconnected_at", Instant.now());
-            when(roomManager.probeRoomPresence("room-ev-31", "candidate-" + sessionId))
+            when(roomManager.probeRoomPresence("room-ev-31", candidateOf(sessionId)))
                     .thenReturn(RoomPresence.of(false, true, null));
 
             handle(SessionWebhookSignal.Type.CANDIDATE_JOINED, "room-ev-31");
@@ -380,7 +380,7 @@ class SessionEventServiceIntegrationTest extends SessionCompletionTestSupport {
             long userId = saveUser("kakao-ev-32");
             long sessionId = sessionInStatus(userId, null, SessionStatus.INTERRUPTED, "room-ev-32");
             setSessionInstant(sessionId, "disconnected_at", Instant.now());
-            when(roomManager.probeRoomPresence("room-ev-32", "candidate-" + sessionId))
+            when(roomManager.probeRoomPresence("room-ev-32", candidateOf(sessionId)))
                     .thenReturn(RoomPresence.unknown());
 
             assertThatThrownBy(() -> handle(SessionWebhookSignal.Type.CANDIDATE_JOINED, "room-ev-32"))
