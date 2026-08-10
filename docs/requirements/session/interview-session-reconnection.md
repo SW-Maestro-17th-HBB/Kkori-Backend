@@ -83,7 +83,7 @@ HBB1-294 매핑 표에 대한 증분이다. 표기 없는 행은 현행 유지�
 | `INTERRUPTED` 중 `/end` | ACTIVE 동일 취급 — SendData → 에이전트 클로징·flush(candidate 부재 무관) → room_finished 행 있음 | `ENDED` (무응답 시 fallback) |
 | 복귀 직후 재이탈 반복 | episode마다 독립 창(복귀 시 `disconnected_at` 초기화 → 재이탈 시 신규 기록) — 벽시계 누적은 stale ACTIVE 대조·상한이 상한 | `ENDED` / `ABORTED` |
 
-**수렴 완결성 (불변식 확장)**: 본 스토리로 `INTERRUPTED`가 도달 가능해지므로 HBB1-294 불변식의 대상에 추가한다 — **`INTERRUPTED`는 webhook 없이도 유예 만료 스위퍼(DB 앵커 `disconnected_at`)로 유한 시간 내 terminal 수렴한다.** 주 수렴은 에이전트의 창 소진 룸 삭제(`room_finished`)이고 스위퍼는 에이전트 동반 소실 시의 안전망이다. 대조 skip에는 상한(창의 4배 — stale `PENDING` 패턴 계승)이 있어 수렴은 LiveKit 가용성에 조건부가 아니다. `AGENT_LOST`의 수렴(유예 만료)은 유지되며, 재디스패치는 유예를 연장하지 않는다 — 상태를 바꾸는 것은 `participant_joined(agent)`의 도착 또는 재디스패치 경로의 관측 기반 복원(AGENT 사전 확인 — 기능 3)뿐이다. 단 `disconnected_at`이 있는 `AGENT_LOST`의 만료 시각은 재연결 deadline과의 늦은 쪽이다(기능 3 — deadline 충돌 방지, 여전히 유한이라 불변식은 성립).
+**수렴 완결성 (불변식 확장)**: 본 스토리로 `INTERRUPTED`가 도달 가능해지므로 HBB1-294 불변식의 대상에 추가한다 — **`INTERRUPTED`는 webhook 없이도 유예 만료 스위퍼(DB 앵커 `disconnected_at`)로 유한 시간 내 terminal 수렴한다.** 주 수렴은 에이전트의 창 소진 룸 삭제(`room_finished`)이고 스위퍼는 에이전트 동반 소실 시의 안전망이다. 대조 skip에는 상한(유예 컷오프 간격(창+마진)의 4배 — stale `PENDING` 패턴 계승)이 있어 수렴은 LiveKit 가용성에 조건부가 아니다. `AGENT_LOST`의 수렴(유예 만료)은 유지되며, 재디스패치는 유예를 연장하지 않는다 — 상태를 바꾸는 것은 `participant_joined(agent)`의 도착 또는 재디스패치 경로의 관측 기반 복원(AGENT 사전 확인 — 기능 3)뿐이다. 단 `disconnected_at`이 있는 `AGENT_LOST`의 만료 시각은 재연결 deadline과의 늦은 쪽이다(기능 3 — deadline 충돌 방지, 여전히 유한이라 불변식은 성립).
 
 **전환 순서 (배포 조건)**: 에이전트의 "즉시 종료 폐지"(AI 배포)가 Spring의 `INTERRUPTED` 매핑보다 **먼저 또는 동시**여야 한다. AI 선행 시 과도기는 candidate 이탈이 no-op으로 남지만 에이전트 창 소진 룸 삭제가 `ABORTED`로 수렴한다(재입장만 불가 — 현행과 동일한 UX). 역순이면 구 에이전트의 즉시 종료가 판별 ③→재디스패치를 촉발해 무의미한 잡 1회가 낭비된다(자기 제한적이나 불필요).
 
@@ -102,7 +102,7 @@ HBB1-294 매핑 표에 대한 증분이다. 표기 없는 행은 현행 유지�
   - transcript 행 있음 → `ENDED`(`ended_at`) + 룸 삭제(best-effort) — 이탈 중 면접 시간 소진·정상 종료 완료의 webhook 유실 보정.
   - 행 없음 + 종료 표식 있음 → `ABORTED`(`ended_at`) + 룸 삭제(cause 로그 — `RECONNECT_TIMEOUT` 포함 불분기).
   - 둘 다 없음 → **룸 참가자 대조**: candidate + AGENT 동시 관측 → `ACTIVE` 복원(`disconnected_at` 초기화 — 가짜 `INTERRUPTED`의 최종 보정) / candidate만 관측(AGENT 부재) → 이번 회차 skip(에이전트 소실 webhook이 지연·유실 중일 수 있어 판별 경로에 양보) / 부재·룸 미존재 → `ABORTED` + 룸 삭제(best-effort).
-  - 대조 실패도 이번 회차 skip. **skip 상한은 사유 불문 공통이다** — candidate-only 관측이든 대조 실패든 `disconnected_at`이 창의 4배(코드 상수)를 넘기면 대조 없이 행·표식 판별만으로 terminal을 확정한다(행 → `ENDED`, 없음 → `ABORTED` + 룸 삭제 — 수렴의 LiveKit 가용성 비의존, stale `PENDING` 상한과 동일 패턴·근거).
+  - 대조 실패도 이번 회차 skip. **skip 상한은 사유 불문 공통이다** — candidate-only 관측이든 대조 실패든 `disconnected_at`이 유예 컷오프 간격(창+마진)의 4배(코드 상수 — 창에만 곱하면 짧은 창 설정에서 컷오프와 역전된다)를 넘기면 대조 없이 행·표식 판별만으로 terminal을 확정한다(행 → `ENDED`, 없음 → `ABORTED` + 룸 삭제 — 수렴의 LiveKit 가용성 비의존, stale `PENDING` 상한과 동일 패턴·근거).
 - **`/end` 표 개정**: `INTERRUPTED`를 `AGENT_LOST`와 분리한다 — 기존 행의 근거("에이전트 부재가 증거 기반")가 사라졌다(에이전트가 살아 대기 중). **`INTERRUPTED`는 `ACTIVE`와 동일 취급**: `end_requested_at` 기록(최초 1회) → 커밋 후 SendData → 에이전트가 candidate 부재 상태로 클로징·flush·룸 삭제 → `ENDED`. 진행된 면접 산출물(행·리포트)이 보존된다 — 즉시 `ABORTED`는 내용 손실이다. `AGENT_LOST` 행은 현행 유지(즉시 `ABORTED` + 룸 삭제) — 재디스패치 경합은 user 잠금 직렬화로 `ABORTED` 선기록이 CAS를 차단하고, 이미 나간 dispatch는 자기 제한적으로 소멸한다(기능 3 실패 모델).
 - **fallback 대상 확장**: fallback 스위퍼 술어를 `status IN (ACTIVE, INTERRUPTED) AND end_requested_at ≤ …`로 확장한다 — `INTERRUPTED` 중 `/end` 후 무응답도 같은 선기록·룸 삭제로 수렴한다.
 - **판별 대상 상태 확장**: `participant_left`·`connection_aborted`(kind=AGENT)의 판별 3-경로 대상에 `INTERRUPTED`를 추가한다. ③ 전이 시 `disconnected_at`을 보존한다(재연결 deadline·기발급 재입장 토큰 만료의 앵커 단절 금지).
@@ -123,7 +123,7 @@ HBB1-294 매핑 표에 대한 증분이다. 표기 없는 행은 현행 유지�
 - 유예 스위퍼의 판별 선행: 만료 `INTERRUPTED` + 행 있음 → `ENDED`(webhook 유실 보정 — `ABORTED` 오판 금지), 행 없음+표식 → `ABORTED`+cause 로그 확인
 - 유예 스위퍼의 대조 분기(행·표식 없음): candidate+AGENT → `ACTIVE` 복원 / candidate만 → skip / 부재·룸 미존재 → `ABORTED`+룸 삭제 — 처리되는지, 미만료·타 상태는 불변인지 확인
 - `end_requested_at`이 기록된 `INTERRUPTED` 세션은 유예 스위퍼가 건드리지 않고 fallback이 전담하는지 확인 (우선순위 분리)
-- 대조 실패·candidate-only 공통으로 이번 회차 skip, 상한(창 4배) 경과 시 대조 없이 행·표식 판별로 terminal 확정(행 → `ENDED`) 확인
+- 대조 실패·candidate-only 공통으로 이번 회차 skip, 상한((창+마진)×4) 경과 시 대조 없이 행·표식 판별로 terminal 확정(행 → `ENDED`) 확인
 - 유예 중 `room_finished` 선착(에이전트 창 소진 룸 삭제) 시 행 유무 규칙으로 먼저 수렴하고 스위퍼가 no-op인지 확인
 - `/end` × `INTERRUPTED`: `end_requested_at` 기록·SendData 발신·`202` 확인(즉시 `ABORTED` 아님), fallback 스위퍼가 `INTERRUPTED`+`end_requested_at` 만료 세션을 선기록·룸 삭제로 처리하는지 확인
 - stale ACTIVE ③: candidate+AGENT 관측 시 skip(상한 내), 상한 경과 시 강제 정리, 그 외 관측은 현행 즉시 `ABORTED` 확인
@@ -280,7 +280,7 @@ HBB1-294 매핑 표에 대한 증분이다. 표기 없는 행은 현행 유지�
     token-ttl: ${LIVEKIT_TOKEN_TTL:10m}                # 1h → 10m 단축 (기능 2)
   ```
 
-  - `INTERRUPTED` 유예 = `reconnect-window` + 마진 45s(코드 상수 — 별도 설정 없음: 계약값에서 파생시켜 정합을 구조적으로 보장하고, 마진을 독립 설정으로 두면 정합 붕괴 경로만 늘어난다). 마진 45s 근거: 양측 이탈 관측 시각 편차(수 초) + 에이전트 창 소진 처리·룸 삭제 bounded retry 최악 34s(HBB1-294 실측 상수)에 여유를 둔 값. 대조 skip 상한 = 창의 4배(코드 상수 — stale `PENDING` 상수와 동일 패턴).
+  - `INTERRUPTED` 유예 = `reconnect-window` + 마진 45s(코드 상수 — 별도 설정 없음: 계약값에서 파생시켜 정합을 구조적으로 보장하고, 마진을 독립 설정으로 두면 정합 붕괴 경로만 늘어난다). 마진 45s 근거: 양측 이탈 관측 시각 편차(수 초) + 에이전트 창 소진 처리·룸 삭제 bounded retry 최악 34s(HBB1-294 실측 상수)에 여유를 둔 값. 대조 skip 상한 = 유예 컷오프 간격(창+마진)의 4배(코드 상수 — stale `PENDING` 상수와 동일 패턴, 역전 불가 기준).
   - `AGENT_LOST` 유예 만료 시각은 `disconnected_at` 있는 세션에 한해 `max(agent_lost_at + 90s, disconnected_at + 창 + 45s)` — 기능 3 deadline 충돌 방지.
   - dev/prod 매니페스트: `SESSION_RECONNECT_WINDOW` 추가, `SESSION_AGENT_LOST_GRACE`·`LIVEKIT_TOKEN_TTL` 권장값 갱신 — 배포 전 필수 체크리스트에 반영.
 

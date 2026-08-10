@@ -31,7 +31,8 @@ import java.util.function.Consumer;
  * <li><b>fallback</b>: /end 수리 후 room_finished 부재 ACTIVE·INTERRUPTED — 행 판별 선기록 후
  *     룸 삭제(계약 순서)</li>
  * <li><b>INTERRUPTED 유예</b>: 재연결 창 + 마진 경과 — 판별 선행(행→ENDED) 후 룸 대조
- *     (candidate+AGENT → ACTIVE 복원 / candidate만 → skip / 부재 → ABORTED, skip 상한 = 창의 4배)</li>
+ *     (candidate+AGENT → ACTIVE 복원 / candidate만 → skip / 부재 → ABORTED, skip 상한 =
+ *     유예 컷오프 간격(창+마진)의 4배)</li>
  * <li><b>유예 만료</b>: AGENT_LOST — ABORTED + 룸 삭제(없으면 생성이 409로 계속 막힌다)</li>
  * <li><b>stale ACTIVE</b>: webhook 최종 유실 회수 — 판별 재실행(③은 즉시 ABORTED하되 룸 대조로
  *     진행 중 면접 보호 — 재연결로 벽시계 체류가 45m를 넘을 수 있다, skip 상한 = 임계의 4배)</li>
@@ -109,8 +110,11 @@ public class SessionSweeper {
      * 단독으로 ABORTED를 단정하지 않는다(terminal 확정 원칙: ENDED ⇔ 행 존재).
      */
     private void sweepInterruptedGrace(Instant now) {
-        Instant cutoff = now.minus(properties.reconnectWindow().plus(INTERRUPTED_GRACE_MARGIN));
-        Instant probeCeiling = now.minus(properties.reconnectWindow().multipliedBy(PROBE_CEILING_MULTIPLIER));
+        // 상한은 유예 컷오프 간격(창+마진) 기준 — 창에만 곱하면 짧은 창 설정(≤마진/3)에서 상한이
+        // 컷오프보다 앞서는 역전이 생겨 대조(복원 경로)가 통째로 사라진다
+        Duration graceWindow = properties.reconnectWindow().plus(INTERRUPTED_GRACE_MARGIN);
+        Instant cutoff = now.minus(graceWindow);
+        Instant probeCeiling = now.minus(graceWindow.multipliedBy(PROBE_CEILING_MULTIPLIER));
         forEachIsolated("INTERRUPTED 유예",
                 sessionRepository.findByStatusAndEndRequestedAtIsNullAndDisconnectedAtLessThanEqual(
                         SessionStatus.INTERRUPTED, cutoff),
@@ -271,7 +275,7 @@ public class SessionSweeper {
                         finishStalePending(session, SessionStatus.ENDED);
                         return;
                     }
-                    if (markerReader.read(session.getId()).isPresent()) {
+                    if (readMarkerLogged(session.getId(), "stale PENDING")) {
                         finishStalePending(session, SessionStatus.ABORTED);
                         return;
                     }

@@ -121,13 +121,14 @@ public class LiveKitRoomManager implements SessionRoomManager {
             return RoomPresence.unknown();
         }
         List<ParticipantInfo> participants = response.body();
-        Instant agentJoinedAt = participants.stream()
+        java.util.Optional<ParticipantInfo> agent = participants.stream()
                 .filter(p -> p.getKind() == ParticipantInfo.Kind.AGENT)
-                .findFirst()
+                .findFirst();
+        // joined_at은 unix 초 — 0(미설정)이면 시각만 미상으로 남긴다(존재 판정과 별개)
+        Instant agentJoinedAt = agent
                 .map(p -> p.getJoinedAt() > 0 ? Instant.ofEpochSecond(p.getJoinedAt()) : null)
                 .orElse(null);
-        boolean agentPresent = participants.stream().anyMatch(p -> p.getKind() == ParticipantInfo.Kind.AGENT);
         boolean candidatePresent = participants.stream().anyMatch(p -> candidateIdentity.equals(p.getIdentity()));
-        return RoomPresence.of(agentPresent, candidatePresent, agentJoinedAt);
+        return RoomPresence.of(agent.isPresent(), candidatePresent, agentJoinedAt);
     }
 }
