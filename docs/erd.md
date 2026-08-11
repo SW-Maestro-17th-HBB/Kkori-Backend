@@ -115,6 +115,9 @@ erDiagram
     timestamptz end_requested_at "nullable, 최초 /end 시각(fallback 앵커)"
     timestamptz agent_lost_at "nullable, AGENT_LOST 전환(유예 앵커)"
     timestamptz redispatched_at "nullable, 재디스패치 CAS 마커(at-most-once — CAS 도달 여부만)"
+    string egress_id "nullable, 녹음 egress id(egress_ended webhook 역매핑 키)"
+    string recording_bucket "nullable, 업로드 완료된 녹음 S3 버킷"
+    string recording_object_key "nullable, 업로드 완료된 객체 키(non-null = 기록·발행 완료 멱등 가드)"
     timestamptz created_at
     timestamptz updated_at
     timestamptz deleted_at "nullable, E1 파기 연계(후속 스토리)"
