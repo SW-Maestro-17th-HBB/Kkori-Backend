@@ -61,6 +61,10 @@ livekit:
   api-secret: ${LIVEKIT_API_SECRET}
   token-ttl: ${LIVEKIT_TOKEN_TTL:10m}
   api-timeout: ${LIVEKIT_API_TIMEOUT:3s}
+  # 녹음(Egress) S3 출력 — 실제 버킷명이 필요해 기본값 없이 .env로 채운다 (LIVEKIT_URL과 동급)
+  recording:
+    bucket: ${LIVEKIT_RECORDING_BUCKET}
+    region: ${LIVEKIT_RECORDING_REGION:ap-northeast-2}
 
 # 세션 수렴 스위퍼 — 값 근거는 PRD(interview-session-completion.md 공통: 스위퍼·설정)
 session:

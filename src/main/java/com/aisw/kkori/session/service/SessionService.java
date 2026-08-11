@@ -58,6 +58,7 @@ public class SessionService {
     private final SessionTicketIssuer ticketIssuer;
     private final DispatchMetadataAssembler metadataAssembler;
     private final SessionAgentDispatcher agentDispatcher;
+    private final SessionRecorder sessionRecorder;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
 
@@ -100,6 +101,10 @@ public class SessionService {
             if (!sessionRepository.existsByIdAndStatus(plan.sessionId(), SessionStatus.PENDING)) {
                 throw new BusinessException(ErrorCode.SESSION_SUPERSEDED);
             }
+            // 녹음 시작(PRD interview-recording.md 기능 1)은 승계 재확인 뒤에 둔다 — 교체가 확정된
+            // 세션의 룸에 egress를 시작하는 낭비를 줄인다(재확인 뒤 교체되는 잔여 경합에서는 룸
+            // 삭제가 egress를 자동 종료시키므로 어느 쪽도 병리는 없다).
+            startRecordingQuietly(plan.sessionId(), roomName);
             return new InterviewSessionCreateResponse(
                     plan.sessionId(), ticket.token(), ticket.serverUrl(), roomName);
         } catch (RuntimeException e) {
@@ -163,6 +168,35 @@ public class SessionService {
         String dispatchMetadata = metadataAssembler.assemble(
                 session.getId(), request.interviewType(), request.position(), structuredData);
         return new CreationPlan(session.getId(), abortedRooms, dispatchMetadata);
+    }
+
+    /**
+     * 녹음 시작·egress_id 기록 — 어느 실패도 세션 생성에 전파하지 않는다(녹음은 부가 기능,
+     * 음성 분석 누락은 워커 계약의 유예 완성 경로가 흡수 — PRD interview-recording.md 기능 1).
+     * egress_id 기록에 실패하면 webhook 역매핑이 불가해 그 세션의 음성 분석만 누락된다.
+     */
+    private void startRecordingQuietly(long sessionId, String roomName) {
+        String egressId;
+        try {
+            egressId = sessionRecorder.startRecording(roomName);
+        } catch (RuntimeException e) {
+            log.warn("녹음 시작 실패 — 녹음 없이 진행 (sessionId={}, room={}): {}",
+                    sessionId, roomName, e.getMessage());
+            return;
+        }
+        if (egressId == null || egressId.isBlank()) {
+            // 어댑터 계약 위반(비어있지 않은 id 또는 예외) 방어 — deleteQuietly와 같은 격리 방침
+            log.warn("녹음 시작 응답에 egressId 부재 — 계약 위반 가능성, 녹음 없이 진행 (sessionId={})", sessionId);
+            return;
+        }
+        try {
+            Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+            transactionTemplate.executeWithoutResult(status ->
+                    sessionRepository.updateEgressId(sessionId, egressId, now));
+        } catch (RuntimeException e) {
+            log.warn("egress_id 기록 실패 — webhook 역매핑 불가 (sessionId={}, egressId={})",
+                    sessionId, egressId, e);
+        }
     }
 
     /** 룸 삭제는 quiet 계약이지만, 구현 결함으로 던져도 응답·다른 정리에 전파되지 않게 항목별로 격리한다. */

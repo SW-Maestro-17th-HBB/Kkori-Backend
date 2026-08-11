@@ -59,4 +59,5 @@ tasks.named('test') {
     environment 'LIVEKIT_URL', 'wss://test.invalid'
     environment 'LIVEKIT_API_KEY', 'test-key'
     environment 'LIVEKIT_API_SECRET', 'test-secret-at-least-thirty-two-bytes-long'
+    environment 'LIVEKIT_RECORDING_BUCKET', 'test-recordings'
 }

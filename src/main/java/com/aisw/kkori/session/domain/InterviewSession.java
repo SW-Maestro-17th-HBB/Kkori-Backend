@@ -99,6 +99,21 @@ public class InterviewSession extends BaseEntity {
     @Column(name = "redispatched_at")
     private Instant redispatchedAt;
 
+    /**
+     * 녹음 egress id — 시작 응답에서 기록하며 {@code egress_ended} webhook의 세션 역매핑 키다
+     * (PRD interview-recording.md 데이터 모델). 녹음은 부가 기능이라 시작 실패 세션은 NULL로 남는다.
+     */
+    @Column(name = "egress_id")
+    private String egressId;
+
+    /** 업로드 완료된 녹음 파일의 S3 버킷명 (egress_ended·EGRESS_COMPLETE에서 기록). */
+    @Column(name = "recording_bucket")
+    private String recordingBucket;
+
+    /** 업로드 완료된 객체 키 — non-null이면 기록·발행 처리 완료(webhook 중복 전달 멱등 가드). */
+    @Column(name = "recording_object_key")
+    private String recordingObjectKey;
+
     private InterviewSession(Long userId, Long resumeId, InterviewType interviewType,
                              Position position, String livekitRoom) {
         this.userId = userId;

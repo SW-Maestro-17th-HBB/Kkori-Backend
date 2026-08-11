@@ -242,4 +242,35 @@ public interface InterviewSessionRepository extends JpaRepository<InterviewSessi
 
     /** stale PENDING 후보. */
     List<InterviewSession> findByStatusAndCreatedAtLessThanEqual(SessionStatus status, Instant cutoff);
+
+    // ── 녹음·음성 분석 (PRD interview-recording.md) ──
+    // 녹음 컬럼은 상태 머신과 독립이다(terminal 세션에도 기록) — 상태 술어 없이 동작하며,
+    // user 행 잠금도 선행하지 않는다(전이 경로와 다투는 컬럼이 없고, 중복 webhook 경합은
+    // recording_object_key IS NULL 술어가 원자적으로 거른다).
+
+    /** egress_ended webhook의 세션 역매핑 — egress_id는 시작 성공 시에만 기록된다. */
+    Optional<InterviewSession> findByEgressId(String egressId);
+
+    /** 녹음 시작 성공 후 egress id 기록. 상태 무관 — 승계 경합으로 ABORTED된 세션에 남아도 무해하다. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.egressId = :egressId,
+                s.updatedAt = :now
+            where s.id = :id
+            """)
+    int updateEgressId(@Param("id") Long id, @Param("egressId") String egressId, @Param("now") Instant now);
+
+    /** 녹음 업로드 완료 기록 — recording_object_key IS NULL 술어가 멱등 가드(중복 webhook no-op). */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.recordingBucket = :bucket,
+                s.recordingObjectKey = :objectKey,
+                s.updatedAt = :now
+            where s.id = :id
+              and s.recordingObjectKey is null
+            """)
+    int recordRecordingResult(@Param("id") Long id, @Param("bucket") String bucket,
+                              @Param("objectKey") String objectKey, @Param("now") Instant now);
 }
