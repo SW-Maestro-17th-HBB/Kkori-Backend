@@ -561,6 +561,8 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
         InterviewSession session = sessionRepository.findById(dataLong(result, "id")).orElseThrow();
         assertThat(session.getStatus()).isEqualTo(SessionStatus.PENDING);
         assertThat(session.getEgressId()).isNull();
+        // 시작이 실제로 시도됐는지 — 없으면 녹음 배선이 통째로 빠져도 이 테스트가 통과한다
+        verify(sessionRecorder).startRecording(dataText(result, "livekitRoom"));
     }
 
     @Test
