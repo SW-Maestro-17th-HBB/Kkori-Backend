@@ -53,17 +53,33 @@ public class JdbcTranscriptReader implements TranscriptReader {
             throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
         }
         validate(utterances, sessionId);
-        return Optional.of(utterances);
+        // questionNumber 없는 발화(closing 인사)는 어느 질문-답변 쌍에도 속하지 않으므로
+        // 타임라인 조립에서 제외하고, 에이전트 실물 직렬화(HBB1-287)의 speaker CANDIDATE는
+        // 계약 값 USER로 정규화한다 — 값 집합 합의(PRD §1 기타 미정) 전 읽기 측 흡수
+        // (Kkori-AI Worker의 load_transcript와 동일 정책, 확정 시 함께 제거).
+        List<TranscriptUtterance> paired = utterances.stream()
+                .filter(u -> u.questionNumber() != null)
+                .map(JdbcTranscriptReader::normalizeSpeaker)
+                .toList();
+        return Optional.of(paired);
+    }
+
+    private static TranscriptUtterance normalizeSpeaker(TranscriptUtterance u) {
+        if (!"CANDIDATE".equals(u.speaker())) {
+            return u;
+        }
+        return new TranscriptUtterance(u.questionNumber(), u.parentQuestionNumber(),
+                TranscriptUtterance.SPEAKER_USER, u.questionType(), u.content(), u.spokenAt());
     }
 
     /**
      * 필드 수준 계약 검증 — 대본은 다른 도메인이 쓰는 데이터라, 위반을 조립 중의
      * 원시 예외(NPE 등)로 흘리지 않고 경계에서 명확한 500으로 변환한다.
+     * questionNumber는 검증하지 않는다 — 없는 발화(closing 인사)는 위반이 아니라 제외 대상.
      */
     private static void validate(List<TranscriptUtterance> utterances, long sessionId) {
         for (TranscriptUtterance u : utterances) {
-            if (u == null || u.questionNumber() == null || u.content() == null
-                    || !hasParseableSpokenAt(u)) {
+            if (u == null || u.content() == null || !hasParseableSpokenAt(u)) {
                 // 발화 내용(content)은 사용자 답변이라 로그에 남기지 않는다
                 log.error("대본 발화가 계약을 위반 (session_id={}, questionNumber={}, spokenAt={})",
                         sessionId, u == null ? null : u.questionNumber(),
