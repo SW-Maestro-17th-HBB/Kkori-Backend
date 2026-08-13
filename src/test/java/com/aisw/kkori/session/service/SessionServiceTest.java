@@ -47,12 +47,13 @@ class SessionServiceTest {
     private final SessionTicketIssuer ticketIssuer = mock(SessionTicketIssuer.class);
     private final DispatchMetadataAssembler metadataAssembler = mock(DispatchMetadataAssembler.class);
     private final SessionAgentDispatcher agentDispatcher = mock(SessionAgentDispatcher.class);
+    private final SessionRecorder sessionRecorder = mock(SessionRecorder.class);
     private final TransactionTemplate transactionTemplate = mock(TransactionTemplate.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-07-22T09:00:00Z"), ZoneOffset.UTC);
 
     private final SessionService sessionService = new SessionService(
             userRepository, sessionRepository, resumeAccessGuard, roomManager, ticketIssuer,
-            metadataAssembler, agentDispatcher, transactionTemplate, clock);
+            metadataAssembler, agentDispatcher, sessionRecorder, transactionTemplate, clock);
 
     @BeforeEach
     void passThroughTransactionTemplate() {

@@ -3,8 +3,11 @@ package com.aisw.kkori.global.livekit;
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.session.dto.SessionWebhookSignal;
+import com.aisw.kkori.session.service.SessionRecordingService;
 import com.aisw.kkori.session.service.SessionWebhookVerifier;
 import io.livekit.server.WebhookReceiver;
+import livekit.LivekitEgress.EgressInfo;
+import livekit.LivekitEgress.EgressStatus;
 import livekit.LivekitModels.DisconnectReason;
 import livekit.LivekitModels.ParticipantInfo;
 import livekit.LivekitWebhook.WebhookEvent;
@@ -26,15 +29,22 @@ import org.springframework.stereotype.Component;
  * IGNORE로 접는다 — 재입장 직후 후착하면 가짜 INTERRUPTED를 만드는 병리의 1차 가드
  * (재연결 PRD — Cloud 미실림 시에도 즉시 대조·유예 스위퍼가 수렴 보장). candidate
  * {@code connection_aborted}(미입장 사건)·그 외 이벤트는 IGNORE.
+ *
+ * <p>{@code egress_ended}는 세션 상태 전이가 아니므로 신호 enum에 싣지 않고 여기서 녹음 완료
+ * 핸들러({@link SessionRecordingService})로 분기한다(녹음 PRD §웹훅 배관 — 상태 머신 오염 방지).
+ * 벤더 상태 해석은 어댑터 소관: {@code EGRESS_COMPLETE}만 통과시키고 그 외(FAILED·ABORTED 등)는
+ * warn만 남긴다.
  */
 @Slf4j
 @Component
 public class LiveKitWebhookVerifier implements SessionWebhookVerifier {
 
     private final WebhookReceiver receiver;
+    private final SessionRecordingService recordingService;
 
-    public LiveKitWebhookVerifier(LiveKitProperties properties) {
+    public LiveKitWebhookVerifier(LiveKitProperties properties, SessionRecordingService recordingService) {
         this.receiver = new WebhookReceiver(properties.apiKey(), properties.apiSecret());
+        this.recordingService = recordingService;
     }
 
     @Override
@@ -67,8 +77,41 @@ public class LiveKitWebhookVerifier implements SessionWebhookVerifier {
                     ? new SessionWebhookSignal(SessionWebhookSignal.Type.AGENT_LEFT, room, name)
                     : SessionWebhookSignal.ignore(name);
             case "room_finished" -> new SessionWebhookSignal(SessionWebhookSignal.Type.ROOM_FINISHED, room, name);
+            case "egress_ended" -> {
+                handleEgressEnded(event.getEgressInfo());
+                yield SessionWebhookSignal.ignore(name);
+            }
             default -> SessionWebhookSignal.ignore(name);
         };
+    }
+
+    /**
+     * egress_ended 분기 — EGRESS_COMPLETE만 기록·발행 경로로 넘긴다. objectKey는
+     * {@code fileResults[0].filename}, bucket은 EgressInfo에 echo되는 원요청
+     * ({@code roomComposite.fileOutputs[0].s3.bucket})에서 읽는다(녹음 PRD 기능 2 —
+     * {@code FileInfo}에는 bucket 필드가 없다). 추출 불충분은 warn 후 no-op — 200을 유지해도
+     * 멱등 가드가 기록되지 않으므로 재전송이 오면 재시도된다.
+     */
+    private void handleEgressEnded(EgressInfo info) {
+        if (info.getStatus() != EgressStatus.EGRESS_COMPLETE) {
+            log.warn("egress 비정상 종료 — 기록·발행 없음 (egressId={}, status={}, room={})",
+                    info.getEgressId(), info.getStatus(), info.getRoomName());
+            return;
+        }
+        if (info.getFileResultsCount() == 0
+                || !info.hasRoomComposite() || info.getRoomComposite().getFileOutputsCount() == 0) {
+            log.warn("EGRESS_COMPLETE인데 파일 결과·요청 echo 불충분 — no-op (egressId={}, room={})",
+                    info.getEgressId(), info.getRoomName());
+            return;
+        }
+        String objectKey = info.getFileResults(0).getFilename();
+        String bucket = info.getRoomComposite().getFileOutputs(0).getS3().getBucket();
+        if (objectKey.isBlank() || bucket.isBlank()) {
+            log.warn("bucket·objectKey 추출 실패 — no-op (egressId={}, bucket공백={}, objectKey공백={})",
+                    info.getEgressId(), bucket.isBlank(), objectKey.isBlank());
+            return;
+        }
+        recordingService.completeRecording(info.getEgressId(), bucket, objectKey);
     }
 
     private SessionWebhookSignal candidateLeft(WebhookEvent event, String room, String name) {

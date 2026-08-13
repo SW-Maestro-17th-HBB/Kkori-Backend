@@ -12,6 +12,7 @@ import com.aisw.kkori.session.domain.Position;
 import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.repository.InterviewSessionRepository;
 import com.aisw.kkori.session.service.SessionAgentDispatcher;
+import com.aisw.kkori.session.service.SessionRecorder;
 import com.aisw.kkori.session.service.SessionRoomManager;
 import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.repository.UserRepository;
@@ -56,6 +57,7 @@ abstract class InterviewSessionIntegrationTestSupport {
 
     @MockitoBean SessionRoomManager roomManager;
     @MockitoBean SessionAgentDispatcher agentDispatcher;
+    @MockitoBean SessionRecorder sessionRecorder;
 
     @BeforeEach
     void cleanDatabase() {

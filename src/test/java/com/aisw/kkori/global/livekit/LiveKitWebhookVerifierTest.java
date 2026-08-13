@@ -4,15 +4,20 @@ import com.aisw.kkori.LiveKitWebhookTestSigner;
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.session.dto.SessionWebhookSignal;
+import com.aisw.kkori.session.service.SessionRecordingService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
  * webhook 서명 검증·이벤트 변환 검증 (PRD interview-session-completion.md 기능 1).
@@ -26,8 +31,10 @@ class LiveKitWebhookVerifierTest {
     private static final String API_KEY = "test-key";
     private static final String API_SECRET = "test-secret-at-least-thirty-two-bytes-long";
 
+    private final SessionRecordingService recordingService = mock(SessionRecordingService.class);
     private final LiveKitWebhookVerifier verifier = new LiveKitWebhookVerifier(new LiveKitProperties(
-            "wss://test.invalid", API_KEY, API_SECRET, Duration.ofHours(1), Duration.ofSeconds(3)));
+            "wss://test.invalid", API_KEY, API_SECRET, Duration.ofHours(1), Duration.ofSeconds(3)),
+            recordingService);
 
     @ParameterizedTest(name = "{0}(kind={1}) → {2}")
     @DisplayName("이벤트·participant kind가 도메인 신호로 매핑된다")
@@ -110,6 +117,51 @@ class LiveKitWebhookVerifierTest {
         assertThatThrownBy(() -> verifier.verify(null, sign(body, API_SECRET)))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.UNAUTHORIZED);
+    }
+
+    // ─── egress_ended 분기 (docs/requirements/session/interview-recording.md 기능 2) ───
+
+    @Test
+    @DisplayName("egress_ended(EGRESS_COMPLETE)는 objectKey=fileResults[0].filename, bucket=요청 echo에서 추출해 녹음 완료 핸들러로 분기하고 신호는 IGNORE다")
+    void egressCompleteBranchesToRecordingHandler() {
+        String body = egressBody("EGRESS_COMPLETE", "recordings/room-w-123.ogg", "kkori-rec");
+
+        SessionWebhookSignal signal = verifier.verify(body, sign(body, API_SECRET));
+
+        assertThat(signal.type()).isEqualTo(SessionWebhookSignal.Type.IGNORE);
+        verify(recordingService).completeRecording("EG_1", "kkori-rec", "recordings/room-w-123.ogg");
+    }
+
+    @ParameterizedTest(name = "status={0} → 핸들러 미호출")
+    @DisplayName("EGRESS_FAILED·EGRESS_ABORTED는 warn만 남기고 기록·발행 경로로 넘기지 않는다 (완료 조건 5)")
+    @ValueSource(strings = {"EGRESS_FAILED", "EGRESS_ABORTED"})
+    void abnormalEgressEndIsNotForwarded(String status) {
+        String body = egressBody(status, "recordings/room-w-123.ogg", "kkori-rec");
+
+        assertThat(verifier.verify(body, sign(body, API_SECRET)).type())
+                .isEqualTo(SessionWebhookSignal.Type.IGNORE);
+        verifyNoInteractions(recordingService);
+    }
+
+    @Test
+    @DisplayName("EGRESS_COMPLETE라도 fileResults가 비면 핸들러로 넘기지 않는다 (추출 불충분 방어)")
+    void completeWithoutFileResultsIsNotForwarded() {
+        String body = "{\"event\":\"egress_ended\",\"egressInfo\":{\"egressId\":\"EG_1\","
+                + "\"roomName\":\"room-w\",\"status\":\"EGRESS_COMPLETE\"}}";
+
+        assertThat(verifier.verify(body, sign(body, API_SECRET)).type())
+                .isEqualTo(SessionWebhookSignal.Type.IGNORE);
+        verifyNoInteractions(recordingService);
+    }
+
+    /** LiveKit 발신 형식의 egress_ended 바디 — bucket은 fileResults가 아니라 원요청 echo에 실린다. */
+    private static String egressBody(String status, String objectKey, String bucket) {
+        return """
+                {"event":"egress_ended","egressInfo":{"egressId":"EG_1","roomName":"room-w","status":"%s",\
+                "roomComposite":{"roomName":"room-w","audioOnly":true,\
+                "fileOutputs":[{"filepath":"recordings/{room_name}-{time}.ogg","s3":{"bucket":"%s","region":"ap-northeast-2"}}]},\
+                "fileResults":[{"filename":"%s","location":"https://%s.s3.ap-northeast-2.amazonaws.com/%s"}]}}"""
+                .formatted(status, bucket, objectKey, bucket, objectKey);
     }
 
     private static String participantBody(String event, String kind) {

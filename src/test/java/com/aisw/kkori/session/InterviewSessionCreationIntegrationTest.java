@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.ResultActions;
@@ -20,8 +21,11 @@ import java.util.Base64;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -516,6 +520,66 @@ class InterviewSessionCreationIntegrationTest extends InterviewSessionIntegratio
                         .content(createBody(null, "FIVE_MIN", "BACKEND")))
                 .andExpect(status().isUnauthorized());
         assertThat(sessionRepository.count()).isZero();
+    }
+
+    // ─── 녹음 시작 (docs/requirements/session/interview-recording.md 기능 1 — 완료 조건 1·2) ───
+
+    @Test
+    @DisplayName("생성 성공 시 디스패치 다음에 세션 룸의 녹음이 시작되고 egress_id가 세션 행에 저장된다")
+    void creationStartsRecordingAfterDispatchAndStoresEgressId() throws Exception {
+        long userId = saveUser("kakao-s-50");
+        when(sessionRecorder.startRecording(anyString())).thenReturn("EG_created");
+
+        ResultActions result = mockMvc.perform(post(SESSIONS_URI)
+                        .header(HttpHeaders.AUTHORIZATION, bearerOf(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createBody(null, "FIVE_MIN", "BACKEND")))
+                .andExpect(status().isCreated());
+
+        String roomName = dataText(result, "livekitRoom");
+        InOrder order = inOrder(agentDispatcher, sessionRecorder);
+        order.verify(agentDispatcher).dispatch(eq(roomName), anyString());
+        order.verify(sessionRecorder).startRecording(roomName);
+        assertThat(sessionRepository.findById(dataLong(result, "id")).orElseThrow().getEgressId())
+                .isEqualTo("EG_created");
+    }
+
+    @Test
+    @DisplayName("녹음 시작 실패 시에도 세션 생성 응답은 201이고 egress_id만 NULL로 남는다")
+    void recordingFailureDoesNotFailCreation() throws Exception {
+        long userId = saveUser("kakao-s-51");
+        when(sessionRecorder.startRecording(anyString()))
+                .thenThrow(new IllegalStateException("egress 시작 실패"));
+
+        ResultActions result = mockMvc.perform(post(SESSIONS_URI)
+                        .header(HttpHeaders.AUTHORIZATION, bearerOf(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createBody(null, "FIVE_MIN", "BACKEND")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.success").value(true));
+
+        InterviewSession session = sessionRepository.findById(dataLong(result, "id")).orElseThrow();
+        assertThat(session.getStatus()).isEqualTo(SessionStatus.PENDING);
+        assertThat(session.getEgressId()).isNull();
+        // 시작이 실제로 시도됐는지 — 없으면 녹음 배선이 통째로 빠져도 이 테스트가 통과한다
+        verify(sessionRecorder).startRecording(dataText(result, "livekitRoom"));
+    }
+
+    @Test
+    @DisplayName("디스패치 실패 시 녹음은 시작조차 되지 않는다 (녹음은 디스패치 성공 다음)")
+    void dispatchFailureSkipsRecording() throws Exception {
+        long userId = saveUser("kakao-s-52");
+        doThrow(new BusinessException(ErrorCode.SESSION_DISPATCH_FAILED))
+                .when(agentDispatcher).dispatch(anyString(), anyString());
+
+        mockMvc.perform(post(SESSIONS_URI)
+                        .header(HttpHeaders.AUTHORIZATION, bearerOf(userId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createBody(null, "FIVE_MIN", "BACKEND")))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.error.code").value("S004"));
+
+        verifyNoInteractions(sessionRecorder);
     }
 
     // ─── 응답 파싱 헬퍼 ───

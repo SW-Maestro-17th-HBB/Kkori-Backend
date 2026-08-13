@@ -51,6 +51,9 @@ livekit:
   api-secret: ${LIVEKIT_API_SECRET}
   token-ttl: ${LIVEKIT_TOKEN_TTL}
   api-timeout: ${LIVEKIT_API_TIMEOUT}
+  recording:
+    bucket: ${LIVEKIT_RECORDING_BUCKET}
+    region: ${LIVEKIT_RECORDING_REGION}
 
 session:
   end-fallback-timeout: ${SESSION_END_FALLBACK_TIMEOUT}
