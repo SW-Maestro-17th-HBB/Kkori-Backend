@@ -38,13 +38,13 @@ public class UserRepositoryService {
      * 공유하는 직렬화 지점으로, 탈퇴가 선점했으면 {@code UNAUTHORIZED}를 던진다.
      * 의도적으로 다른 변형(탈퇴의 무필터 멱등 잠금, 재발급의 RT_NOT_FOUND)은 이 헬퍼를 쓰지 않는다.
      */
-    public User findActiveWithLock(Long id) {
-        return lockActive(id)
+    public User lockActive(Long id) {
+        return tryLockActive(id)
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
     }
 
     /** user 행 잠금 + 활성 필터 — 활성이 아닐 때의 에러 선택이 호출자마다 다른 경로(재발급)용. */
-    public Optional<User> lockActive(Long id) {
+    public Optional<User> tryLockActive(Long id) {
         return userRepository.findWithLockById(id)
                 .filter(user -> !user.isDeleted());
     }
@@ -58,7 +58,7 @@ public class UserRepositoryService {
     }
 
     /** user 행 잠금(무필터) — 잠근 엔티티가 필요한 경로(탈퇴·복구)용. 부재 시의 에러는 호출자가 정한다. */
-    public Optional<User> lockUserIgnoringDeleted(Long id) {
+    public Optional<User> tryLockUser(Long id) {
         return userRepository.findWithLockById(id);
     }
 

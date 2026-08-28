@@ -44,8 +44,8 @@ public class ResumeParsedService {
 
     @Transactional(readOnly = true)
     public ResumeParsedResponse getParsed(Long userId, Long resumeId) {
-        Resume resume = resumeRepositoryService.findAuthorized(userId, resumeId);
-        ResumeAnalysisStatus status = resumeRepositoryService.statusOf(resumeId);
+        Resume resume = resumeRepositoryService.getOwned(userId, resumeId);
+        ResumeAnalysisStatus status = resumeRepositoryService.getStatus(resumeId);
         resumeRepositoryService.requireEmbedded(status);
         return ResumeParsedResponse.of(resume, status.getParseStatus());
     }
@@ -53,8 +53,8 @@ public class ResumeParsedService {
     @Transactional
     public ResumeParsedResponse updateParsed(Long userId, Long resumeId, StructuredData structuredData) {
         lockActiveUser(userId);
-        Resume resume = resumeRepositoryService.findAuthorized(userId, resumeId);
-        ResumeAnalysisStatus status = resumeRepositoryService.lockedStatusOf(resumeId);
+        Resume resume = resumeRepositoryService.getOwned(userId, resumeId);
+        ResumeAnalysisStatus status = resumeRepositoryService.lockStatus(resumeId);
         // 상태 검사(이미 조회한 값)를 먼저 — 세션 존재 검사는 인덱스 없는 스캔이라 통과 요청에만 수행한다
         resumeRepositoryService.requireEmbedded(status);
         requireNotInUse(resumeId);
@@ -68,8 +68,8 @@ public class ResumeParsedService {
     @Transactional
     public ResumeReanalyzeResponse reanalyze(Long userId, Long resumeId) {
         lockActiveUser(userId);
-        Resume resume = resumeRepositoryService.findAuthorized(userId, resumeId);
-        ResumeAnalysisStatus status = resumeRepositoryService.lockedStatusOf(resumeId);
+        Resume resume = resumeRepositoryService.getOwned(userId, resumeId);
+        ResumeAnalysisStatus status = resumeRepositoryService.lockStatus(resumeId);
 
         AnalysisMode mode = switch (status.getParseStatus()) {
             case EMBEDDED -> AnalysisMode.REINDEX;   // 수정 반영 — DB structuredData부터 청킹·색인
@@ -89,7 +89,7 @@ public class ResumeParsedService {
 
     /** 세션 생성과의 직렬화 지점 — user 행 잠금 + 활성 재확인 (유저 상태 경로 공통 관례). */
     private void lockActiveUser(Long userId) {
-        userRepositoryService.findActiveWithLock(userId);
+        userRepositoryService.lockActive(userId);
     }
 
     /** 진행 중 면접에서 사용 중인 이력서는 변경 불가 — R013 (면접이 검색할 청크 보호, 판정은 세션 도메인 구현). */

@@ -78,7 +78,7 @@ public class ConsentService {
         // 2) user 행 잠금 + 활성 재확인 — 탈퇴의 일괄 WITHDRAWN과의 경합 차단(직렬화 계약 공유).
         //    잠금 없이 append하면 탈퇴가 최신 상태를 읽은 뒤 이 AGREED가 커밋되는 순서에서
         //    탈퇴 완료 후 최신 상태가 AGREED로 남는 정합 붕괴가 생긴다.
-        userRepositoryService.findActiveWithLock(userId);
+        userRepositoryService.lockActive(userId);
 
         // 3) 트랜잭션 시각 — 잠금 획득 후 취득(시각 역행 방지 — 공통: 시각 처리).
         //    마이크로초 절삭은 timestamptz(6) 반올림과의 정합(updatedAt 동등성).

@@ -51,7 +51,7 @@ public class SessionRejoinService {
      * candidate 재입장은 유효하다 — 입장해 두면 joined(agent) 대조가 ACTIVE로 수렴시킨다.
      */
     public InterviewSessionCreateResponse rejoin(Long userId, Long sessionId) {
-        InterviewSession session = sessionRepositoryService.findOwned(userId, sessionId);
+        InterviewSession session = sessionRepositoryService.getOwned(userId, sessionId);
 
         // [트랜잭션] user 잠금 하에 발급 조건 검증 — 유예 스위퍼의 ABORTED와 직렬화된다.
         Instant deadline = transactionTemplate.execute(status -> validateInTransaction(userId, sessionId));

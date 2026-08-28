@@ -35,7 +35,7 @@ public class ResumeRepositoryService {
      * 존재(404) → 소유(403). 타인 이력서에 404가 아닌 403을 주는 것은 resume PRD §4의 계약이다.
      * soft delete된 이력서는 {@code @SQLRestriction}으로 조회되지 않아 404로 수렴한다.
      */
-    public Resume findAuthorized(Long userId, Long resumeId) {
+    public Resume getOwned(Long userId, Long resumeId) {
         Resume resume = resumeRepository.findById(resumeId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESUME_NOT_FOUND));
         if (!resume.getUserId().equals(userId)) {
@@ -45,7 +45,7 @@ public class ResumeRepositoryService {
     }
 
     /** 상태 행은 업로드 트랜잭션에서 Resume과 함께 생성되므로, 없다는 것은 데이터 정합성 깨짐(서버 결함)이다. */
-    public ResumeAnalysisStatus statusOf(Long resumeId) {
+    public ResumeAnalysisStatus getStatus(Long resumeId) {
         return statusRepository.findByResumeId(resumeId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR));
     }
@@ -54,7 +54,7 @@ public class ResumeRepositoryService {
      * 상태 검사 후 행동(수정·재분석)하는 트랜잭션은 잠그고 읽는다 — 검사와 커밋 사이에 다른 요청이
      * 상태를 바꾸면 낡은 판정으로 통과하기 때문(check-then-act). 읽기 전용 경로는 잠그지 않는다.
      */
-    public ResumeAnalysisStatus lockedStatusOf(Long resumeId) {
+    public ResumeAnalysisStatus lockStatus(Long resumeId) {
         return statusRepository.findForUpdateByResumeId(resumeId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR));
     }
@@ -93,7 +93,7 @@ public class ResumeRepositoryService {
     }
 
     /** 현재 분석 상태 — 상태 행 부재(정합 깨짐 방어)는 UPLOADED로 간주하는 관대한 조회(업로드 중복 응답 전용). */
-    public AnalysisStatus currentParseStatus(Long resumeId) {
+    public AnalysisStatus getCurrentParseStatus(Long resumeId) {
         return statusRepository.findByResumeId(resumeId)
                 .map(ResumeAnalysisStatus::getParseStatus)
                 .orElse(AnalysisStatus.UPLOADED);

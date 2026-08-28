@@ -57,7 +57,7 @@ public class UserService {
     @Transactional
     public UserInfoResponse updateName(Long userId, String name) {
         String validated = validateName(name);
-        User user = userRepositoryService.findActiveWithLock(userId);
+        User user = userRepositoryService.lockActive(userId);
         user.updateName(validated);
         return UserInfoResponse.from(user);
     }
@@ -77,7 +77,7 @@ public class UserService {
         // 보장용이고 상태 전이의 권위는 여전히 조건부 UPDATE의 영향 행 수다: user 잠금 하에
         // 동의를 기록하는 선택 동의 변경과 경합할 때, 잠금 전에 취득한 이른 시각으로 더 큰 id의
         // WITHDRAWN이 기록되는 시각 역행을 막는다(PRD 공통: 시각 처리).
-        String providerId = userRepositoryService.lockUserIgnoringDeleted(userId)
+        String providerId = userRepositoryService.tryLockUser(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED))
                 .getProviderId();
         // 마이크로초 절삭 — PostgreSQL timestamptz(6)는 나노초 입력을 마이크로초로 "반올림" 저장하므로
@@ -110,7 +110,7 @@ public class UserService {
 
         // 잠금 순서 user → deletion_log → RT (기능 2 직렬화 계약). 로그 행 잠금이
         // 판정과 후속 상태 변경(마스킹·CANCELLED 전환) 사이의 배치 PURGING 선점을 차단한다.
-        User user = userRepositoryService.lockUserIgnoringDeleted(deletionLog.getUserId())
+        User user = userRepositoryService.tryLockUser(deletionLog.getUserId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
         // 잠금 획득 후 재확인 — 토큰 발급 후 10분 사이 배치가 선점했을 수 있다
         DeletionStatus current = userRepositoryService.lockAndReadDeletionStatus(deletionLogId)

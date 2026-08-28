@@ -36,7 +36,7 @@ public class ReportRepositoryService {
      * 본인 소유 검증 — 존재(404) → 소유(403) 순서.
      * 타인의 리포트는 존재를 숨기지 않고 403으로 명확히 거부한다(이력서 R009 선례).
      */
-    public Report findOwned(Long userId, Long reportId) {
+    public Report getOwned(Long userId, Long reportId) {
         Report report = reportRepository.findById(reportId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.REPORT_NOT_FOUND));
         if (!report.getUserId().equals(userId)) {
@@ -46,8 +46,8 @@ public class ReportRepositoryService {
     }
 
     /** 본인 소유 + COMPLETED 검증 — 존재(404) → 소유(403) → 상태(409) 순서. */
-    public Report findOwnedCompleted(Long userId, Long reportId) {
-        Report report = findOwned(userId, reportId);
+    public Report getOwnedCompleted(Long userId, Long reportId) {
+        Report report = getOwned(userId, reportId);
         if (report.getStatus() == ReportStatus.FAILED) {
             throw new BusinessException(ErrorCode.REPORT_GENERATION_FAILED);
         }
@@ -64,7 +64,7 @@ public class ReportRepositoryService {
      * 잠금은 트랜잭션이 끝날 때 풀리므로 반드시 호출자의 쓰기 트랜잭션 안에서 호출해야 한다
      * — 트랜잭션 없이 호출하면 잠금 쿼리가 예외로 실패한다.
      */
-    public Report findOwnedFailedForUpdate(Long userId, Long reportId) {
+    public Report lockOwnedFailed(Long userId, Long reportId) {
         Report report = reportRepository.findForUpdateById(reportId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.REPORT_NOT_FOUND));
         if (!report.getUserId().equals(userId)) {

@@ -68,7 +68,7 @@ class SessionServiceTest {
     void abortCountMismatchRejectsCreation() {
         // 조회 시점엔 PENDING이었지만 조건부 UPDATE가 0건 — 조회~전이 사이 다른 경로가 상태를 바꾼 상황.
         // user 잠금 하에서는 불가능하므로, 잠금을 공유하지 않는 전이 경로가 생겼다는 신호로 보고 중단해야 한다.
-        when(userRepositoryService.findActiveWithLock(anyLong()))
+        when(userRepositoryService.lockActive(anyLong()))
                 .thenReturn(User.create("kakao-unit-1", null, null));
         InterviewSession stale = InterviewSession.pending(1L, null, InterviewType.FIVE_MIN, Position.BACKEND, "room-stale");
         when(sessionRepositoryService.findNonTerminalByUserId(anyLong())).thenReturn(List.of(stale));
@@ -91,7 +91,7 @@ class SessionServiceTest {
     @Test
     @DisplayName("진행 중 상태(IN_PROGRESS) 세션이 있으면 교체 시도 없이 S003으로 거부한다")
     void inProgressSessionRejectsBeforeAbort() {
-        when(userRepositoryService.findActiveWithLock(anyLong()))
+        when(userRepositoryService.lockActive(anyLong()))
                 .thenReturn(User.create("kakao-unit-2", null, null));
         InterviewSession active = InterviewSession.pending(1L, null, InterviewType.FIVE_MIN, Position.BACKEND, "room-live");
         setStatus(active, SessionStatus.ACTIVE);

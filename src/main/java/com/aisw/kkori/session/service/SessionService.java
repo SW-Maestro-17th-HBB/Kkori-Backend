@@ -123,7 +123,7 @@ public class SessionService {
      */
     private CreationPlan planInTransaction(Long userId, InterviewSessionCreateRequest request, String roomName) {
         // 1) user 행 잠금 + 활성 재확인 — 탈퇴가 선점했으면 401. 잠금 순서는 user 선행(E1 계약과 무충돌)
-        userRepositoryService.findActiveWithLock(userId);
+        userRepositoryService.lockActive(userId);
 
         // 2) 트랜잭션 시각 — 잠금 획득 후 취득 (공통: 시각 처리)
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
@@ -133,8 +133,8 @@ public class SessionService {
         //    컨텍스트를 비우기 전이자, 검증과 같은 잠금·스냅샷이라 조립 입력의 일관성이 보장된다.
         StructuredData structuredData = null;
         if (request.resumeId() != null) {
-            structuredData = resumeRepositoryService.findAuthorized(userId, request.resumeId()).getStructuredData();
-            resumeRepositoryService.requireEmbedded(resumeRepositoryService.statusOf(request.resumeId()));
+            structuredData = resumeRepositoryService.getOwned(userId, request.resumeId()).getStructuredData();
+            resumeRepositoryService.requireEmbedded(resumeRepositoryService.getStatus(request.resumeId()));
         }
 
         // 4) 기존 세션 판정 — 진행 중(ACTIVE 계열)이면 409, PENDING은 ABORTED로 자동 교체.

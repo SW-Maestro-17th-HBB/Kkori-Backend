@@ -55,7 +55,7 @@ public class SessionEndService {
 
     /** 세션 종료 요청을 수리한다 — 소유자만, 상태 무관. */
     public void end(Long userId, Long sessionId) {
-        InterviewSession session = sessionRepositoryService.findOwned(userId, sessionId);
+        InterviewSession session = sessionRepositoryService.getOwned(userId, sessionId);
 
         // [트랜잭션] user 잠금 하에 상태를 재판정하고 기록한다 — 잠금 획득 시점의 상태 기준.
         EndAction action = transactionTemplate.execute(status -> planInTransaction(userId, sessionId, null));

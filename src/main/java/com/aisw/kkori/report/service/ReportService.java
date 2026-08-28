@@ -92,7 +92,7 @@ public class ReportService {
 
     @Transactional(readOnly = true)
     public ReportDetailResponse getDetail(Long userId, Long reportId) {
-        Report report = reportRepositoryService.findOwnedCompleted(userId, reportId);
+        Report report = reportRepositoryService.getOwnedCompleted(userId, reportId);
         // COMPLETED 리포트에는 텍스트 3축 점수가 반드시 존재한다(Worker가 한 트랜잭션으로 저장).
         ReportScore score = reportRepositoryService.getScore(report.getId());
         List<ReportFeedback> feedbacks = reportRepositoryService.findFeedbacks(report.getId());
@@ -104,7 +104,7 @@ public class ReportService {
      */
     @Transactional(readOnly = true)
     public ReportTimelineResponse getTimeline(Long userId, Long reportId) {
-        Report report = reportRepositoryService.findOwnedCompleted(userId, reportId);
+        Report report = reportRepositoryService.getOwnedCompleted(userId, reportId);
         List<TranscriptUtterance> utterances =
                 reportRepositoryService.getUtterances(report.getInterviewSessionId());
         List<ReportFeedback> feedbacks = reportRepositoryService.findFeedbacks(report.getId());
@@ -119,7 +119,7 @@ public class ReportService {
      */
     @Transactional
     public ReportRegenerateResponse regenerate(Long userId, Long reportId) {
-        Report report = reportRepositoryService.findOwnedFailedForUpdate(userId, reportId);
+        Report report = reportRepositoryService.lockOwnedFailed(userId, reportId);
         report.restartForRegeneration();
         reportRepositoryService.updateJobRequestedAtToNow(report.getId());
         generationRequestPublisher.publishForRegeneration(
@@ -240,6 +240,6 @@ public class ReportService {
      */
     @Transactional(readOnly = true)
     public ReportStatusResponse getStatus(Long userId, Long reportId) {
-        return ReportStatusResponse.from(reportRepositoryService.findOwned(userId, reportId));
+        return ReportStatusResponse.from(reportRepositoryService.getOwned(userId, reportId));
     }
 }

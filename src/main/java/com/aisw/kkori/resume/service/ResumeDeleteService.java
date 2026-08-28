@@ -33,9 +33,9 @@ public class ResumeDeleteService {
     @Transactional
     public void delete(Long userId, Long resumeId) {
         // 세션 생성과의 직렬화 지점 — user 행 잠금 + 활성 재확인 (유저 상태 경로 공통 관례)
-        userRepositoryService.findActiveWithLock(userId);
+        userRepositoryService.lockActive(userId);
         // 존재(404) → 소유(403) — 이미 삭제된 이력서는 @SQLRestriction으로 404에 수렴한다
-        Resume resume = resumeRepositoryService.findAuthorized(userId, resumeId);
+        Resume resume = resumeRepositoryService.getOwned(userId, resumeId);
         // 진행 중 면접에서 사용 중인 이력서는 삭제 불가 — R013 (면접이 검색할 청크 보호)
         if (resumeUsageChecker.isInUse(resumeId)) {
             throw new BusinessException(ErrorCode.RESUME_IN_USE);

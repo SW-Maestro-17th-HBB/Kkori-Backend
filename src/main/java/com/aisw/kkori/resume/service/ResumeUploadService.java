@@ -98,7 +98,7 @@ public class ResumeUploadService {
     }
 
     private AnalysisStatus currentStatusOf(Resume resume) {
-        return resumeRepositoryService.currentParseStatus(resume.getId());
+        return resumeRepositoryService.getCurrentParseStatus(resume.getId());
     }
 
     /**

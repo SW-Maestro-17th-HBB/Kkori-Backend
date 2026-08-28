@@ -36,7 +36,7 @@ public class SessionRepositoryService {
     }
 
     /** 존재(404) → 소유(403) 검증 — 소유자 API(종료·재입장)의 진입 검증. */
-    public InterviewSession findOwned(Long userId, Long sessionId) {
+    public InterviewSession getOwned(Long userId, Long sessionId) {
         InterviewSession session = getById(sessionId);
         if (!session.getUserId().equals(userId)) {
             throw new BusinessException(ErrorCode.SESSION_FORBIDDEN);

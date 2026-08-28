@@ -165,7 +165,7 @@ public class TokenService {
         // 스칼라 조회 — 엔티티로 읽으면 아래 잠금 조회가 낡은 관리 인스턴스를 반환할 수 있다
         Long userId = authRepositoryService.findUserIdByTokenHash(tokenHash)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RT_NOT_FOUND));
-        boolean active = userRepositoryService.lockActive(userId).isPresent();
+        boolean active = userRepositoryService.tryLockActive(userId).isPresent();
         if (!active) {
             throw new BusinessException(ErrorCode.RT_NOT_FOUND);
         }
