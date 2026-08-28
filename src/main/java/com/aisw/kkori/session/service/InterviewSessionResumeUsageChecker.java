@@ -18,6 +18,6 @@ public class InterviewSessionResumeUsageChecker implements ResumeUsageChecker {
 
     @Override
     public boolean isInUse(Long resumeId) {
-        return sessionRepositoryService.existsByResumeIdAndStatusIn(resumeId, SessionStatus.NON_TERMINAL);
+        return sessionRepositoryService.hasNonTerminalByResumeId(resumeId);
     }
 }

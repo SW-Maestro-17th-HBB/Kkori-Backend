@@ -71,7 +71,7 @@ class SessionServiceTest {
         when(userRepositoryService.findActiveWithLock(anyLong()))
                 .thenReturn(User.create("kakao-unit-1", null, null));
         InterviewSession stale = InterviewSession.pending(1L, null, InterviewType.FIVE_MIN, Position.BACKEND, "room-stale");
-        when(sessionRepositoryService.findByUserIdAndStatusIn(anyLong(), anyCollection())).thenReturn(List.of(stale));
+        when(sessionRepositoryService.findNonTerminalByUserId(anyLong())).thenReturn(List.of(stale));
         when(sessionRepositoryService.abortPendingByIds(anyCollection(), any())).thenReturn(0);
 
         assertThatThrownBy(() -> sessionService.create(1L,
@@ -95,7 +95,7 @@ class SessionServiceTest {
                 .thenReturn(User.create("kakao-unit-2", null, null));
         InterviewSession active = InterviewSession.pending(1L, null, InterviewType.FIVE_MIN, Position.BACKEND, "room-live");
         setStatus(active, SessionStatus.ACTIVE);
-        when(sessionRepositoryService.findByUserIdAndStatusIn(anyLong(), anyCollection())).thenReturn(List.of(active));
+        when(sessionRepositoryService.findNonTerminalByUserId(anyLong())).thenReturn(List.of(active));
 
         assertThatThrownBy(() -> sessionService.create(1L,
                 new InterviewSessionCreateRequest(null, InterviewType.FIVE_MIN, Position.BACKEND)))

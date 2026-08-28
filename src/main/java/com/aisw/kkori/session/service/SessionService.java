@@ -98,7 +98,7 @@ public class SessionService {
             // 미존재 룸을 자동 생성하므로(실측 확인) 방금 호출이 에이전트 있는 좀비 룸을 되살렸을 수
             // 있다 — 교체가 감지되면 룸을 보상 삭제(재생성 룸·agent job 함께 소멸)하고 409로 끝낸다.
             // 교체가 이 재확인 뒤에 오는 경우는 정상 교체 흐름과 같다(교체측 룸 삭제가 job까지 정리).
-            if (!sessionRepositoryService.existsByIdAndStatus(plan.sessionId(), SessionStatus.PENDING)) {
+            if (!sessionRepositoryService.isInStatus(plan.sessionId(), SessionStatus.PENDING)) {
                 throw new BusinessException(ErrorCode.SESSION_SUPERSEDED);
             }
             // 녹음 시작(PRD interview-recording.md 기능 1)은 승계 재확인 뒤에 둔다 — 교체가 확정된
@@ -139,7 +139,7 @@ public class SessionService {
 
         // 4) 기존 세션 판정 — 진행 중(ACTIVE 계열)이면 409, PENDING은 ABORTED로 자동 교체.
         //    룸 이름은 벌크 UPDATE(영속성 컨텍스트 clear) 전에 수집한다.
-        List<InterviewSession> existing = sessionRepositoryService.findByUserIdAndStatusIn(userId, SessionStatus.NON_TERMINAL);
+        List<InterviewSession> existing = sessionRepositoryService.findNonTerminalByUserId(userId);
         if (existing.stream().anyMatch(s -> SessionStatus.IN_PROGRESS.contains(s.getStatus()))) {
             throw new BusinessException(ErrorCode.SESSION_ALREADY_IN_PROGRESS);
         }

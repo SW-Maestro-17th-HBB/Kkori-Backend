@@ -88,7 +88,7 @@ public class SessionSweeper {
         Instant cutoff = now.minus(properties.endFallbackTimeout());
         Set<SessionStatus> targets = Set.of(SessionStatus.ACTIVE, SessionStatus.INTERRUPTED);
         forEachIsolated("fallback",
-                sessionRepositoryService.findByStatusInAndEndRequestedAtLessThanEqual(targets, cutoff),
+                sessionRepositoryService.findEndRequestedFallbackCandidates(targets, cutoff),
                 session -> {
                     SessionStatus to = arbitrateTerminal(session.getId(), "fallback");
                     int updated = transitionExecutor.execute(session.getUserId(),
@@ -113,8 +113,7 @@ public class SessionSweeper {
         Instant cutoff = now.minus(graceWindow);
         Instant probeCeiling = now.minus(graceWindow.multipliedBy(PROBE_CEILING_MULTIPLIER));
         forEachIsolated("INTERRUPTED 유예",
-                sessionRepositoryService.findByStatusAndEndRequestedAtIsNullAndDisconnectedAtLessThanEqual(
-                        SessionStatus.INTERRUPTED, cutoff),
+                sessionRepositoryService.findInterruptedGraceExpired(cutoff),
                 session -> {
                     if (sessionRepositoryService.transcriptExists(session.getId())) {
                         // 이탈 중 면접 시간 소진 → flush 정상 종료의 webhook 유실 보정
@@ -182,7 +181,7 @@ public class SessionSweeper {
         Instant cutoff = now.minus(properties.agentLostGrace());
         Instant reconnectCutoff = now.minus(properties.reconnectWindow().plus(INTERRUPTED_GRACE_MARGIN));
         forEachIsolated("유예 만료",
-                sessionRepositoryService.findByStatusAndAgentLostAtLessThanEqual(SessionStatus.AGENT_LOST, cutoff),
+                sessionRepositoryService.findAgentLostGraceExpired(cutoff),
                 session -> {
                     if (session.getDisconnectedAt() != null
                             && session.getDisconnectedAt().isAfter(reconnectCutoff)) {
@@ -215,8 +214,7 @@ public class SessionSweeper {
         Instant probeCeiling = now.minus(
                 properties.staleRecoveryTimeout().multipliedBy(PROBE_CEILING_MULTIPLIER));
         forEachIsolated("stale ACTIVE",
-                sessionRepositoryService.findByStatusAndEndRequestedAtIsNullAndStartedAtLessThanEqual(
-                        SessionStatus.ACTIVE, cutoff),
+                sessionRepositoryService.findStaleActive(cutoff),
                 session -> {
                     if (sessionRepositoryService.transcriptExists(session.getId())) {
                         finishStaleActive(session, SessionStatus.ENDED);
@@ -266,7 +264,7 @@ public class SessionSweeper {
         Instant probeCeiling = now.minus(
                 properties.staleRecoveryTimeout().multipliedBy(PROBE_CEILING_MULTIPLIER));
         forEachIsolated("stale PENDING",
-                sessionRepositoryService.findByStatusAndCreatedAtLessThanEqual(SessionStatus.PENDING, cutoff),
+                sessionRepositoryService.findStalePending(cutoff),
                 session -> {
                     if (sessionRepositoryService.transcriptExists(session.getId())) {
                         finishStalePending(session, SessionStatus.ENDED);

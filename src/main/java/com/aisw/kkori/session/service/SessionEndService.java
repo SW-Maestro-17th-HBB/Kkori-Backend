@@ -55,11 +55,7 @@ public class SessionEndService {
 
     /** 세션 종료 요청을 수리한다 — 소유자만, 상태 무관. */
     public void end(Long userId, Long sessionId) {
-        InterviewSession session = sessionRepositoryService.findById(sessionId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
-        if (!session.getUserId().equals(userId)) {
-            throw new BusinessException(ErrorCode.SESSION_FORBIDDEN);
-        }
+        InterviewSession session = sessionRepositoryService.findOwned(userId, sessionId);
 
         // [트랜잭션] user 잠금 하에 상태를 재판정하고 기록한다 — 잠금 획득 시점의 상태 기준.
         EndAction action = transactionTemplate.execute(status -> planInTransaction(userId, sessionId, null));
@@ -86,8 +82,7 @@ public class SessionEndService {
         // 활성 재확인 없는 잠금 — 소유 검증은 이미 끝났고, 전이 직렬화만 필요하다(전이 경로 공통)
         userRepositoryService.lockUser(userId);
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
-        InterviewSession session = sessionRepositoryService.findById(sessionId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
+        InterviewSession session = sessionRepositoryService.getById(sessionId);
         return switch (session.getStatus()) {
             // INTERRUPTED 포함(HBB1-308) — 에이전트가 살아 대기 중이라 SendData가 도달하고,
             // 진행된 면접 산출물(행·리포트)이 클로징·flush로 보존된다(즉시 ABORTED는 내용 손실)

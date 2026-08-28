@@ -1,5 +1,7 @@
 package com.aisw.kkori.session.repositoryservice;
 
+import com.aisw.kkori.global.exception.BusinessException;
+import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.session.domain.InterviewSession;
 import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.dto.TerminationMarker;
@@ -33,8 +35,19 @@ public class SessionRepositoryService {
         return sessionRepository.save(session);
     }
 
-    public Optional<InterviewSession> findById(Long id) {
-        return sessionRepository.findById(id);
+    /** 존재(404) → 소유(403) 검증 — 소유자 API(종료·재입장)의 진입 검증. */
+    public InterviewSession findOwned(Long userId, Long sessionId) {
+        InterviewSession session = getById(sessionId);
+        if (!session.getUserId().equals(userId)) {
+            throw new BusinessException(ErrorCode.SESSION_FORBIDDEN);
+        }
+        return session;
+    }
+
+    /** 존재 검증 조회 — 부재는 404. 잠금 획득 후 최신 상태를 다시 읽는 경로에도 쓴다. */
+    public InterviewSession getById(Long sessionId) {
+        return sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
     }
 
     public Optional<InterviewSession> findByLivekitRoom(String livekitRoom) {
@@ -45,16 +58,19 @@ public class SessionRepositoryService {
         return sessionRepository.findByEgressId(egressId);
     }
 
-    public List<InterviewSession> findByUserIdAndStatusIn(Long userId, Collection<SessionStatus> statuses) {
-        return sessionRepository.findByUserIdAndStatusIn(userId, statuses);
+    /** 유저의 종결되지 않은(non-terminal) 세션 전부 — 생성 시 기존 세션 판정용. */
+    public List<InterviewSession> findNonTerminalByUserId(Long userId) {
+        return sessionRepository.findByUserIdAndStatusIn(userId, SessionStatus.NON_TERMINAL);
     }
 
-    public boolean existsByIdAndStatus(Long id, SessionStatus status) {
+    /** 세션이 아직 해당 상태인지 재확인 — 커밋 후 승계·재디스패치 직전 검사용. */
+    public boolean isInStatus(Long id, SessionStatus status) {
         return sessionRepository.existsByIdAndStatus(id, status);
     }
 
-    public boolean existsByResumeIdAndStatusIn(Long resumeId, Collection<SessionStatus> statuses) {
-        return sessionRepository.existsByResumeIdAndStatusIn(resumeId, statuses);
+    /** 이력서를 참조하는 종결되지 않은 세션 존재 여부 — "사용 중 이력서" 판정의 원천. */
+    public boolean hasNonTerminalByResumeId(Long resumeId) {
+        return sessionRepository.existsByResumeIdAndStatusIn(resumeId, SessionStatus.NON_TERMINAL);
     }
 
     // ── 상태 전이 (조건부 벌크 UPDATE — 원자적·멱등, 계약은 repository javadoc) ──
@@ -125,27 +141,32 @@ public class SessionRepositoryService {
 
     // ── 스위퍼 후보 조회 ──
 
-    public List<InterviewSession> findByStatusInAndEndRequestedAtLessThanEqual(
+    /** /end 수리 후 room_finished가 오지 않은 fallback 후보 — 종료 요청 시각이 컷오프를 지난 세션. */
+    public List<InterviewSession> findEndRequestedFallbackCandidates(
             Collection<SessionStatus> statuses, Instant cutoff) {
         return sessionRepository.findByStatusInAndEndRequestedAtLessThanEqual(statuses, cutoff);
     }
 
-    public List<InterviewSession> findByStatusAndEndRequestedAtIsNullAndDisconnectedAtLessThanEqual(
-            SessionStatus status, Instant cutoff) {
-        return sessionRepository.findByStatusAndEndRequestedAtIsNullAndDisconnectedAtLessThanEqual(status, cutoff);
+    /** 재연결 유예 만료 후보 — 이탈 시각이 컷오프를 지난 INTERRUPTED(종료 요청 있는 세션은 fallback 전담). */
+    public List<InterviewSession> findInterruptedGraceExpired(Instant cutoff) {
+        return sessionRepository.findByStatusAndEndRequestedAtIsNullAndDisconnectedAtLessThanEqual(
+                SessionStatus.INTERRUPTED, cutoff);
     }
 
-    public List<InterviewSession> findByStatusAndAgentLostAtLessThanEqual(SessionStatus status, Instant cutoff) {
-        return sessionRepository.findByStatusAndAgentLostAtLessThanEqual(status, cutoff);
+    /** 에이전트 소실 유예 만료 후보 — 소실 관측 시각이 컷오프를 지난 AGENT_LOST. */
+    public List<InterviewSession> findAgentLostGraceExpired(Instant cutoff) {
+        return sessionRepository.findByStatusAndAgentLostAtLessThanEqual(SessionStatus.AGENT_LOST, cutoff);
     }
 
-    public List<InterviewSession> findByStatusAndEndRequestedAtIsNullAndStartedAtLessThanEqual(
-            SessionStatus status, Instant cutoff) {
-        return sessionRepository.findByStatusAndEndRequestedAtIsNullAndStartedAtLessThanEqual(status, cutoff);
+    /** stale ACTIVE 후보 — 시작 시각이 컷오프를 지난 ACTIVE(종료 요청 있는 세션은 fallback 전담). */
+    public List<InterviewSession> findStaleActive(Instant cutoff) {
+        return sessionRepository.findByStatusAndEndRequestedAtIsNullAndStartedAtLessThanEqual(
+                SessionStatus.ACTIVE, cutoff);
     }
 
-    public List<InterviewSession> findByStatusAndCreatedAtLessThanEqual(SessionStatus status, Instant cutoff) {
-        return sessionRepository.findByStatusAndCreatedAtLessThanEqual(status, cutoff);
+    /** stale PENDING 후보 — 생성 시각이 컷오프를 지난 PENDING. */
+    public List<InterviewSession> findStalePending(Instant cutoff) {
+        return sessionRepository.findByStatusAndCreatedAtLessThanEqual(SessionStatus.PENDING, cutoff);
     }
 
     // ── 증거 읽기 (네이티브·Redis — 호출부는 의도적으로 트랜잭션 밖에서 부른다) ──

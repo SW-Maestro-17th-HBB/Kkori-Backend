@@ -123,7 +123,7 @@ public class SessionRedispatchService {
         }
 
         // ④ 생성 직전 상태 재확인
-        if (!sessionRepositoryService.existsByIdAndStatus(sessionId, SessionStatus.AGENT_LOST)) {
+        if (!sessionRepositoryService.isInStatus(sessionId, SessionStatus.AGENT_LOST)) {
             log.info("재디스패치 상태 재확인 — AGENT_LOST 아님, 생성 중단 (sessionId={})", sessionId);
             return;
         }
