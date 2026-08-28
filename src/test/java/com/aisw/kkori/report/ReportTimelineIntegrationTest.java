@@ -167,6 +167,31 @@ class ReportTimelineIntegrationTest {
                 .andExpect(jsonPath("$.data.items[1].answer").value(""));
     }
 
+    @Test
+    @DisplayName("에이전트 실물 직렬화를 수용한다 — CANDIDATE 발화는 답변으로 결합되고 "
+            + "questionNumber 없는 closing 인사는 항목에서 제외된다")
+    void acceptsAgentSerialization() throws Exception {
+        long reportId = fixtures.evaluatedReport(USER_ID, null);
+        // 실물 형태 그대로: 지원자 발화는 questionType 없음, closing 인사는 questionNumber 없음
+        fixtures.transcript(fixtures.sessionIdOf(reportId), "[" + String.join(",",
+                utterance(1, 1, "INTERVIEWER", "initial", "자기소개를 부탁드립니다.", "2026-07-01T10:00:00Z"),
+                """
+                {"questionNumber": 1, "parentQuestionNumber": 1, "speaker": "CANDIDATE",
+                 "content": "안녕하세요, 백엔드 지원자입니다.", "spokenAt": "2026-07-01T10:00:10Z"}""",
+                """
+                {"speaker": "INTERVIEWER", "questionType": "closing",
+                 "content": "오늘 면접은 여기까지입니다.", "spokenAt": "2026-07-01T10:05:00Z"}"""
+        ) + "]");
+
+        mockMvc.perform(get("/api/v1/reports/{reportId}/timeline", reportId).with(authOf(USER_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].questionNumber").value(1))
+                .andExpect(jsonPath("$.data.items[0].answer").value("안녕하세요, 백엔드 지원자입니다."))
+                // questionType은 대본 값 그대로 (값 집합 합의 미정 — PRD §1 기타)
+                .andExpect(jsonPath("$.data.items[0].questionType").value("initial"));
+    }
+
     /** 대본 계약 위반 케이스 — 전부 조립 중 원시 예외(NPE 등) 대신 읽기 계층에서 500으로 변환돼야 한다. */
     static Stream<Arguments> 계약_위반_대본() {
         String valid = "\"questionNumber\": 1, \"parentQuestionNumber\": 1, \"speaker\": \"INTERVIEWER\", "
@@ -174,9 +199,6 @@ class ReportTimelineIntegrationTest {
         return Stream.of(
                 Arguments.of("문서 전체가 JSON null", "null"),
                 Arguments.of("배열 원소가 null", "[null]"),
-                Arguments.of("questionNumber 누락", """
-                        [{"parentQuestionNumber": 1, "speaker": "INTERVIEWER", "questionType": "MAIN",
-                          "content": "질문입니다.", "spokenAt": "2026-07-01T10:00:00Z"}]"""),
                 Arguments.of("content 누락", "[{" + valid + ", \"spokenAt\": \"2026-07-01T10:00:00Z\"}]"),
                 Arguments.of("spokenAt null", "[{" + valid + ", \"content\": \"질문입니다.\", \"spokenAt\": null}]"),
                 Arguments.of("spokenAt 형식 오류",
