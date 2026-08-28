@@ -5,7 +5,7 @@ import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.global.response.PageResponse;
 import com.aisw.kkori.resume.domain.AnalysisStatus;
 import com.aisw.kkori.resume.dto.ResumeSummaryResponse;
-import com.aisw.kkori.resume.repository.ResumeAnalysisStatusRepository;
+import com.aisw.kkori.resume.repositoryservice.ResumeRepositoryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -24,7 +24,7 @@ public class ResumeQueryService {
 
     private static final int MAX_PAGE_SIZE = 100;
 
-    private final ResumeAnalysisStatusRepository statusRepository;
+    private final ResumeRepositoryService resumeRepositoryService;
 
     @Transactional(readOnly = true)
     public PageResponse<ResumeSummaryResponse> getList(Long userId, String status, int page, int size) {
@@ -34,8 +34,8 @@ public class ResumeQueryService {
         AnalysisStatus filter = parseStatus(status);
         PageRequest pageable = PageRequest.of(page, size);
         Page<ResumeSummaryResponse> summaries = (filter == null)
-                ? statusRepository.findSummariesByUserId(userId, pageable)
-                : statusRepository.findSummariesByUserIdAndStatus(userId, filter, pageable);
+                ? resumeRepositoryService.findSummariesByUserId(userId, pageable)
+                : resumeRepositoryService.findSummariesByUserIdAndStatus(userId, filter, pageable);
         return PageResponse.from(summaries);
     }
 

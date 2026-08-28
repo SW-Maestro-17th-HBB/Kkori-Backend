@@ -3,7 +3,7 @@ package com.aisw.kkori.session.service;
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.resume.domain.StructuredData;
-import com.aisw.kkori.resume.service.ResumeAccessGuard;
+import com.aisw.kkori.resume.repositoryservice.ResumeRepositoryService;
 import com.aisw.kkori.session.domain.InterviewSession;
 import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.dto.InterviewSessionCreateRequest;
@@ -53,7 +53,7 @@ public class SessionService {
 
     private final UserRepositoryService userRepositoryService;
     private final InterviewSessionRepository sessionRepository;
-    private final ResumeAccessGuard resumeAccessGuard;
+    private final ResumeRepositoryService resumeRepositoryService;
     private final SessionRoomManager roomManager;
     private final SessionTicketIssuer ticketIssuer;
     private final DispatchMetadataAssembler metadataAssembler;
@@ -133,8 +133,8 @@ public class SessionService {
         //    컨텍스트를 비우기 전이자, 검증과 같은 잠금·스냅샷이라 조립 입력의 일관성이 보장된다.
         StructuredData structuredData = null;
         if (request.resumeId() != null) {
-            structuredData = resumeAccessGuard.findAuthorized(userId, request.resumeId()).getStructuredData();
-            resumeAccessGuard.requireEmbedded(resumeAccessGuard.statusOf(request.resumeId()));
+            structuredData = resumeRepositoryService.findAuthorized(userId, request.resumeId()).getStructuredData();
+            resumeRepositoryService.requireEmbedded(resumeRepositoryService.statusOf(request.resumeId()));
         }
 
         // 4) 기존 세션 판정 — 진행 중(ACTIVE 계열)이면 409, PENDING은 ABORTED로 자동 교체.

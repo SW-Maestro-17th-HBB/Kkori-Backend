@@ -2,7 +2,7 @@ package com.aisw.kkori.session.service;
 
 import com.aisw.kkori.resume.domain.Resume;
 import com.aisw.kkori.resume.domain.StructuredData;
-import com.aisw.kkori.resume.repository.ResumeRepository;
+import com.aisw.kkori.resume.repositoryservice.ResumeRepositoryService;
 import com.aisw.kkori.session.domain.InterviewSession;
 import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.dto.RoomPresence;
@@ -52,7 +52,7 @@ import java.util.List;
 public class SessionRedispatchService {
 
     private final InterviewSessionRepository sessionRepository;
-    private final ResumeRepository resumeRepository;
+    private final ResumeRepositoryService resumeRepositoryService;
     private final DispatchMetadataAssembler metadataAssembler;
     private final SessionAgentDispatcher agentDispatcher;
     private final SessionRoomManager roomManager;
@@ -95,7 +95,7 @@ public class SessionRedispatchService {
                 return null;
             }
             StructuredData structuredData = session.getResumeId() == null ? null
-                    : resumeRepository.findById(session.getResumeId())
+                    : resumeRepositoryService.findById(session.getResumeId())
                             .map(Resume::getStructuredData).orElse(null);
             return metadataAssembler.assemble(
                     sessionId, session.getInterviewType(), session.getPosition(), structuredData);

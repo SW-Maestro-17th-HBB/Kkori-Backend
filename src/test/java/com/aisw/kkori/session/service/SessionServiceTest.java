@@ -2,7 +2,7 @@ package com.aisw.kkori.session.service;
 
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
-import com.aisw.kkori.resume.service.ResumeAccessGuard;
+import com.aisw.kkori.resume.repositoryservice.ResumeRepositoryService;
 import com.aisw.kkori.session.domain.InterviewSession;
 import com.aisw.kkori.session.domain.InterviewType;
 import com.aisw.kkori.session.domain.Position;
@@ -42,7 +42,7 @@ class SessionServiceTest {
 
     private final UserRepositoryService userRepositoryService = mock(UserRepositoryService.class);
     private final InterviewSessionRepository sessionRepository = mock(InterviewSessionRepository.class);
-    private final ResumeAccessGuard resumeAccessGuard = mock(ResumeAccessGuard.class);
+    private final ResumeRepositoryService resumeRepositoryService = mock(ResumeRepositoryService.class);
     private final SessionRoomManager roomManager = mock(SessionRoomManager.class);
     private final SessionTicketIssuer ticketIssuer = mock(SessionTicketIssuer.class);
     private final DispatchMetadataAssembler metadataAssembler = mock(DispatchMetadataAssembler.class);
@@ -52,7 +52,7 @@ class SessionServiceTest {
     private final Clock clock = Clock.fixed(Instant.parse("2026-07-22T09:00:00Z"), ZoneOffset.UTC);
 
     private final SessionService sessionService = new SessionService(
-            userRepositoryService, sessionRepository, resumeAccessGuard, roomManager, ticketIssuer,
+            userRepositoryService, sessionRepository, resumeRepositoryService, roomManager, ticketIssuer,
             metadataAssembler, agentDispatcher, sessionRecorder, transactionTemplate, clock);
 
     @BeforeEach
