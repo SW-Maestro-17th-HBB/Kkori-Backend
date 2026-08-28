@@ -8,7 +8,7 @@ import com.aisw.kkori.session.domain.InterviewSession;
 import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.dto.InterviewSessionCreateRequest;
 import com.aisw.kkori.session.dto.InterviewSessionCreateResponse;
-import com.aisw.kkori.session.repository.InterviewSessionRepository;
+import com.aisw.kkori.session.repositoryservice.SessionRepositoryService;
 import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,7 +52,7 @@ public class SessionService {
     private static final String ROOM_PREFIX = "room-";
 
     private final UserRepositoryService userRepositoryService;
-    private final InterviewSessionRepository sessionRepository;
+    private final SessionRepositoryService sessionRepositoryService;
     private final ResumeRepositoryService resumeRepositoryService;
     private final SessionRoomManager roomManager;
     private final SessionTicketIssuer ticketIssuer;
@@ -98,7 +98,7 @@ public class SessionService {
             // 미존재 룸을 자동 생성하므로(실측 확인) 방금 호출이 에이전트 있는 좀비 룸을 되살렸을 수
             // 있다 — 교체가 감지되면 룸을 보상 삭제(재생성 룸·agent job 함께 소멸)하고 409로 끝낸다.
             // 교체가 이 재확인 뒤에 오는 경우는 정상 교체 흐름과 같다(교체측 룸 삭제가 job까지 정리).
-            if (!sessionRepository.existsByIdAndStatus(plan.sessionId(), SessionStatus.PENDING)) {
+            if (!sessionRepositoryService.existsByIdAndStatus(plan.sessionId(), SessionStatus.PENDING)) {
                 throw new BusinessException(ErrorCode.SESSION_SUPERSEDED);
             }
             // 녹음 시작(PRD interview-recording.md 기능 1)은 승계 재확인 뒤에 둔다 — 교체가 확정된
@@ -139,7 +139,7 @@ public class SessionService {
 
         // 4) 기존 세션 판정 — 진행 중(ACTIVE 계열)이면 409, PENDING은 ABORTED로 자동 교체.
         //    룸 이름은 벌크 UPDATE(영속성 컨텍스트 clear) 전에 수집한다.
-        List<InterviewSession> existing = sessionRepository.findByUserIdAndStatusIn(userId, SessionStatus.NON_TERMINAL);
+        List<InterviewSession> existing = sessionRepositoryService.findByUserIdAndStatusIn(userId, SessionStatus.NON_TERMINAL);
         if (existing.stream().anyMatch(s -> SessionStatus.IN_PROGRESS.contains(s.getStatus()))) {
             throw new BusinessException(ErrorCode.SESSION_ALREADY_IN_PROGRESS);
         }
@@ -149,7 +149,7 @@ public class SessionService {
             // 주의: 이 벌크 UPDATE는 clearAutomatically로 영속성 컨텍스트를 비운다 — 1)에서 잠근 User를
             // 포함해 앞서 조회한 엔티티가 전부 detach되므로, 이 지점 이후 그 엔티티들을 변이하면 안 된다
             // (dirty checking 유실 — cancelPendingPurge의 clearAutomatically 관련 javadoc 참조).
-            int aborted = sessionRepository.abortPendingByIds(pendingIds, now);
+            int aborted = sessionRepositoryService.abortPendingByIds(pendingIds, now);
             if (aborted != pendingIds.size()) {
                 // user 잠금 하에서는 도달 불가한 상태 — 잠금을 공유하지 않는 전이 경로(예: 후속 webhook)가
                 // 조회~전이 사이에 PENDING을 다른 상태로 바꿨다는 신호다. 계속 진행하면 ACTIVE와 신규
@@ -163,7 +163,7 @@ public class SessionService {
         // 5) 신규 세션 저장 — IDENTITY 전략이라 저장 즉시 id가 확보된다 (identity·metadata 파생에 필요).
         //    디스패치 metadata는 트랜잭션 안에서 최종 JSON까지 확정한다 — 직렬화 실패(C001)가
         //    전체 롤백 + 선생성 룸 보상 삭제로 수렴하고, 커밋 후 단계는 실패 요인이 LiveKit 왕복뿐이게 된다.
-        InterviewSession session = sessionRepository.save(InterviewSession.pending(
+        InterviewSession session = sessionRepositoryService.save(InterviewSession.pending(
                 userId, request.resumeId(), request.interviewType(), request.position(), roomName));
         String dispatchMetadata = metadataAssembler.assemble(
                 session.getId(), request.interviewType(), request.position(), structuredData);
@@ -192,7 +192,7 @@ public class SessionService {
         try {
             Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
             transactionTemplate.executeWithoutResult(status ->
-                    sessionRepository.updateEgressId(sessionId, egressId, now));
+                    sessionRepositoryService.updateEgressId(sessionId, egressId, now));
         } catch (RuntimeException e) {
             log.warn("egress_id 기록 실패 — webhook 역매핑 불가 (sessionId={}, egressId={})",
                     sessionId, egressId, e);

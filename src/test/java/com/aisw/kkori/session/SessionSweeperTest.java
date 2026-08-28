@@ -4,10 +4,9 @@ import com.aisw.kkori.session.config.SessionProperties;
 import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.dto.AgentPresence;
 import com.aisw.kkori.session.dto.RoomPresence;
-import com.aisw.kkori.session.repository.InterviewTranscriptReader;
+import com.aisw.kkori.session.repositoryservice.SessionRepositoryService;
 import com.aisw.kkori.session.service.SessionSweeper;
 import com.aisw.kkori.session.service.SessionTransitionExecutor;
-import com.aisw.kkori.session.service.TerminationMarkerReader;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,17 +37,14 @@ class SessionSweeperTest extends SessionCompletionTestSupport {
     private static final Duration WINDOW = Duration.ofMinutes(3);
 
     @Autowired
-    private InterviewTranscriptReader transcriptReader;
-
-    @Autowired
-    private TerminationMarkerReader markerReader;
+    private SessionRepositoryService sessionRepositoryService;
 
     @Autowired
     private SessionTransitionExecutor transitionExecutor;
 
     /** 모든 앵커(지금 기록)가 임계를 지난 것으로 보이는 미래 시점의 스위퍼. */
     private SessionSweeper sweeperAt(Instant now) {
-        return new SessionSweeper(sessionRepository, transcriptReader, markerReader, roomManager,
+        return new SessionSweeper(sessionRepositoryService, roomManager,
                 transitionExecutor, new SessionProperties(FALLBACK, GRACE, STALE, Duration.ofSeconds(10), WINDOW),
                 Clock.fixed(now, ZoneOffset.UTC));
     }
@@ -153,7 +149,7 @@ class SessionSweeperTest extends SessionCompletionTestSupport {
         setSessionInstant(sessionId, "end_requested_at", Instant.now());
 
         // fallback 컷오프는 미도래(거대 타임아웃), stale 컷오프는 경과 — stale이 선점하면 안 된다
-        new SessionSweeper(sessionRepository, transcriptReader, markerReader, roomManager, transitionExecutor,
+        new SessionSweeper(sessionRepositoryService, roomManager, transitionExecutor,
                 new SessionProperties(Duration.ofDays(999), GRACE, STALE, Duration.ofSeconds(10), WINDOW),
                 Clock.fixed(Instant.now().plus(Duration.ofHours(2)), ZoneOffset.UTC))
                 .sweep();
@@ -374,7 +370,7 @@ class SessionSweeperTest extends SessionCompletionTestSupport {
         setSessionInstant(sessionId, "end_requested_at", Instant.now());
 
         // fallback 컷오프 미도래·유예 컷오프 경과 — 유예가 /end의 정상 종료 창을 선점하면 안 된다
-        new SessionSweeper(sessionRepository, transcriptReader, markerReader, roomManager, transitionExecutor,
+        new SessionSweeper(sessionRepositoryService, roomManager, transitionExecutor,
                 new SessionProperties(Duration.ofDays(999), GRACE, STALE, Duration.ofSeconds(10), WINDOW),
                 Clock.fixed(Instant.now().plus(Duration.ofMinutes(5)), ZoneOffset.UTC))
                 .sweep();

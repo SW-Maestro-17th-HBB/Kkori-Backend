@@ -2,7 +2,7 @@ package com.aisw.kkori.session.service;
 
 import com.aisw.kkori.resume.service.ResumeUsageChecker;
 import com.aisw.kkori.session.domain.SessionStatus;
-import com.aisw.kkori.session.repository.InterviewSessionRepository;
+import com.aisw.kkori.session.repositoryservice.SessionRepositoryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -14,10 +14,10 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class InterviewSessionResumeUsageChecker implements ResumeUsageChecker {
 
-    private final InterviewSessionRepository sessionRepository;
+    private final SessionRepositoryService sessionRepositoryService;
 
     @Override
     public boolean isInUse(Long resumeId) {
-        return sessionRepository.existsByResumeIdAndStatusIn(resumeId, SessionStatus.NON_TERMINAL);
+        return sessionRepositoryService.existsByResumeIdAndStatusIn(resumeId, SessionStatus.NON_TERMINAL);
     }
 }

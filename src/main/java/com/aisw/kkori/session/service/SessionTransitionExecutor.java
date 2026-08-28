@@ -1,6 +1,6 @@
 package com.aisw.kkori.session.service;
 
-import com.aisw.kkori.user.repository.UserRepository;
+import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -22,14 +22,14 @@ import java.util.function.Function;
 @RequiredArgsConstructor
 public class SessionTransitionExecutor {
 
-    private final UserRepository userRepository;
+    private final UserRepositoryService userRepositoryService;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
 
     /** 잠금 트랜잭션 안에서 전이를 실행하고 영향 행 수를 반환한다(시각은 잠금 획득 후 취득). */
     public int execute(Long userId, Function<Instant, Integer> transition) {
         Integer updated = transactionTemplate.execute(status -> {
-            userRepository.findWithLockById(userId);
+            userRepositoryService.findWithLockById(userId);
             Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
             return transition.apply(now);
         });

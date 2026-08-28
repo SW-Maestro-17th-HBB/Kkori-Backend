@@ -6,8 +6,8 @@ import com.aisw.kkori.resume.repositoryservice.ResumeRepositoryService;
 import com.aisw.kkori.session.domain.InterviewSession;
 import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.dto.RoomPresence;
-import com.aisw.kkori.session.repository.InterviewSessionRepository;
-import com.aisw.kkori.user.repository.UserRepository;
+import com.aisw.kkori.session.repositoryservice.SessionRepositoryService;
+import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -51,13 +51,13 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SessionRedispatchService {
 
-    private final InterviewSessionRepository sessionRepository;
+    private final SessionRepositoryService sessionRepositoryService;
     private final ResumeRepositoryService resumeRepositoryService;
     private final DispatchMetadataAssembler metadataAssembler;
     private final SessionAgentDispatcher agentDispatcher;
     private final SessionRoomManager roomManager;
     private final SessionTransitionExecutor transitionExecutor;
-    private final UserRepository userRepository;
+    private final UserRepositoryService userRepositoryService;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
 
@@ -89,9 +89,9 @@ public class SessionRedispatchService {
 
         // ① CAS + metadata 재조립 입력 확보
         String metadata = transactionTemplate.execute(status -> {
-            userRepository.findWithLockById(session.getUserId());
+            userRepositoryService.findWithLockById(session.getUserId());
             Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
-            if (sessionRepository.claimRedispatch(sessionId, now) != 1) {
+            if (sessionRepositoryService.claimRedispatch(sessionId, now) != 1) {
                 return null;
             }
             StructuredData structuredData = session.getResumeId() == null ? null
@@ -123,7 +123,7 @@ public class SessionRedispatchService {
         }
 
         // ④ 생성 직전 상태 재확인
-        if (!sessionRepository.existsByIdAndStatus(sessionId, SessionStatus.AGENT_LOST)) {
+        if (!sessionRepositoryService.existsByIdAndStatus(sessionId, SessionStatus.AGENT_LOST)) {
             log.info("재디스패치 상태 재확인 — AGENT_LOST 아님, 생성 중단 (sessionId={})", sessionId);
             return;
         }
@@ -138,14 +138,14 @@ public class SessionRedispatchService {
     private void restoreFromObservation(InterviewSession session, RoomPresence presence) {
         if (presence.candidatePresent()) {
             int updated = transitionExecutor.execute(session.getUserId(),
-                    now -> sessionRepository.resumeAgentLostToActive(session.getId(), now));
+                    now -> sessionRepositoryService.resumeAgentLostToActive(session.getId(), now));
             if (updated == 1) {
                 log.info("재디스패치 사전 확인 — 구 에이전트 재연결·candidate 재실, ACTIVE 복원 (sessionId={})",
                         session.getId());
             }
         } else {
             int updated = transitionExecutor.execute(session.getUserId(),
-                    now -> sessionRepository.resumeAgentLostToInterrupted(session.getId(), now));
+                    now -> sessionRepositoryService.resumeAgentLostToInterrupted(session.getId(), now));
             if (updated == 1) {
                 log.info("재디스패치 사전 확인 — AGENT만 관측, INTERRUPTED 전환(잔여 창) (sessionId={})",
                         session.getId());

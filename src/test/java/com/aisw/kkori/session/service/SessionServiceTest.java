@@ -8,7 +8,7 @@ import com.aisw.kkori.session.domain.InterviewType;
 import com.aisw.kkori.session.domain.Position;
 import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.dto.InterviewSessionCreateRequest;
-import com.aisw.kkori.session.repository.InterviewSessionRepository;
+import com.aisw.kkori.session.repositoryservice.SessionRepositoryService;
 import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,7 +41,7 @@ import static org.mockito.Mockito.when;
 class SessionServiceTest {
 
     private final UserRepositoryService userRepositoryService = mock(UserRepositoryService.class);
-    private final InterviewSessionRepository sessionRepository = mock(InterviewSessionRepository.class);
+    private final SessionRepositoryService sessionRepositoryService = mock(SessionRepositoryService.class);
     private final ResumeRepositoryService resumeRepositoryService = mock(ResumeRepositoryService.class);
     private final SessionRoomManager roomManager = mock(SessionRoomManager.class);
     private final SessionTicketIssuer ticketIssuer = mock(SessionTicketIssuer.class);
@@ -52,7 +52,7 @@ class SessionServiceTest {
     private final Clock clock = Clock.fixed(Instant.parse("2026-07-22T09:00:00Z"), ZoneOffset.UTC);
 
     private final SessionService sessionService = new SessionService(
-            userRepositoryService, sessionRepository, resumeRepositoryService, roomManager, ticketIssuer,
+            userRepositoryService, sessionRepositoryService, resumeRepositoryService, roomManager, ticketIssuer,
             metadataAssembler, agentDispatcher, sessionRecorder, transactionTemplate, clock);
 
     @BeforeEach
@@ -71,8 +71,8 @@ class SessionServiceTest {
         when(userRepositoryService.findActiveWithLock(anyLong()))
                 .thenReturn(User.create("kakao-unit-1", null, null));
         InterviewSession stale = InterviewSession.pending(1L, null, InterviewType.FIVE_MIN, Position.BACKEND, "room-stale");
-        when(sessionRepository.findByUserIdAndStatusIn(anyLong(), anyCollection())).thenReturn(List.of(stale));
-        when(sessionRepository.abortPendingByIds(anyCollection(), any())).thenReturn(0);
+        when(sessionRepositoryService.findByUserIdAndStatusIn(anyLong(), anyCollection())).thenReturn(List.of(stale));
+        when(sessionRepositoryService.abortPendingByIds(anyCollection(), any())).thenReturn(0);
 
         assertThatThrownBy(() -> sessionService.create(1L,
                 new InterviewSessionCreateRequest(null, InterviewType.FIVE_MIN, Position.BACKEND)))
@@ -80,7 +80,7 @@ class SessionServiceTest {
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
                         .isEqualTo(ErrorCode.SESSION_ALREADY_IN_PROGRESS));
 
-        verify(sessionRepository, never()).save(any());
+        verify(sessionRepositoryService, never()).save(any());
         // 룸은 트랜잭션 전에 선생성됐다가 롤백과 함께 보상 삭제되어야 한다
         ArgumentCaptor<String> room = ArgumentCaptor.forClass(String.class);
         verify(roomManager).createRoom(room.capture());
@@ -95,7 +95,7 @@ class SessionServiceTest {
                 .thenReturn(User.create("kakao-unit-2", null, null));
         InterviewSession active = InterviewSession.pending(1L, null, InterviewType.FIVE_MIN, Position.BACKEND, "room-live");
         setStatus(active, SessionStatus.ACTIVE);
-        when(sessionRepository.findByUserIdAndStatusIn(anyLong(), anyCollection())).thenReturn(List.of(active));
+        when(sessionRepositoryService.findByUserIdAndStatusIn(anyLong(), anyCollection())).thenReturn(List.of(active));
 
         assertThatThrownBy(() -> sessionService.create(1L,
                 new InterviewSessionCreateRequest(null, InterviewType.FIVE_MIN, Position.BACKEND)))
@@ -103,7 +103,7 @@ class SessionServiceTest {
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
                         .isEqualTo(ErrorCode.SESSION_ALREADY_IN_PROGRESS));
 
-        verify(sessionRepository, never()).abortPendingByIds(anyCollection(), any());
+        verify(sessionRepositoryService, never()).abortPendingByIds(anyCollection(), any());
         ArgumentCaptor<String> room = ArgumentCaptor.forClass(String.class);
         verify(roomManager).createRoom(room.capture());
         verify(roomManager).deleteRoomQuietly(room.getValue());

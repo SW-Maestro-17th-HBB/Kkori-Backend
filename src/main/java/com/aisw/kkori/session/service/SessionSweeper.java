@@ -5,8 +5,7 @@ import com.aisw.kkori.session.domain.InterviewSession;
 import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.dto.AgentPresence;
 import com.aisw.kkori.session.dto.RoomPresence;
-import com.aisw.kkori.session.repository.InterviewSessionRepository;
-import com.aisw.kkori.session.repository.InterviewTranscriptReader;
+import com.aisw.kkori.session.repositoryservice.SessionRepositoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -66,9 +65,7 @@ public class SessionSweeper {
      */
     private static final Duration INTERRUPTED_GRACE_MARGIN = Duration.ofSeconds(45);
 
-    private final InterviewSessionRepository sessionRepository;
-    private final InterviewTranscriptReader transcriptReader;
-    private final TerminationMarkerReader markerReader;
+    private final SessionRepositoryService sessionRepositoryService;
     private final SessionRoomManager roomManager;
     private final SessionTransitionExecutor transitionExecutor;
     private final SessionProperties properties;
@@ -91,11 +88,11 @@ public class SessionSweeper {
         Instant cutoff = now.minus(properties.endFallbackTimeout());
         Set<SessionStatus> targets = Set.of(SessionStatus.ACTIVE, SessionStatus.INTERRUPTED);
         forEachIsolated("fallback",
-                sessionRepository.findByStatusInAndEndRequestedAtLessThanEqual(targets, cutoff),
+                sessionRepositoryService.findByStatusInAndEndRequestedAtLessThanEqual(targets, cutoff),
                 session -> {
                     SessionStatus to = arbitrateTerminal(session.getId(), "fallback");
                     int updated = transitionExecutor.execute(session.getUserId(),
-                            txNow -> sessionRepository.finishFrom(session.getId(), targets, to, txNow));
+                            txNow -> sessionRepositoryService.finishFrom(session.getId(), targets, to, txNow));
                     if (updated == 1) {
                         log.info("fallback 만료 — {} 선기록 후 룸 삭제 (sessionId={})", to, session.getId());
                         roomManager.deleteRoomQuietly(session.getLivekitRoom());
@@ -116,10 +113,10 @@ public class SessionSweeper {
         Instant cutoff = now.minus(graceWindow);
         Instant probeCeiling = now.minus(graceWindow.multipliedBy(PROBE_CEILING_MULTIPLIER));
         forEachIsolated("INTERRUPTED 유예",
-                sessionRepository.findByStatusAndEndRequestedAtIsNullAndDisconnectedAtLessThanEqual(
+                sessionRepositoryService.findByStatusAndEndRequestedAtIsNullAndDisconnectedAtLessThanEqual(
                         SessionStatus.INTERRUPTED, cutoff),
                 session -> {
-                    if (transcriptReader.exists(session.getId())) {
+                    if (sessionRepositoryService.transcriptExists(session.getId())) {
                         // 이탈 중 면접 시간 소진 → flush 정상 종료의 webhook 유실 보정
                         finishInterrupted(session, SessionStatus.ENDED);
                         return;
@@ -158,7 +155,7 @@ public class SessionSweeper {
 
     private void finishInterrupted(InterviewSession session, SessionStatus to) {
         int updated = transitionExecutor.execute(session.getUserId(),
-                txNow -> sessionRepository.finishInterruptedGrace(session.getId(), to, txNow));
+                txNow -> sessionRepositoryService.finishInterruptedGrace(session.getId(), to, txNow));
         if (updated == 1) {
             log.info("INTERRUPTED 유예 만료 — {} 정리 (sessionId={})", to, session.getId());
             roomManager.deleteRoomQuietly(session.getLivekitRoom());
@@ -167,7 +164,7 @@ public class SessionSweeper {
 
     private void resumeInterrupted(InterviewSession session) {
         int updated = transitionExecutor.execute(session.getUserId(),
-                txNow -> sessionRepository.resumeFromInterrupted(session.getId(), txNow));
+                txNow -> sessionRepositoryService.resumeFromInterrupted(session.getId(), txNow));
         if (updated == 1) {
             log.info("INTERRUPTED 대조 — candidate+AGENT 관측, ACTIVE 복원 (sessionId={})", session.getId());
         }
@@ -185,16 +182,16 @@ public class SessionSweeper {
         Instant cutoff = now.minus(properties.agentLostGrace());
         Instant reconnectCutoff = now.minus(properties.reconnectWindow().plus(INTERRUPTED_GRACE_MARGIN));
         forEachIsolated("유예 만료",
-                sessionRepository.findByStatusAndAgentLostAtLessThanEqual(SessionStatus.AGENT_LOST, cutoff),
+                sessionRepositoryService.findByStatusAndAgentLostAtLessThanEqual(SessionStatus.AGENT_LOST, cutoff),
                 session -> {
                     if (session.getDisconnectedAt() != null
                             && session.getDisconnectedAt().isAfter(reconnectCutoff)) {
                         return; // 재연결 deadline 미도래 — max(유예, deadline+마진)의 늦은 쪽 대기
                     }
-                    SessionStatus to = transcriptReader.exists(session.getId())
+                    SessionStatus to = sessionRepositoryService.transcriptExists(session.getId())
                             ? SessionStatus.ENDED : SessionStatus.ABORTED;
                     int updated = transitionExecutor.execute(session.getUserId(),
-                            txNow -> sessionRepository.finishFrom(
+                            txNow -> sessionRepositoryService.finishFrom(
                                     session.getId(), Set.of(SessionStatus.AGENT_LOST), to, txNow));
                     if (updated == 1) {
                         // redispatched는 CAS 도달 여부만 말한다 — 결과 구분은 재디스패치 단계별 로그 correlation
@@ -218,10 +215,10 @@ public class SessionSweeper {
         Instant probeCeiling = now.minus(
                 properties.staleRecoveryTimeout().multipliedBy(PROBE_CEILING_MULTIPLIER));
         forEachIsolated("stale ACTIVE",
-                sessionRepository.findByStatusAndEndRequestedAtIsNullAndStartedAtLessThanEqual(
+                sessionRepositoryService.findByStatusAndEndRequestedAtIsNullAndStartedAtLessThanEqual(
                         SessionStatus.ACTIVE, cutoff),
                 session -> {
-                    if (transcriptReader.exists(session.getId())) {
+                    if (sessionRepositoryService.transcriptExists(session.getId())) {
                         finishStaleActive(session, SessionStatus.ENDED);
                         return;
                     }
@@ -251,7 +248,7 @@ public class SessionSweeper {
 
     private void finishStaleActive(InterviewSession session, SessionStatus to) {
         int updated = transitionExecutor.execute(session.getUserId(),
-                txNow -> sessionRepository.finishStaleActive(session.getId(), to, txNow));
+                txNow -> sessionRepositoryService.finishStaleActive(session.getId(), to, txNow));
         if (updated == 1) {
             log.info("stale ACTIVE 회수 — {} (sessionId={})", to, session.getId());
             roomManager.deleteRoomQuietly(session.getLivekitRoom());
@@ -269,9 +266,9 @@ public class SessionSweeper {
         Instant probeCeiling = now.minus(
                 properties.staleRecoveryTimeout().multipliedBy(PROBE_CEILING_MULTIPLIER));
         forEachIsolated("stale PENDING",
-                sessionRepository.findByStatusAndCreatedAtLessThanEqual(SessionStatus.PENDING, cutoff),
+                sessionRepositoryService.findByStatusAndCreatedAtLessThanEqual(SessionStatus.PENDING, cutoff),
                 session -> {
-                    if (transcriptReader.exists(session.getId())) {
+                    if (sessionRepositoryService.transcriptExists(session.getId())) {
                         finishStalePending(session, SessionStatus.ENDED);
                         return;
                     }
@@ -298,7 +295,7 @@ public class SessionSweeper {
 
     private void finishStalePending(InterviewSession session, SessionStatus to) {
         int updated = transitionExecutor.execute(session.getUserId(),
-                txNow -> sessionRepository.finishFrom(
+                txNow -> sessionRepositoryService.finishFrom(
                         session.getId(), Set.of(SessionStatus.PENDING), to, txNow));
         if (updated == 1) {
             log.info("stale PENDING 회수 — {} (sessionId={})", to, session.getId());
@@ -310,7 +307,7 @@ public class SessionSweeper {
     private void restoreActive(InterviewSession session, Instant observedJoinedAt) {
         int updated = transitionExecutor.execute(session.getUserId(), txNow -> {
             Instant startedAt = observedJoinedAt != null ? observedJoinedAt : txNow;
-            return sessionRepository.activate(session.getId(), startedAt, txNow);
+            return sessionRepositoryService.activate(session.getId(), startedAt, txNow);
         });
         if (updated == 1) {
             log.info("stale PENDING의 AGENT 관측 — ACTIVE 복원 (sessionId={}, joinedAt={})",
@@ -320,7 +317,7 @@ public class SessionSweeper {
 
     /** terminal 확정 판별 — 행 있음 ENDED, 없음 ABORTED(표식은 진단 로그만 — cause 불분기 계약). */
     private SessionStatus arbitrateTerminal(long sessionId, String path) {
-        if (transcriptReader.exists(sessionId)) {
+        if (sessionRepositoryService.transcriptExists(sessionId)) {
             return SessionStatus.ENDED;
         }
         readMarkerLogged(sessionId, path);
@@ -329,7 +326,7 @@ public class SessionSweeper {
 
     /** 표식 존재 판별 + cause 진단 로그 (분기 없음 — 크로스 레포 계약). */
     private boolean readMarkerLogged(long sessionId, String path) {
-        return markerReader.read(sessionId).map(marker -> {
+        return sessionRepositoryService.readTerminationMarker(sessionId).map(marker -> {
             log.info("{} 판별 — 표식 관측 (sessionId={}, cause={}, markedAt={})",
                     path, sessionId, marker.cause(), marker.markedAt());
             return true;

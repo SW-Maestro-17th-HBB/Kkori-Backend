@@ -6,8 +6,8 @@ import com.aisw.kkori.session.config.SessionProperties;
 import com.aisw.kkori.session.domain.InterviewSession;
 import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.dto.InterviewSessionCreateResponse;
-import com.aisw.kkori.session.repository.InterviewSessionRepository;
-import com.aisw.kkori.user.repository.UserRepository;
+import com.aisw.kkori.session.repositoryservice.SessionRepositoryService;
+import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -38,8 +38,8 @@ import java.time.temporal.ChronoUnit;
 @RequiredArgsConstructor
 public class SessionRejoinService {
 
-    private final InterviewSessionRepository sessionRepository;
-    private final UserRepository userRepository;
+    private final SessionRepositoryService sessionRepositoryService;
+    private final UserRepositoryService userRepositoryService;
     private final SessionTicketIssuer ticketIssuer;
     private final SessionProperties properties;
     private final TransactionTemplate transactionTemplate;
@@ -51,7 +51,7 @@ public class SessionRejoinService {
      * candidate 재입장은 유효하다 — 입장해 두면 joined(agent) 대조가 ACTIVE로 수렴시킨다.
      */
     public InterviewSessionCreateResponse rejoin(Long userId, Long sessionId) {
-        InterviewSession session = sessionRepository.findById(sessionId)
+        InterviewSession session = sessionRepositoryService.findById(sessionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
         if (!session.getUserId().equals(userId)) {
             throw new BusinessException(ErrorCode.SESSION_FORBIDDEN);
@@ -73,9 +73,9 @@ public class SessionRejoinService {
     }
 
     private Instant validateInTransaction(Long userId, Long sessionId) {
-        userRepository.findWithLockById(userId);
+        userRepositoryService.findWithLockById(userId);
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
-        InterviewSession session = sessionRepository.findById(sessionId)
+        InterviewSession session = sessionRepositoryService.findById(sessionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
         boolean rejoinableStatus = session.getStatus() == SessionStatus.INTERRUPTED
                 || session.getStatus() == SessionStatus.AGENT_LOST;
