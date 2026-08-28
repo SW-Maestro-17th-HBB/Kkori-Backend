@@ -57,7 +57,7 @@ public class ResumeUploadService {
         // 중복 업로드: 같은 사용자의 같은 해시 활성 이력서가 있으면 아무것도 바꾸지 않고 기존 정보만 반환한다.
         // 분석 상태와 무관한 단일 규칙 — FAILED 복구도 재분석 API의 몫이지 업로드의 부수효과가 아니다 (PRD §1).
         // 조회 범위는 반드시 (userId + fileHash) — 해시만으로 조회하면 타 사용자의 이력서가 노출된다.
-        var existing = resumeRepositoryService.findFirstByUserIdAndFileHash(userId, fileHash);
+        var existing = resumeRepositoryService.findDuplicate(userId, fileHash);
         if (existing.isPresent()) {
             Resume duplicate = existing.get();
             return ResumeUploadResponse.duplicated(duplicate, currentStatusOf(duplicate));
@@ -91,16 +91,14 @@ public class ResumeUploadService {
         } catch (DataIntegrityViolationException e) {
             // 동시 중복 업로드 레이스: 중복 조회는 둘 다 통과했지만 부분 유니크 인덱스
             // (ux_resumes_active_user_file_hash)가 최종 심판 — 진 쪽은 먼저 들어간 레코드를 반환한다.
-            return resumeRepositoryService.findFirstByUserIdAndFileHash(userId, fileHash)
+            return resumeRepositoryService.findDuplicate(userId, fileHash)
                     .map(winner -> ResumeUploadResponse.duplicated(winner, currentStatusOf(winner)))
                     .orElseThrow(() -> e);   // 해시 충돌이 아닌 다른 무결성 위반이면 그대로 전파
         }
     }
 
     private AnalysisStatus currentStatusOf(Resume resume) {
-        return resumeRepositoryService.findStatusByResumeId(resume.getId())
-                .map(ResumeAnalysisStatus::getParseStatus)
-                .orElse(AnalysisStatus.UPLOADED);
+        return resumeRepositoryService.currentParseStatus(resume.getId());
     }
 
     /**

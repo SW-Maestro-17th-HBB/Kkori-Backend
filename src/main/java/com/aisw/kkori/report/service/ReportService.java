@@ -139,8 +139,7 @@ public class ReportService {
      */
     @Transactional(readOnly = true)
     public ReportStatsResponse getStats(Long userId) {
-        List<Report> completed =
-                reportRepositoryService.findByUserIdAndStatusOrderByCompletedAtAscIdAsc(userId, ReportStatus.COMPLETED);
+        List<Report> completed = reportRepositoryService.findCompletedOrderByCompletedAt(userId);
         if (completed.isEmpty()) {
             return ReportStatsResponse.empty();
         }

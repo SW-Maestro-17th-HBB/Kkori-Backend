@@ -74,7 +74,8 @@ public class ResumeRepositoryService {
         return resumeRepository.findById(resumeId);
     }
 
-    public Optional<Resume> findFirstByUserIdAndFileHash(Long userId, String fileHash) {
+    /** 같은 사용자의 같은 파일 해시 활성 이력서 — 중복 업로드 판정용. */
+    public Optional<Resume> findDuplicate(Long userId, String fileHash) {
         return resumeRepository.findFirstByUserIdAndFileHash(userId, fileHash);
     }
 
@@ -91,9 +92,11 @@ public class ResumeRepositoryService {
         return statusRepository.save(status);
     }
 
-    /** 예외 변환 없는 상태 조회 — 부재를 예외가 아닌 분기로 다루는 경로(업로드 중복 응답) 전용. */
-    public Optional<ResumeAnalysisStatus> findStatusByResumeId(Long resumeId) {
-        return statusRepository.findByResumeId(resumeId);
+    /** 현재 분석 상태 — 상태 행 부재(정합 깨짐 방어)는 UPLOADED로 간주하는 관대한 조회(업로드 중복 응답 전용). */
+    public AnalysisStatus currentParseStatus(Long resumeId) {
+        return statusRepository.findByResumeId(resumeId)
+                .map(ResumeAnalysisStatus::getParseStatus)
+                .orElse(AnalysisStatus.UPLOADED);
     }
 
     public Page<ResumeSummaryResponse> findSummariesByUserId(Long userId, Pageable pageable) {

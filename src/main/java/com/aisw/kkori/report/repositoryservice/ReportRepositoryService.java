@@ -107,8 +107,9 @@ public class ReportRepositoryService {
         return reportRepository.findPageOrderByOverallScoreAsc(userId, status, pageable);
     }
 
-    public List<Report> findByUserIdAndStatusOrderByCompletedAtAscIdAsc(Long userId, ReportStatus status) {
-        return reportRepository.findByUserIdAndStatusOrderByCompletedAtAscIdAsc(userId, status);
+    /** 통계 집계용 — 본인의 COMPLETED 리포트 전량, 완료 시각 오름차순(동시각은 id 순). */
+    public List<Report> findCompletedOrderByCompletedAt(Long userId) {
+        return reportRepository.findByUserIdAndStatusOrderByCompletedAtAscIdAsc(userId, ReportStatus.COMPLETED);
     }
 
     /** 텍스트 3축 점수 — COMPLETED 리포트에 점수가 없는 것은 Worker 계약상 불가능한 상태라 500. */
