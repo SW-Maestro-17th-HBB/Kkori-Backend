@@ -1,6 +1,6 @@
 package com.aisw.kkori.user.service;
 
-import com.aisw.kkori.user.repository.UserRepository;
+import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,7 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class WebhookWithdrawalExecutor {
 
-    private final UserRepository userRepository;
+    private final UserRepositoryService userRepositoryService;
     private final UserService userService;
 
     /**
@@ -27,7 +27,7 @@ public class WebhookWithdrawalExecutor {
      */
     @Transactional(timeout = 2)
     public Result withdrawIfActive(String providerId) {
-        return userRepository.findByProviderId(providerId)
+        return userRepositoryService.findByProviderId(providerId)
                 .map(user -> {
                     if (user.isDeleted()) {
                         return Result.ALREADY_WITHDRAWN;

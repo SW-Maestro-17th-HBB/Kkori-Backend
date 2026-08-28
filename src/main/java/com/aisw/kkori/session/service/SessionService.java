@@ -9,7 +9,7 @@ import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.dto.InterviewSessionCreateRequest;
 import com.aisw.kkori.session.dto.InterviewSessionCreateResponse;
 import com.aisw.kkori.session.repository.InterviewSessionRepository;
-import com.aisw.kkori.user.repository.UserRepository;
+import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -51,7 +51,7 @@ public class SessionService {
 
     private static final String ROOM_PREFIX = "room-";
 
-    private final UserRepository userRepository;
+    private final UserRepositoryService userRepositoryService;
     private final InterviewSessionRepository sessionRepository;
     private final ResumeAccessGuard resumeAccessGuard;
     private final SessionRoomManager roomManager;
@@ -123,7 +123,7 @@ public class SessionService {
      */
     private CreationPlan planInTransaction(Long userId, InterviewSessionCreateRequest request, String roomName) {
         // 1) user 행 잠금 + 활성 재확인 — 탈퇴가 선점했으면 401. 잠금 순서는 user 선행(E1 계약과 무충돌)
-        userRepository.findActiveWithLock(userId);
+        userRepositoryService.findActiveWithLock(userId);
 
         // 2) 트랜잭션 시각 — 잠금 획득 후 취득 (공통: 시각 처리)
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);

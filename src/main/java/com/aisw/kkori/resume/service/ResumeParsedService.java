@@ -10,7 +10,7 @@ import com.aisw.kkori.resume.dto.ResumeParseRequestedMessage;
 import com.aisw.kkori.resume.dto.ResumeParsedResponse;
 import com.aisw.kkori.resume.dto.ResumeReanalyzeResponse;
 import com.aisw.kkori.resume.repository.ResumeRepository;
-import com.aisw.kkori.user.repository.UserRepository;
+import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -38,7 +38,7 @@ public class ResumeParsedService {
 
     private final ResumeRepository resumeRepository;
     private final ResumeAccessGuard accessGuard;
-    private final UserRepository userRepository;
+    private final UserRepositoryService userRepositoryService;
     private final ResumeUsageChecker resumeUsageChecker;
     private final ResumeAnalysisRequestPublisher analysisRequestPublisher;
     private final ObjectMapper objectMapper;
@@ -90,7 +90,7 @@ public class ResumeParsedService {
 
     /** 세션 생성과의 직렬화 지점 — user 행 잠금 + 활성 재확인 (유저 상태 경로 공통 관례). */
     private void lockActiveUser(Long userId) {
-        userRepository.findActiveWithLock(userId);
+        userRepositoryService.findActiveWithLock(userId);
     }
 
     /** 진행 중 면접에서 사용 중인 이력서는 변경 불가 — R013 (면접이 검색할 청크 보호, 판정은 세션 도메인 구현). */

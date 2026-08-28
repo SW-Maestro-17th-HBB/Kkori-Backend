@@ -12,9 +12,7 @@ import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.domain.UserConsent;
 import com.aisw.kkori.user.dto.UserInfoResponse;
 import com.aisw.kkori.user.dto.WithdrawResponse;
-import com.aisw.kkori.user.repository.DeletionLogRepository;
-import com.aisw.kkori.user.repository.UserConsentRepository;
-import com.aisw.kkori.user.repository.UserRepository;
+import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,10 +37,8 @@ public class UserService {
 
     private static final int MAX_NAME_CODE_POINTS = 100;
 
-    private final UserRepository userRepository;
-    private final UserConsentRepository userConsentRepository;
+    private final UserRepositoryService userRepositoryService;
     private final RefreshTokenRepository refreshTokenRepository;
-    private final DeletionLogRepository deletionLogRepository;
     private final AccountPolicyProperties accountPolicyProperties;
     private final Clock clock;
 
@@ -62,7 +58,7 @@ public class UserService {
     @Transactional
     public UserInfoResponse updateName(Long userId, String name) {
         String validated = validateName(name);
-        User user = userRepository.findActiveWithLock(userId);
+        User user = userRepositoryService.findActiveWithLock(userId);
         user.updateName(validated);
         return UserInfoResponse.from(user);
     }
@@ -82,20 +78,20 @@ public class UserService {
         // 보장용이고 상태 전이의 권위는 여전히 조건부 UPDATE의 영향 행 수다: user 잠금 하에
         // 동의를 기록하는 선택 동의 변경과 경합할 때, 잠금 전에 취득한 이른 시각으로 더 큰 id의
         // WITHDRAWN이 기록되는 시각 역행을 막는다(PRD 공통: 시각 처리).
-        String providerId = userRepository.findWithLockById(userId)
+        String providerId = userRepositoryService.findWithLockById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED))
                 .getProviderId();
         // 마이크로초 절삭 — PostgreSQL timestamptz(6)는 나노초 입력을 마이크로초로 "반올림" 저장하므로
         // (Linux JDK는 나노초 시계), 절삭 없이는 응답 purgeScheduledAt과 DB deleted_at 파생값이 1µs 어긋날 수 있다
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
 
-        int transitioned = userRepository.softDeleteById(userId, now);
+        int transitioned = userRepositoryService.softDeleteById(userId, now);
         if (transitioned == 0) {
             // 잠금 대기 중 다른 트랜잭션이 탈퇴를 커밋한 경우, 위에서 잠근 엔티티는 1차 캐시의
             // 낡은 인스턴스일 수 있다(같은 트랜잭션이 앞서 로딩했다면 잠금 조회도 캐시 인스턴스를
             // 반환 — deleted_at이 null로 보임). softDeleteById가 clearAutomatically로 컨텍스트를
             // 비웠으므로 여기서의 재조회만이 확정 커밋 값을 읽는다.
-            Instant deletedAt = userRepository.findById(userId)
+            Instant deletedAt = userRepositoryService.findById(userId)
                     .map(User::getDeletedAt)
                     .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
             return new WithdrawResponse(purgeScheduledAt(deletedAt));
@@ -103,7 +99,7 @@ public class UserService {
 
         refreshTokenRepository.revokeAllByUserId(userId, now);
         withdrawAgreedConsents(userId, now);
-        deletionLogRepository.save(DeletionLog.pending(userId, providerId, now));
+        userRepositoryService.saveDeletionLog(DeletionLog.pending(userId, providerId, now));
         return new WithdrawResponse(purgeScheduledAt(now));
     }
 
@@ -118,17 +114,15 @@ public class UserService {
                                  Map<ConsentType, ConsentDecision> consents) {
         // 1차 신원 검증 — requested_at·user_id는 불변이지만 provider_id 스냅샷은 CANCELLED/PURGED
         // 전환 시 NULL로 바뀌는 가변 값. 선조회 이후의 상태 전이는 아래 스칼라 재확인이 검출한다.
-        DeletionLog deletionLog = deletionLogRepository.findById(deletionLogId)
+        DeletionLog deletionLog = userRepositoryService.findDeletionLogById(deletionLogId)
                 .filter(log -> Objects.equals(log.getProviderId(), tokenProviderId))
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
 
         // 잠금 순서 user → deletion_log → RT (기능 2 직렬화 계약). 로그 행 잠금이
         // 판정과 후속 상태 변경(마스킹·CANCELLED 전환) 사이의 배치 PURGING 선점을 차단한다.
-        User user = userRepository.findWithLockById(deletionLog.getUserId())
+        User user = userRepositoryService.findWithLockById(deletionLog.getUserId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
-        // 반환값은 사용하지 않지만 이 잠금 자체가 목적이다 — 배치의 미커밋 PURGING 선점이
-        // 있으면 이 호출이 커밋까지 블로킹되어야 아래 스칼라 재확인이 안전해진다. 삭제 금지.
-        deletionLogRepository.findWithLockById(deletionLogId);
+        userRepositoryService.lockDeletionLog(deletionLogId);
 
         // 트랜잭션 시각 — 잠금 획득 "후" 취득한다(account.md 기능 4-3). 잠금 전에 취득하면 잠금 대기 중
         // 다른 트랜잭션이 더 나중 시각으로 먼저 커밋해, 이후 기록(동의 append 등)의 시각이 커밋 순서에
@@ -136,7 +130,7 @@ public class UserService {
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
 
         // 잠금 획득 후 스칼라 재확인 — 토큰 발급 후 10분 사이 배치가 선점했을 수 있고, 선조회 엔티티는 stale
-        DeletionStatus current = deletionLogRepository.findStatusById(deletionLogId)
+        DeletionStatus current = userRepositoryService.findDeletionStatusById(deletionLogId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
         switch (current) {
             case PURGING, FAILED -> throw new BusinessException(ErrorCode.PURGE_IN_PROGRESS);
@@ -150,23 +144,23 @@ public class UserService {
             return RestoreResult.Expired.INSTANCE;
         }
 
-        int transitioned = deletionLogRepository.cancelPendingPurge(deletionLogId, now, now.minus(grace));
+        int transitioned = userRepositoryService.cancelPendingPurge(deletionLogId, now, now.minus(grace));
         if (transitioned == 0) {
             // 모든 복구 제출이 user 잠금을 먼저 잡으므로 여기 도달은 예외적 — 방어적 최후 방어선
             throw new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN);
         }
 
         user.restore();
-        consents.forEach((type, decision) -> userConsentRepository.save(
+        consents.forEach((type, decision) -> userRepositoryService.saveConsent(
                 UserConsent.create(user.getId(), type, decision.agreed(), decision.version(), now)));
         return new RestoreResult.Restored(user.getId());
     }
 
     /** 탈퇴 시점에 최신 상태가 AGREED인 모든 동의 유형에 동일 version으로 WITHDRAWN을 append한다. */
     private void withdrawAgreedConsents(Long userId, Instant now) {
-        userConsentRepository.findLatestByUserId(userId).stream()
+        userRepositoryService.findLatestConsentsByUserId(userId).stream()
                 .filter(latest -> latest.getAction() == ConsentAction.AGREED)
-                .forEach(latest -> userConsentRepository.save(
+                .forEach(latest -> userRepositoryService.saveConsent(
                         UserConsent.create(userId, latest.getConsentType(), false, latest.getVersion(), now)));
     }
 
@@ -196,7 +190,7 @@ public class UserService {
     }
 
     private User getActiveUser(Long userId) {
-        return userRepository.findById(userId)
+        return userRepositoryService.findById(userId)
                 .filter(user -> !user.isDeleted())
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
     }

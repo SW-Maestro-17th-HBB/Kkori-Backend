@@ -9,8 +9,7 @@ import com.aisw.kkori.user.domain.UserConsent;
 import com.aisw.kkori.user.dto.ConsentCatalogResponse;
 import com.aisw.kkori.user.dto.ConsentChangeRequest;
 import com.aisw.kkori.user.dto.UserConsentsResponse;
-import com.aisw.kkori.user.repository.UserConsentRepository;
-import com.aisw.kkori.user.repository.UserRepository;
+import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -34,8 +33,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ConsentService {
 
-    private final UserRepository userRepository;
-    private final UserConsentRepository userConsentRepository;
+    private final UserRepositoryService userRepositoryService;
     private final ConsentPolicyProperties consentPolicyProperties;
     private final Clock clock;
 
@@ -80,7 +78,7 @@ public class ConsentService {
         // 2) user 행 잠금 + 활성 재확인 — 탈퇴의 일괄 WITHDRAWN과의 경합 차단(직렬화 계약 공유).
         //    잠금 없이 append하면 탈퇴가 최신 상태를 읽은 뒤 이 AGREED가 커밋되는 순서에서
         //    탈퇴 완료 후 최신 상태가 AGREED로 남는 정합 붕괴가 생긴다.
-        userRepository.findActiveWithLock(userId);
+        userRepositoryService.findActiveWithLock(userId);
 
         // 3) 트랜잭션 시각 — 잠금 획득 후 취득(시각 역행 방지 — 공통: 시각 처리).
         //    마이크로초 절삭은 timestamptz(6) 반올림과의 정합(updatedAt 동등성).
@@ -95,7 +93,7 @@ public class ConsentService {
             int submitted = request.version();
             if (latest == null || latest.getAction() == ConsentAction.WITHDRAWN
                     || latest.getVersion() < submitted) {
-                latestByType.put(type, userConsentRepository.save(
+                latestByType.put(type, userRepositoryService.saveConsent(
                         UserConsent.create(userId, type, true, submitted, now)));
             } else if (latest.getVersion() > submitted) {
                 log.warn("동의 버전 역행 감지 — 설정 롤백 여부 확인 필요. userId={}, type={}, 기록 버전={}, 설정 버전={}",
@@ -103,7 +101,7 @@ public class ConsentService {
             }
         } else if (latest != null && latest.getAction() == ConsentAction.AGREED) {
             // 철회는 철회 대상 최신 AGREED와 동일 버전으로 기록한다 — 요청 version은 사용하지 않는다
-            latestByType.put(type, userConsentRepository.save(
+            latestByType.put(type, userRepositoryService.saveConsent(
                     UserConsent.create(userId, type, false, latest.getVersion(), now)));
         }
 
@@ -113,13 +111,13 @@ public class ConsentService {
 
     /** JWT 필터가 차단하지만 방어적으로 재확인한다(account.md 기능 1과 동일 기준). */
     private void requireActive(Long userId) {
-        userRepository.findById(userId)
+        userRepositoryService.findById(userId)
                 .filter(user -> !user.isDeleted())
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
     }
 
     private Map<ConsentType, UserConsent> latestByType(Long userId) {
-        return userConsentRepository.findLatestByUserId(userId).stream()
+        return userRepositoryService.findLatestConsentsByUserId(userId).stream()
                 .collect(Collectors.toMap(UserConsent::getConsentType, Function.identity()));
     }
 }

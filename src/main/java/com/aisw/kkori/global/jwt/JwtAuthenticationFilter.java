@@ -1,6 +1,6 @@
 package com.aisw.kkori.global.jwt;
 
-import com.aisw.kkori.user.repository.UserRepository;
+import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -25,7 +25,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final JwtTokenProvider jwtTokenProvider;
-    private final UserRepository userRepository;
+    private final UserRepositoryService userRepositoryService;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
@@ -40,7 +40,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private void authenticate(String accessToken) {
         try {
             Long userId = jwtTokenProvider.parseAccessToken(accessToken);
-            userRepository.findById(userId)
+            userRepositoryService.findById(userId)
                     .filter(user -> !user.isDeleted())
                     .ifPresent(user -> SecurityContextHolder.getContext().setAuthentication(
                             new UsernamePasswordAuthenticationToken(user.getId(), null, List.of())));
