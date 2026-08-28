@@ -22,7 +22,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
-import java.util.Objects;
 
 /**
  * 계정 조회·수정·탈퇴 (PRD {@code docs/requirements/user/account.md} 기능 1~3).
@@ -74,27 +73,21 @@ public class UserService {
     @Transactional
     public WithdrawResponse withdraw(Long userId) {
         // user 행 잠금을 조건부 UPDATE보다 먼저 획득한다(활성 필터 없음 — 이미 탈퇴된 유저의
-        // 재호출·웹훅 중복 수신도 아래 0행 분기로 멱등 응답해야 하기 때문). 잠금은 시각 순서
+        // 재호출·웹훅 중복 수신도 아래 멱등 분기로 응답해야 하기 때문). 잠금은 시각 순서
         // 보장용이고 상태 전이의 권위는 여전히 조건부 UPDATE의 영향 행 수다: user 잠금 하에
         // 동의를 기록하는 선택 동의 변경과 경합할 때, 잠금 전에 취득한 이른 시각으로 더 큰 id의
         // WITHDRAWN이 기록되는 시각 역행을 막는다(PRD 공통: 시각 처리).
-        String providerId = userRepositoryService.findWithLockById(userId)
+        String providerId = userRepositoryService.lockUserIgnoringDeleted(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED))
                 .getProviderId();
         // 마이크로초 절삭 — PostgreSQL timestamptz(6)는 나노초 입력을 마이크로초로 "반올림" 저장하므로
         // (Linux JDK는 나노초 시계), 절삭 없이는 응답 purgeScheduledAt과 DB deleted_at 파생값이 1µs 어긋날 수 있다
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
 
-        int transitioned = userRepositoryService.softDeleteById(userId, now);
-        if (transitioned == 0) {
-            // 잠금 대기 중 다른 트랜잭션이 탈퇴를 커밋한 경우, 위에서 잠근 엔티티는 1차 캐시의
-            // 낡은 인스턴스일 수 있다(같은 트랜잭션이 앞서 로딩했다면 잠금 조회도 캐시 인스턴스를
-            // 반환 — deleted_at이 null로 보임). softDeleteById가 clearAutomatically로 컨텍스트를
-            // 비웠으므로 여기서의 재조회만이 확정 커밋 값을 읽는다.
-            Instant deletedAt = userRepositoryService.findById(userId)
-                    .map(User::getDeletedAt)
-                    .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
-            return new WithdrawResponse(purgeScheduledAt(deletedAt));
+        UserRepositoryService.SoftDeleteResult result = userRepositoryService.softDelete(userId, now);
+        if (!result.transitioned()) {
+            // 잠금 대기 중 다른 트랜잭션이 탈퇴를 이미 커밋한 경우 — 기존 탈퇴 기준으로 멱등 응답
+            return new WithdrawResponse(purgeScheduledAt(result.deletedAt()));
         }
 
         authRepositoryService.revokeAllByUserId(userId, now);
@@ -112,26 +105,21 @@ public class UserService {
     @Transactional
     public RestoreResult restore(String tokenProviderId, Long deletionLogId,
                                  Map<ConsentType, ConsentDecision> consents) {
-        // 1차 신원 검증 — requested_at·user_id는 불변이지만 provider_id 스냅샷은 CANCELLED/PURGED
-        // 전환 시 NULL로 바뀌는 가변 값. 선조회 이후의 상태 전이는 아래 스칼라 재확인이 검출한다.
-        DeletionLog deletionLog = userRepositoryService.findDeletionLogById(deletionLogId)
-                .filter(log -> Objects.equals(log.getProviderId(), tokenProviderId))
-                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
+        // 1차 신원 검증 — 선조회 이후의 상태 전이는 아래 잠금 후 재확인이 검출한다.
+        DeletionLog deletionLog = userRepositoryService.getDeletionLogMatching(deletionLogId, tokenProviderId);
 
         // 잠금 순서 user → deletion_log → RT (기능 2 직렬화 계약). 로그 행 잠금이
         // 판정과 후속 상태 변경(마스킹·CANCELLED 전환) 사이의 배치 PURGING 선점을 차단한다.
-        User user = userRepositoryService.findWithLockById(deletionLog.getUserId())
+        User user = userRepositoryService.lockUserIgnoringDeleted(deletionLog.getUserId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
-        userRepositoryService.lockDeletionLog(deletionLogId);
+        // 잠금 획득 후 재확인 — 토큰 발급 후 10분 사이 배치가 선점했을 수 있다
+        DeletionStatus current = userRepositoryService.lockAndReadDeletionStatus(deletionLogId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
 
         // 트랜잭션 시각 — 잠금 획득 "후" 취득한다(account.md 기능 4-3). 잠금 전에 취득하면 잠금 대기 중
         // 다른 트랜잭션이 더 나중 시각으로 먼저 커밋해, 이후 기록(동의 append 등)의 시각이 커밋 순서에
         // 역행할 수 있다. 마이크로초 절삭은 withdraw와 동일한 이유(DB timestamptz(6) 반올림과의 정합).
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
-
-        // 잠금 획득 후 스칼라 재확인 — 토큰 발급 후 10분 사이 배치가 선점했을 수 있고, 선조회 엔티티는 stale
-        DeletionStatus current = userRepositoryService.findDeletionStatusById(deletionLogId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
         switch (current) {
             case PURGING, FAILED -> throw new BusinessException(ErrorCode.PURGE_IN_PROGRESS);
             case CANCELLED, PURGED -> throw new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN);
@@ -190,8 +178,6 @@ public class UserService {
     }
 
     private User getActiveUser(Long userId) {
-        return userRepositoryService.findById(userId)
-                .filter(user -> !user.isDeleted())
-                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
+        return userRepositoryService.getActive(userId);
     }
 }

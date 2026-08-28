@@ -40,8 +40,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private void authenticate(String accessToken) {
         try {
             Long userId = jwtTokenProvider.parseAccessToken(accessToken);
-            userRepositoryService.findById(userId)
-                    .filter(user -> !user.isDeleted())
+            userRepositoryService.findActiveById(userId)
                     .ifPresent(user -> SecurityContextHolder.getContext().setAuthentication(
                             new UsernamePasswordAuthenticationToken(user.getId(), null, List.of())));
         } catch (JwtException | IllegalArgumentException e) {

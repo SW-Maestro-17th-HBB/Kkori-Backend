@@ -56,8 +56,7 @@ public class TokenService {
      */
     @Transactional
     public KakaoLoginResponse processKakaoLogin(KakaoUserInfo info) {
-        return userRepositoryService.findIdByProviderId(info.providerId())
-                .flatMap(userRepositoryService::findWithLockById)
+        return userRepositoryService.lockUserByProviderId(info.providerId())
                 .map(user -> user.isDeleted()
                         ? judgeDeletedUser(user, info)
                         : KakaoLoginResponse.loggedIn(issueTokenPair(user.getId())))
@@ -90,7 +89,7 @@ public class TokenService {
 
     private Long latestDeletionLogId(User user) {
         return userRepositoryService
-                .findLatestDeletionLogByUserId(user.getId())
+                .findLatestDeletionLog(user.getId())
                 .map(DeletionLog::getId)
                 .orElse(null);
     }
@@ -100,8 +99,7 @@ public class TokenService {
         if (deletionLogId == null) {
             return null;
         }
-        userRepositoryService.lockDeletionLog(deletionLogId);
-        return userRepositoryService.findDeletionStatusById(deletionLogId).orElse(null);
+        return userRepositoryService.lockAndReadDeletionStatus(deletionLogId).orElse(null);
     }
 
     /**
@@ -167,9 +165,7 @@ public class TokenService {
         // 스칼라 조회 — 엔티티로 읽으면 아래 잠금 조회가 낡은 관리 인스턴스를 반환할 수 있다
         Long userId = authRepositoryService.findUserIdByTokenHash(tokenHash)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RT_NOT_FOUND));
-        boolean active = userRepositoryService.findWithLockById(userId)
-                .filter(user -> !user.isDeleted())
-                .isPresent();
+        boolean active = userRepositoryService.lockActive(userId).isPresent();
         if (!active) {
             throw new BusinessException(ErrorCode.RT_NOT_FOUND);
         }

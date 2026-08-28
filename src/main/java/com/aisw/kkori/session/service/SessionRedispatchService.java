@@ -89,7 +89,7 @@ public class SessionRedispatchService {
 
         // ① CAS + metadata 재조립 입력 확보
         String metadata = transactionTemplate.execute(status -> {
-            userRepositoryService.findWithLockById(session.getUserId());
+            userRepositoryService.lockUser(session.getUserId());
             Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
             if (sessionRepositoryService.claimRedispatch(sessionId, now) != 1) {
                 return null;

@@ -73,7 +73,7 @@ public class SessionRejoinService {
     }
 
     private Instant validateInTransaction(Long userId, Long sessionId) {
-        userRepositoryService.findWithLockById(userId);
+        userRepositoryService.lockUser(userId);
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
         InterviewSession session = sessionRepositoryService.findById(sessionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));

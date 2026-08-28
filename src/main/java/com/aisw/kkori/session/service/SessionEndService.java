@@ -84,7 +84,7 @@ public class SessionEndService {
 
     private EndAction planInTransaction(Long userId, Long sessionId, PendingResolution resolution) {
         // 활성 재확인 없는 잠금 — 소유 검증은 이미 끝났고, 전이 직렬화만 필요하다(전이 경로 공통)
-        userRepositoryService.findWithLockById(userId);
+        userRepositoryService.lockUser(userId);
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
         InterviewSession session = sessionRepositoryService.findById(sessionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));

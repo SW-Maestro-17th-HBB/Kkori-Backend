@@ -111,9 +111,7 @@ public class ConsentService {
 
     /** JWT 필터가 차단하지만 방어적으로 재확인한다(account.md 기능 1과 동일 기준). */
     private void requireActive(Long userId) {
-        userRepositoryService.findById(userId)
-                .filter(user -> !user.isDeleted())
-                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
+        userRepositoryService.getActive(userId);
     }
 
     private Map<ConsentType, UserConsent> latestByType(Long userId) {
