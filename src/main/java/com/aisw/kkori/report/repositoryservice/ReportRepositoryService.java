@@ -4,13 +4,18 @@ import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.report.domain.Report;
 import com.aisw.kkori.report.domain.ReportFeedback;
+import com.aisw.kkori.report.domain.ReportScore;
 import com.aisw.kkori.report.domain.ReportStatus;
 import com.aisw.kkori.report.dto.TranscriptUtterance;
 import com.aisw.kkori.report.repository.ReportFeedbackRepository;
 import com.aisw.kkori.report.repository.ReportRepository;
+import com.aisw.kkori.report.repository.ReportScoreRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -22,6 +27,7 @@ import java.util.List;
 public class ReportRepositoryService {
 
     private final ReportRepository reportRepository;
+    private final ReportScoreRepository reportScoreRepository;
     private final ReportFeedbackRepository reportFeedbackRepository;
     private final TranscriptReader transcriptReader;
     private final JdbcReportJobWriter jdbcReportJobWriter;
@@ -87,5 +93,36 @@ public class ReportRepositoryService {
     public List<TranscriptUtterance> getUtterances(long sessionId) {
         return transcriptReader.findUtterances(sessionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR));
+    }
+
+    /** {@link ReportRepository#findPage} 위임. */
+    public Page<Report> findPage(Long userId, ReportStatus status, Pageable pageable) {
+        return reportRepository.findPage(userId, status, pageable);
+    }
+
+    /** {@link ReportRepository#findPageOrderByOverallScoreDesc} 위임. */
+    public Page<Report> findPageOrderByOverallScoreDesc(Long userId, ReportStatus status, Pageable pageable) {
+        return reportRepository.findPageOrderByOverallScoreDesc(userId, status, pageable);
+    }
+
+    /** {@link ReportRepository#findPageOrderByOverallScoreAsc} 위임. */
+    public Page<Report> findPageOrderByOverallScoreAsc(Long userId, ReportStatus status, Pageable pageable) {
+        return reportRepository.findPageOrderByOverallScoreAsc(userId, status, pageable);
+    }
+
+    /** {@link ReportRepository#findByUserIdAndStatusOrderByCompletedAtAscIdAsc} 위임. */
+    public List<Report> findByUserIdAndStatusOrderByCompletedAtAscIdAsc(Long userId, ReportStatus status) {
+        return reportRepository.findByUserIdAndStatusOrderByCompletedAtAscIdAsc(userId, status);
+    }
+
+    /** 텍스트 3축 점수 — COMPLETED 리포트에 점수가 없는 것은 Worker 계약상 불가능한 상태라 500. */
+    public ReportScore getScore(Long reportId) {
+        return reportScoreRepository.findByReportId(reportId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR));
+    }
+
+    /** {@link ReportScoreRepository#findByReportIdIn} 위임 — 통계의 축별 평균용. */
+    public List<ReportScore> findScoresByReportIdIn(Collection<Long> reportIds) {
+        return reportScoreRepository.findByReportIdIn(reportIds);
     }
 }
