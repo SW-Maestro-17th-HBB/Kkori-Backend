@@ -55,6 +55,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/webhook/livekit").permitAll()
                         .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**")
                         .permitAll()
+                        // ALB 헬스체크용 — 정확 경로만 공개 (다른 actuator 엔드포인트는 비공개 유지)
+                        .requestMatchers("/actuator/health").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(exception -> exception.authenticationEntryPoint(jwtAuthenticationEntryPoint))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
