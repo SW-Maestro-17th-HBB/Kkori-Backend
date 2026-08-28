@@ -1,6 +1,6 @@
 package com.aisw.kkori.user.service;
 
-import com.aisw.kkori.auth.repository.RefreshTokenRepository;
+import com.aisw.kkori.auth.repositoryservice.AuthRepositoryService;
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.user.config.AccountPolicyProperties;
@@ -38,7 +38,7 @@ public class UserService {
     private static final int MAX_NAME_CODE_POINTS = 100;
 
     private final UserRepositoryService userRepositoryService;
-    private final RefreshTokenRepository refreshTokenRepository;
+    private final AuthRepositoryService authRepositoryService;
     private final AccountPolicyProperties accountPolicyProperties;
     private final Clock clock;
 
@@ -97,7 +97,7 @@ public class UserService {
             return new WithdrawResponse(purgeScheduledAt(deletedAt));
         }
 
-        refreshTokenRepository.revokeAllByUserId(userId, now);
+        authRepositoryService.revokeAllByUserId(userId, now);
         withdrawAgreedConsents(userId, now);
         userRepositoryService.saveDeletionLog(DeletionLog.pending(userId, providerId, now));
         return new WithdrawResponse(purgeScheduledAt(now));
