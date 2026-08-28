@@ -43,7 +43,6 @@ public class UserRepositoryService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
     }
 
-    /** {@link UserRepository#findWithLockById} 위임. */
     public Optional<User> findWithLockById(Long id) {
         return userRepository.findWithLockById(id);
     }
@@ -52,17 +51,14 @@ public class UserRepositoryService {
         return userRepository.findById(id);
     }
 
-    /** {@link UserRepository#findByProviderId} 위임. */
     public Optional<User> findByProviderId(String providerId) {
         return userRepository.findByProviderId(providerId);
     }
 
-    /** {@link UserRepository#findIdByProviderId} 위임. */
     public Optional<Long> findIdByProviderId(String providerId) {
         return userRepository.findIdByProviderId(providerId);
     }
 
-    /** {@link UserRepository#softDeleteById} 위임. */
     public int softDeleteById(Long userId, Instant now) {
         return userRepository.softDeleteById(userId, now);
     }
@@ -77,7 +73,6 @@ public class UserRepositoryService {
         return userConsentRepository.save(consent);
     }
 
-    /** {@link UserConsentRepository#findLatestByUserId} 위임. */
     public List<UserConsent> findLatestConsentsByUserId(Long userId) {
         return userConsentRepository.findLatestByUserId(userId);
     }
@@ -92,7 +87,6 @@ public class UserRepositoryService {
         return deletionLogRepository.findById(id);
     }
 
-    /** {@link DeletionLogRepository#findFirstByUserIdOrderByRequestedAtDescIdDesc} 위임. */
     public Optional<DeletionLog> findLatestDeletionLogByUserId(Long userId) {
         return deletionLogRepository.findFirstByUserIdOrderByRequestedAtDescIdDesc(userId);
     }
@@ -107,12 +101,10 @@ public class UserRepositoryService {
         deletionLogRepository.findWithLockById(id);
     }
 
-    /** {@link DeletionLogRepository#findStatusById} 위임. */
     public Optional<DeletionStatus> findDeletionStatusById(Long id) {
         return deletionLogRepository.findStatusById(id);
     }
 
-    /** {@link DeletionLogRepository#cancelPendingPurge} 위임. */
     public int cancelPendingPurge(Long id, Instant now, Instant graceCutoff) {
         return deletionLogRepository.cancelPendingPurge(id, now, graceCutoff);
     }

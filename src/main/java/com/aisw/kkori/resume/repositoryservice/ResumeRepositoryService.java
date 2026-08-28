@@ -74,7 +74,6 @@ public class ResumeRepositoryService {
         return resumeRepository.findById(resumeId);
     }
 
-    /** {@link ResumeRepository#findFirstByUserIdAndFileHash} 위임. */
     public Optional<Resume> findFirstByUserIdAndFileHash(Long userId, String fileHash) {
         return resumeRepository.findFirstByUserIdAndFileHash(userId, fileHash);
     }
@@ -97,12 +96,10 @@ public class ResumeRepositoryService {
         return statusRepository.findByResumeId(resumeId);
     }
 
-    /** {@link ResumeAnalysisStatusRepository#findSummariesByUserId} 위임. */
     public Page<ResumeSummaryResponse> findSummariesByUserId(Long userId, Pageable pageable) {
         return statusRepository.findSummariesByUserId(userId, pageable);
     }
 
-    /** {@link ResumeAnalysisStatusRepository#findSummariesByUserIdAndStatus} 위임. */
     public Page<ResumeSummaryResponse> findSummariesByUserIdAndStatus(
             Long userId, AnalysisStatus status, Pageable pageable) {
         return statusRepository.findSummariesByUserIdAndStatus(userId, status, pageable);

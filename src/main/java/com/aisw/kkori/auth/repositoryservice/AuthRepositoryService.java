@@ -24,22 +24,18 @@ public class AuthRepositoryService {
         return refreshTokenRepository.save(refreshToken);
     }
 
-    /** {@link RefreshTokenRepository#findWithLockByTokenHash} 위임. */
     public Optional<RefreshToken> findWithLockByTokenHash(String tokenHash) {
         return refreshTokenRepository.findWithLockByTokenHash(tokenHash);
     }
 
-    /** {@link RefreshTokenRepository#findByTokenHash} 위임. */
     public Optional<RefreshToken> findByTokenHash(String tokenHash) {
         return refreshTokenRepository.findByTokenHash(tokenHash);
     }
 
-    /** {@link RefreshTokenRepository#findUserIdByTokenHash} 위임. */
     public Optional<Long> findUserIdByTokenHash(String tokenHash) {
         return refreshTokenRepository.findUserIdByTokenHash(tokenHash);
     }
 
-    /** {@link RefreshTokenRepository#revokeAllByUserId} 위임 — 재사용 탈취 감지와 탈퇴가 공용. */
     public int revokeAllByUserId(Long userId, Instant now) {
         return refreshTokenRepository.revokeAllByUserId(userId, now);
     }

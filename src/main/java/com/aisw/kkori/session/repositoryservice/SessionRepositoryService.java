@@ -17,7 +17,7 @@ import java.util.Optional;
  * (CLAUDE.md 패키지 구조 규칙). 트랜잭션은 소유하지 않는다 — 전이 벌크 UPDATE는 반드시
  * 호출자의 user 행 잠금 트랜잭션 안에서, 증거 읽기({@link #transcriptExists},
  * {@link #readTerminationMarker})는 의도적으로 잠금 트랜잭션 밖에서 호출된다(호출부 계약).
- * 각 위임 메서드의 전이 조건·멱등 계약은 {@link InterviewSessionRepository}의 javadoc 참조.
+ * 각 메서드의 전이 조건·멱등 계약은 {@link InterviewSessionRepository}의 javadoc 참조.
  */
 @Service
 @RequiredArgsConstructor
@@ -37,12 +37,10 @@ public class SessionRepositoryService {
         return sessionRepository.findById(id);
     }
 
-    /** {@link InterviewSessionRepository#findByLivekitRoom} 위임. */
     public Optional<InterviewSession> findByLivekitRoom(String livekitRoom) {
         return sessionRepository.findByLivekitRoom(livekitRoom);
     }
 
-    /** {@link InterviewSessionRepository#findByEgressId} 위임. */
     public Optional<InterviewSession> findByEgressId(String egressId) {
         return sessionRepository.findByEgressId(egressId);
     }
@@ -51,12 +49,10 @@ public class SessionRepositoryService {
         return sessionRepository.findByUserIdAndStatusIn(userId, statuses);
     }
 
-    /** {@link InterviewSessionRepository#existsByIdAndStatus} 위임. */
     public boolean existsByIdAndStatus(Long id, SessionStatus status) {
         return sessionRepository.existsByIdAndStatus(id, status);
     }
 
-    /** {@link InterviewSessionRepository#existsByResumeIdAndStatusIn} 위임. */
     public boolean existsByResumeIdAndStatusIn(Long resumeId, Collection<SessionStatus> statuses) {
         return sessionRepository.existsByResumeIdAndStatusIn(resumeId, statuses);
     }
@@ -64,7 +60,6 @@ public class SessionRepositoryService {
     // ── 상태 전이 (조건부 벌크 UPDATE — 원자적·멱등, 계약은 repository javadoc) ──
 
     /**
-     * {@link InterviewSessionRepository#abortPendingByIds} 위임.
      * 주의: {@code clearAutomatically}가 영속성 컨텍스트를 비워, 호출 트랜잭션이 직전에
      * 잠근 User 엔티티가 detach된다 — 이후 그 엔티티의 dirty checking에 의존하지 말 것.
      */
@@ -155,12 +150,10 @@ public class SessionRepositoryService {
 
     // ── 증거 읽기 (네이티브·Redis — 호출부는 의도적으로 트랜잭션 밖에서 부른다) ──
 
-    /** {@link InterviewTranscriptReader#exists} 위임 — 대본 행 존재 판별. */
     public boolean transcriptExists(long sessionId) {
         return transcriptReader.exists(sessionId);
     }
 
-    /** {@link TerminationMarkerReader#read} 위임 — Redis 종료 표식 읽기. */
     public Optional<TerminationMarker> readTerminationMarker(long sessionId) {
         return markerReader.read(sessionId);
     }

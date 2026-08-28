@@ -95,22 +95,18 @@ public class ReportRepositoryService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR));
     }
 
-    /** {@link ReportRepository#findPage} 위임. */
     public Page<Report> findPage(Long userId, ReportStatus status, Pageable pageable) {
         return reportRepository.findPage(userId, status, pageable);
     }
 
-    /** {@link ReportRepository#findPageOrderByOverallScoreDesc} 위임. */
     public Page<Report> findPageOrderByOverallScoreDesc(Long userId, ReportStatus status, Pageable pageable) {
         return reportRepository.findPageOrderByOverallScoreDesc(userId, status, pageable);
     }
 
-    /** {@link ReportRepository#findPageOrderByOverallScoreAsc} 위임. */
     public Page<Report> findPageOrderByOverallScoreAsc(Long userId, ReportStatus status, Pageable pageable) {
         return reportRepository.findPageOrderByOverallScoreAsc(userId, status, pageable);
     }
 
-    /** {@link ReportRepository#findByUserIdAndStatusOrderByCompletedAtAscIdAsc} 위임. */
     public List<Report> findByUserIdAndStatusOrderByCompletedAtAscIdAsc(Long userId, ReportStatus status) {
         return reportRepository.findByUserIdAndStatusOrderByCompletedAtAscIdAsc(userId, status);
     }
@@ -121,7 +117,6 @@ public class ReportRepositoryService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR));
     }
 
-    /** {@link ReportScoreRepository#findByReportIdIn} 위임 — 통계의 축별 평균용. */
     public List<ReportScore> findScoresByReportIdIn(Collection<Long> reportIds) {
         return reportScoreRepository.findByReportIdIn(reportIds);
     }
