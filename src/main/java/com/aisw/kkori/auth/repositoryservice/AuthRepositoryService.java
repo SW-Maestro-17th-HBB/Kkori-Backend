@@ -28,8 +28,16 @@ public class AuthRepositoryService {
         return refreshTokenRepository.findWithLockByTokenHash(tokenHash);
     }
 
-    public Optional<RefreshToken> findByTokenHash(String tokenHash) {
-        return refreshTokenRepository.findByTokenHash(tokenHash);
+    /** Grace Period의 대체 토큰 조회 — 폐기·만료된 토큰은 없는 것으로 취급한다. */
+    public Optional<RefreshToken> findValidReplacement(String tokenHash, Instant now) {
+        return refreshTokenRepository.findByTokenHash(tokenHash)
+                .filter(rt -> !rt.isRevoked() && !rt.isExpired(now));
+    }
+
+    /** 해시 조회 + 소유자 확인 — 타인 소유는 없는 것으로 취급한다(존재 여부 비노출, 로그아웃 경로). */
+    public Optional<RefreshToken> findOwnedByTokenHash(Long userId, String tokenHash) {
+        return refreshTokenRepository.findByTokenHash(tokenHash)
+                .filter(rt -> rt.getUserId().equals(userId));
     }
 
     public Optional<Long> findUserIdByTokenHash(String tokenHash) {

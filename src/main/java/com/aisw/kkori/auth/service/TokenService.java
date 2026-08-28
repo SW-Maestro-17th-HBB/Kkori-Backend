@@ -193,8 +193,7 @@ public class TokenService {
         boolean withinGrace = Duration.between(current.getRevokedAt(), now).compareTo(GRACE_PERIOD) <= 0;
         if (withinGrace) {
             RefreshToken replacement = authRepositoryService
-                    .findByTokenHash(current.getReplacedByTokenHash())
-                    .filter(rt -> !rt.isRevoked() && !rt.isExpired(now))
+                    .findValidReplacement(current.getReplacedByTokenHash(), now)
                     .orElse(null);
             if (replacement != null) {
                 return new TokenResponse(
@@ -230,8 +229,7 @@ public class TokenService {
      */
     @Transactional
     public void logout(Long userId, String refreshToken) {
-        authRepositoryService.findByTokenHash(TokenHasher.sha256Hex(refreshToken))
-                .filter(rt -> rt.getUserId().equals(userId))
+        authRepositoryService.findOwnedByTokenHash(userId, TokenHasher.sha256Hex(refreshToken))
                 .ifPresent(rt -> rt.revoke(clock.instant()));
     }
 }
