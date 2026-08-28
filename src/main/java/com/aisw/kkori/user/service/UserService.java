@@ -132,8 +132,7 @@ public class UserService {
             return RestoreResult.Expired.INSTANCE;
         }
 
-        int transitioned = userRepositoryService.cancelPendingPurge(deletionLogId, now, now.minus(grace));
-        if (transitioned == 0) {
+        if (!userRepositoryService.cancelPendingPurge(deletionLogId, now, now.minus(grace))) {
             // 모든 복구 제출이 user 잠금을 먼저 잡으므로 여기 도달은 예외적 — 방어적 최후 방어선
             throw new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN);
         }

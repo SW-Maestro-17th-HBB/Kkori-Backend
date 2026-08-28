@@ -44,7 +44,7 @@ public class AuthRepositoryService {
         return refreshTokenRepository.findUserIdByTokenHash(tokenHash);
     }
 
-    public int revokeAllByUserId(Long userId, Instant now) {
-        return refreshTokenRepository.revokeAllByUserId(userId, now);
+    public void revokeAllByUserId(Long userId, Instant now) {
+        refreshTokenRepository.revokeAllByUserId(userId, now);
     }
 }

@@ -72,7 +72,7 @@ class SessionServiceTest {
                 .thenReturn(User.create("kakao-unit-1", null, null));
         InterviewSession stale = InterviewSession.pending(1L, null, InterviewType.FIVE_MIN, Position.BACKEND, "room-stale");
         when(sessionRepositoryService.findNonTerminalByUserId(anyLong())).thenReturn(List.of(stale));
-        when(sessionRepositoryService.abortPendingByIds(anyCollection(), any())).thenReturn(0);
+        when(sessionRepositoryService.abortPending(anyCollection(), any())).thenReturn(false);
 
         assertThatThrownBy(() -> sessionService.create(1L,
                 new InterviewSessionCreateRequest(null, InterviewType.FIVE_MIN, Position.BACKEND)))
@@ -103,7 +103,7 @@ class SessionServiceTest {
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
                         .isEqualTo(ErrorCode.SESSION_ALREADY_IN_PROGRESS));
 
-        verify(sessionRepositoryService, never()).abortPendingByIds(anyCollection(), any());
+        verify(sessionRepositoryService, never()).abortPending(anyCollection(), any());
         ArgumentCaptor<String> room = ArgumentCaptor.forClass(String.class);
         verify(roomManager).createRoom(room.capture());
         verify(roomManager).deleteRoomQuietly(room.getValue());

@@ -91,9 +91,9 @@ public class SessionSweeper {
                 sessionRepositoryService.findEndRequestedFallbackCandidates(targets, cutoff),
                 session -> {
                     SessionStatus to = arbitrateTerminal(session.getId(), "fallback");
-                    int updated = transitionExecutor.execute(session.getUserId(),
+                    boolean updated = transitionExecutor.execute(session.getUserId(),
                             txNow -> sessionRepositoryService.finishFrom(session.getId(), targets, to, txNow));
-                    if (updated == 1) {
+                    if (updated) {
                         log.info("fallback 만료 — {} 선기록 후 룸 삭제 (sessionId={})", to, session.getId());
                         roomManager.deleteRoomQuietly(session.getLivekitRoom());
                     }
@@ -153,18 +153,18 @@ public class SessionSweeper {
     }
 
     private void finishInterrupted(InterviewSession session, SessionStatus to) {
-        int updated = transitionExecutor.execute(session.getUserId(),
+        boolean updated = transitionExecutor.execute(session.getUserId(),
                 txNow -> sessionRepositoryService.finishInterruptedGrace(session.getId(), to, txNow));
-        if (updated == 1) {
+        if (updated) {
             log.info("INTERRUPTED 유예 만료 — {} 정리 (sessionId={})", to, session.getId());
             roomManager.deleteRoomQuietly(session.getLivekitRoom());
         }
     }
 
     private void resumeInterrupted(InterviewSession session) {
-        int updated = transitionExecutor.execute(session.getUserId(),
+        boolean updated = transitionExecutor.execute(session.getUserId(),
                 txNow -> sessionRepositoryService.resumeFromInterrupted(session.getId(), txNow));
-        if (updated == 1) {
+        if (updated) {
             log.info("INTERRUPTED 대조 — candidate+AGENT 관측, ACTIVE 복원 (sessionId={})", session.getId());
         }
     }
@@ -189,10 +189,10 @@ public class SessionSweeper {
                     }
                     SessionStatus to = sessionRepositoryService.transcriptExists(session.getId())
                             ? SessionStatus.ENDED : SessionStatus.ABORTED;
-                    int updated = transitionExecutor.execute(session.getUserId(),
+                    boolean updated = transitionExecutor.execute(session.getUserId(),
                             txNow -> sessionRepositoryService.finishFrom(
                                     session.getId(), Set.of(SessionStatus.AGENT_LOST), to, txNow));
-                    if (updated == 1) {
+                    if (updated) {
                         // redispatched는 CAS 도달 여부만 말한다 — 결과 구분은 재디스패치 단계별 로그 correlation
                         log.info("AGENT_LOST 유예 만료 — {} 정리 (sessionId={}, redispatched={})",
                                 to, session.getId(), session.getRedispatchedAt() != null);
@@ -245,9 +245,9 @@ public class SessionSweeper {
     }
 
     private void finishStaleActive(InterviewSession session, SessionStatus to) {
-        int updated = transitionExecutor.execute(session.getUserId(),
+        boolean updated = transitionExecutor.execute(session.getUserId(),
                 txNow -> sessionRepositoryService.finishStaleActive(session.getId(), to, txNow));
-        if (updated == 1) {
+        if (updated) {
             log.info("stale ACTIVE 회수 — {} (sessionId={})", to, session.getId());
             roomManager.deleteRoomQuietly(session.getLivekitRoom());
         }
@@ -292,10 +292,10 @@ public class SessionSweeper {
     }
 
     private void finishStalePending(InterviewSession session, SessionStatus to) {
-        int updated = transitionExecutor.execute(session.getUserId(),
+        boolean updated = transitionExecutor.execute(session.getUserId(),
                 txNow -> sessionRepositoryService.finishFrom(
                         session.getId(), Set.of(SessionStatus.PENDING), to, txNow));
-        if (updated == 1) {
+        if (updated) {
             log.info("stale PENDING 회수 — {} (sessionId={})", to, session.getId());
             roomManager.deleteRoomQuietly(session.getLivekitRoom());
         }
@@ -303,11 +303,11 @@ public class SessionSweeper {
 
     /** joined 유실의 관측 기반 보정 — 복원 후에는 started_at 앵커의 stale ACTIVE가 수렴을 담당한다. */
     private void restoreActive(InterviewSession session, Instant observedJoinedAt) {
-        int updated = transitionExecutor.execute(session.getUserId(), txNow -> {
+        boolean updated = transitionExecutor.execute(session.getUserId(), txNow -> {
             Instant startedAt = observedJoinedAt != null ? observedJoinedAt : txNow;
             return sessionRepositoryService.activate(session.getId(), startedAt, txNow);
         });
-        if (updated == 1) {
+        if (updated) {
             log.info("stale PENDING의 AGENT 관측 — ACTIVE 복원 (sessionId={}, joinedAt={})",
                     session.getId(), observedJoinedAt);
         }

@@ -152,7 +152,7 @@ public class UserRepositoryService {
         return deletionLogRepository.findStatusById(id);
     }
 
-    public int cancelPendingPurge(Long id, Instant now, Instant graceCutoff) {
-        return deletionLogRepository.cancelPendingPurge(id, now, graceCutoff);
+    public boolean cancelPendingPurge(Long id, Instant now, Instant graceCutoff) {
+        return deletionLogRepository.cancelPendingPurge(id, now, graceCutoff) == 1;
     }
 }

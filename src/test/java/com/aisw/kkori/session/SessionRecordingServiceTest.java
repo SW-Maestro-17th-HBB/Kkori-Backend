@@ -61,7 +61,7 @@ class SessionRecordingServiceTest {
         ReflectionTestUtils.setField(session, "id", 42L);
         when(sessionRepositoryService.findByEgressId(EGRESS_ID)).thenReturn(Optional.of(session));
         when(sessionRepositoryService.recordRecordingResult(anyLong(), anyString(), anyString(), any()))
-                .thenReturn(1);
+                .thenReturn(true);
     }
 
     @Test

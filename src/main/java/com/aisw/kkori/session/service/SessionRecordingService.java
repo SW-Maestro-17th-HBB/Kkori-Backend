@@ -58,9 +58,9 @@ public class SessionRecordingService {
             return;
         }
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
-        Integer updated = transactionTemplate.execute(status ->
+        Boolean recorded = transactionTemplate.execute(status ->
                 sessionRepositoryService.recordRecordingResult(session.getId(), bucket, objectKey, now));
-        if (updated != null && updated == 1) {
+        if (Boolean.TRUE.equals(recorded)) {
             log.info("녹음 업로드 기록·음성 분석 요청 발행 (sessionId={}, bucket={}, objectKey={})",
                     session.getId(), bucket, objectKey);
         } else {

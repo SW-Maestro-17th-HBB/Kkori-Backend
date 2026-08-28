@@ -7,6 +7,7 @@ import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.dto.TerminationMarker;
 import com.aisw.kkori.session.repository.InterviewSessionRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -21,6 +22,7 @@ import java.util.Optional;
  * {@link #readTerminationMarker})는 의도적으로 잠금 트랜잭션 밖에서 호출된다(호출부 계약).
  * 각 메서드의 전이 조건·멱등 계약은 {@link InterviewSessionRepository}의 javadoc 참조.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SessionRepositoryService {
@@ -76,67 +78,74 @@ public class SessionRepositoryService {
     // ── 상태 전이 (조건부 벌크 UPDATE — 원자적·멱등, 계약은 repository javadoc) ──
 
     /**
+     * PENDING 전부를 ABORTED로 교체하고 성공 여부를 반환한다 — 일부만 전이됐다면 조회~전이
+     * 사이에 다른 경로가 상태를 바꾼 것이므로 false(불일치 상세는 여기서 로그).
      * 주의: {@code clearAutomatically}가 영속성 컨텍스트를 비워, 호출 트랜잭션이 직전에
      * 잠근 User 엔티티가 detach된다 — 이후 그 엔티티의 dirty checking에 의존하지 말 것.
      */
-    public int abortPendingByIds(Collection<Long> ids, Instant now) {
-        return sessionRepository.abortPendingByIds(ids, now);
+    public boolean abortPending(Collection<Long> ids, Instant now) {
+        int aborted = sessionRepository.abortPendingByIds(ids, now);
+        if (aborted != ids.size()) {
+            log.warn("PENDING 교체 대상과 실제 전이 수 불일치 (expected={}, aborted={})", ids.size(), aborted);
+            return false;
+        }
+        return true;
     }
 
-    public int activate(Long id, Instant startedAt, Instant now) {
-        return sessionRepository.activate(id, startedAt, now);
+    public boolean activate(Long id, Instant startedAt, Instant now) {
+        return sessionRepository.activate(id, startedAt, now) == 1;
     }
 
-    public int finishFrom(Long id, Collection<SessionStatus> from, SessionStatus to, Instant now) {
-        return sessionRepository.finishFrom(id, from, to, now);
+    public boolean finishFrom(Long id, Collection<SessionStatus> from, SessionStatus to, Instant now) {
+        return sessionRepository.finishFrom(id, from, to, now) == 1;
     }
 
-    public int finishStaleActive(Long id, SessionStatus to, Instant now) {
-        return sessionRepository.finishStaleActive(id, to, now);
+    public boolean finishStaleActive(Long id, SessionStatus to, Instant now) {
+        return sessionRepository.finishStaleActive(id, to, now) == 1;
     }
 
-    public int finishInterruptedGrace(Long id, SessionStatus to, Instant now) {
-        return sessionRepository.finishInterruptedGrace(id, to, now);
+    public boolean finishInterruptedGrace(Long id, SessionStatus to, Instant now) {
+        return sessionRepository.finishInterruptedGrace(id, to, now) == 1;
     }
 
-    public int markAgentLost(Long id, Instant now) {
-        return sessionRepository.markAgentLost(id, now);
+    public boolean markAgentLost(Long id, Instant now) {
+        return sessionRepository.markAgentLost(id, now) == 1;
     }
 
-    public int interrupt(Long id, Instant now) {
-        return sessionRepository.interrupt(id, now);
+    public boolean interrupt(Long id, Instant now) {
+        return sessionRepository.interrupt(id, now) == 1;
     }
 
-    public int resumeFromInterrupted(Long id, Instant now) {
-        return sessionRepository.resumeFromInterrupted(id, now);
+    public boolean resumeFromInterrupted(Long id, Instant now) {
+        return sessionRepository.resumeFromInterrupted(id, now) == 1;
     }
 
-    public int recordDisconnectedIfAbsent(Long id, Instant now) {
-        return sessionRepository.recordDisconnectedIfAbsent(id, now);
+    public boolean recordDisconnectedIfAbsent(Long id, Instant now) {
+        return sessionRepository.recordDisconnectedIfAbsent(id, now) == 1;
     }
 
-    public int claimRedispatch(Long id, Instant now) {
-        return sessionRepository.claimRedispatch(id, now);
+    public boolean claimRedispatch(Long id, Instant now) {
+        return sessionRepository.claimRedispatch(id, now) == 1;
     }
 
-    public int resumeAgentLostToActive(Long id, Instant now) {
-        return sessionRepository.resumeAgentLostToActive(id, now);
+    public boolean resumeAgentLostToActive(Long id, Instant now) {
+        return sessionRepository.resumeAgentLostToActive(id, now) == 1;
     }
 
-    public int resumeAgentLostToInterrupted(Long id, Instant now) {
-        return sessionRepository.resumeAgentLostToInterrupted(id, now);
+    public boolean resumeAgentLostToInterrupted(Long id, Instant now) {
+        return sessionRepository.resumeAgentLostToInterrupted(id, now) == 1;
     }
 
-    public int recordEndRequested(Long id, Instant now) {
-        return sessionRepository.recordEndRequested(id, now);
+    public boolean recordEndRequested(Long id, Instant now) {
+        return sessionRepository.recordEndRequested(id, now) == 1;
     }
 
-    public int updateEgressId(Long id, String egressId, Instant now) {
-        return sessionRepository.updateEgressId(id, egressId, now);
+    public void updateEgressId(Long id, String egressId, Instant now) {
+        sessionRepository.updateEgressId(id, egressId, now);
     }
 
-    public int recordRecordingResult(Long id, String bucket, String objectKey, Instant now) {
-        return sessionRepository.recordRecordingResult(id, bucket, objectKey, now);
+    public boolean recordRecordingResult(Long id, String bucket, String objectKey, Instant now) {
+        return sessionRepository.recordRecordingResult(id, bucket, objectKey, now) == 1;
     }
 
     // ── 스위퍼 후보 조회 ──

@@ -26,13 +26,13 @@ public class SessionTransitionExecutor {
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
 
-    /** 잠금 트랜잭션 안에서 전이를 실행하고 영향 행 수를 반환한다(시각은 잠금 획득 후 취득). */
-    public int execute(Long userId, Function<Instant, Integer> transition) {
-        Integer updated = transactionTemplate.execute(status -> {
+    /** 잠금 트랜잭션 안에서 전이를 실행하고 전이 여부를 반환한다(시각은 잠금 획득 후 취득). */
+    public boolean execute(Long userId, Function<Instant, Boolean> transition) {
+        Boolean transitioned = transactionTemplate.execute(status -> {
             userRepositoryService.lockUser(userId);
             Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
             return transition.apply(now);
         });
-        return updated == null ? 0 : updated;
+        return Boolean.TRUE.equals(transitioned);
     }
 }

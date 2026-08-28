@@ -91,7 +91,7 @@ public class SessionRedispatchService {
         String metadata = transactionTemplate.execute(status -> {
             userRepositoryService.lockUser(session.getUserId());
             Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
-            if (sessionRepositoryService.claimRedispatch(sessionId, now) != 1) {
+            if (!sessionRepositoryService.claimRedispatch(sessionId, now)) {
                 return null;
             }
             StructuredData structuredData = session.getResumeId() == null ? null
@@ -137,16 +137,16 @@ public class SessionRedispatchService {
     /** 사전 확인의 관측 기반 복원 — joined(agent) 매핑과 같은 분기 (CAS 미소진). */
     private void restoreFromObservation(InterviewSession session, RoomPresence presence) {
         if (presence.candidatePresent()) {
-            int updated = transitionExecutor.execute(session.getUserId(),
+            boolean updated = transitionExecutor.execute(session.getUserId(),
                     now -> sessionRepositoryService.resumeAgentLostToActive(session.getId(), now));
-            if (updated == 1) {
+            if (updated) {
                 log.info("재디스패치 사전 확인 — 구 에이전트 재연결·candidate 재실, ACTIVE 복원 (sessionId={})",
                         session.getId());
             }
         } else {
-            int updated = transitionExecutor.execute(session.getUserId(),
+            boolean updated = transitionExecutor.execute(session.getUserId(),
                     now -> sessionRepositoryService.resumeAgentLostToInterrupted(session.getId(), now));
-            if (updated == 1) {
+            if (updated) {
                 log.info("재디스패치 사전 확인 — AGENT만 관측, INTERRUPTED 전환(잔여 창) (sessionId={})",
                         session.getId());
             }

@@ -146,16 +146,12 @@ public class SessionService {
         List<Long> pendingIds = existing.stream().map(InterviewSession::getId).toList();
         List<String> abortedRooms = existing.stream().map(InterviewSession::getLivekitRoom).toList();
         if (!pendingIds.isEmpty()) {
-            // 주의: 이 벌크 UPDATE는 clearAutomatically로 영속성 컨텍스트를 비운다 — 1)에서 잠근 User를
-            // 포함해 앞서 조회한 엔티티가 전부 detach되므로, 이 지점 이후 그 엔티티들을 변이하면 안 된다
-            // (dirty checking 유실 — cancelPendingPurge의 clearAutomatically 관련 javadoc 참조).
-            int aborted = sessionRepositoryService.abortPendingByIds(pendingIds, now);
-            if (aborted != pendingIds.size()) {
+            // 주의: 이 교체는 영속성 컨텍스트를 비운다 — 1)에서 잠근 User를 포함해 앞서 조회한
+            // 엔티티가 전부 detach되므로, 이 지점 이후 그 엔티티들을 변이하면 안 된다(dirty checking 유실).
+            if (!sessionRepositoryService.abortPending(pendingIds, now)) {
                 // user 잠금 하에서는 도달 불가한 상태 — 잠금을 공유하지 않는 전이 경로(예: 후속 webhook)가
                 // 조회~전이 사이에 PENDING을 다른 상태로 바꿨다는 신호다. 계속 진행하면 ACTIVE와 신규
                 // PENDING이 공존할 수 있으므로 생성을 중단한다(불변식의 최후 방어선, 전체 롤백).
-                log.warn("PENDING 교체 대상과 실제 전이 수 불일치 — 생성 중단 (expected={}, aborted={})",
-                        pendingIds.size(), aborted);
                 throw new BusinessException(ErrorCode.SESSION_ALREADY_IN_PROGRESS);
             }
         }
