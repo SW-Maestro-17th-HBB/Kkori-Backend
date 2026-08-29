@@ -12,8 +12,7 @@ import com.aisw.kkori.user.config.ConsentPolicyProperties;
 import com.aisw.kkori.user.domain.ConsentType;
 import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.domain.UserConsent;
-import com.aisw.kkori.user.repository.UserConsentRepository;
-import com.aisw.kkori.user.repository.UserRepository;
+import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import com.aisw.kkori.user.service.ConsentDecision;
 import com.aisw.kkori.user.service.RestoreResult;
 import com.aisw.kkori.user.service.UserService;
@@ -42,8 +41,7 @@ public class AuthService {
     private final KakaoOAuthClient kakaoOAuthClient;
     private final JwtTokenProvider jwtTokenProvider;
     private final TokenService tokenService;
-    private final UserRepository userRepository;
-    private final UserConsentRepository userConsentRepository;
+    private final UserRepositoryService userRepositoryService;
     private final UserService userService;
     private final ConsentPolicyProperties consentPolicyProperties;
     private final Clock clock;
@@ -84,7 +82,7 @@ public class AuthService {
         // 마이크로초 절삭 — timestamptz(6) 반올림과의 정합(탈퇴·복구 경로와 동일).
         // 동의 상태 조회의 updatedAt이 DB 왕복 후에도 기록 시각과 정확히 일치해야 한다.
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
-        consents.forEach((type, decision) -> userConsentRepository.save(
+        consents.forEach((type, decision) -> userRepositoryService.saveConsent(
                 UserConsent.create(user.getId(), type, decision.agreed(), decision.version(), now)));
 
         return tokenService.issueTokenPair(user.getId());
@@ -165,13 +163,13 @@ public class AuthService {
      * 복구용 토큰(deletionLogId 바인딩)을 받아야 한다.
      */
     private User createUser(JwtTokenProvider.SignupClaims claims) {
-        userRepository.findByProviderId(claims.providerId()).ifPresent(existing -> {
+        userRepositoryService.findByProviderId(claims.providerId()).ifPresent(existing -> {
             throw new BusinessException(existing.isDeleted()
                     ? ErrorCode.INVALID_SIGNUP_TOKEN
                     : ErrorCode.ALREADY_REGISTERED);
         });
         try {
-            return userRepository.saveAndFlush(User.create(claims.providerId(), claims.email(), claims.nickname()));
+            return userRepositoryService.saveAndFlush(User.create(claims.providerId(), claims.email(), claims.nickname()));
         } catch (DataIntegrityViolationException e) {
             throw new BusinessException(ErrorCode.ALREADY_REGISTERED);
         }

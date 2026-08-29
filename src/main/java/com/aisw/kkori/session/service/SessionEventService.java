@@ -5,8 +5,7 @@ import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.dto.RoomPresence;
 import com.aisw.kkori.session.dto.SessionWebhookSignal;
 import com.aisw.kkori.session.dto.TerminationMarker;
-import com.aisw.kkori.session.repository.InterviewSessionRepository;
-import com.aisw.kkori.session.repository.InterviewTranscriptReader;
+import com.aisw.kkori.session.repositoryservice.SessionRepositoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -39,9 +38,7 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class SessionEventService {
 
-    private final InterviewSessionRepository sessionRepository;
-    private final InterviewTranscriptReader transcriptReader;
-    private final TerminationMarkerReader markerReader;
+    private final SessionRepositoryService sessionRepositoryService;
     private final SessionRoomManager roomManager;
     private final SessionTransitionExecutor transitionExecutor;
     private final SessionRedispatchService redispatchService;
@@ -55,7 +52,7 @@ public class SessionEventService {
         if (signal.type() == SessionWebhookSignal.Type.IGNORE) {
             return;
         }
-        Optional<InterviewSession> found = sessionRepository.findByLivekitRoom(signal.roomName());
+        Optional<InterviewSession> found = sessionRepositoryService.findByLivekitRoom(signal.roomName());
         if (found.isEmpty()) {
             log.info("미등록 룸 webhook — no-op (event={}, room={})", signal.rawEvent(), signal.roomName());
             return;
@@ -85,9 +82,9 @@ public class SessionEventService {
             recoverFromAgentLost(session);
             return;
         }
-        int updated = transitionExecutor.execute(session.getUserId(),
-                now -> sessionRepository.activate(session.getId(), now, now));
-        if (updated == 1) {
+        boolean updated = transitionExecutor.execute(session.getUserId(),
+                now -> sessionRepositoryService.activate(session.getId(), now, now));
+        if (updated) {
             log.info("세션 ACTIVE 전환 — 에이전트 입장 (sessionId={})", session.getId());
         }
     }
@@ -110,15 +107,15 @@ public class SessionEventService {
             return;
         }
         if (presence.candidatePresent()) {
-            int updated = transitionExecutor.execute(session.getUserId(),
-                    now -> sessionRepository.resumeAgentLostToActive(session.getId(), now));
-            if (updated == 1) {
+            boolean updated = transitionExecutor.execute(session.getUserId(),
+                    now -> sessionRepositoryService.resumeAgentLostToActive(session.getId(), now));
+            if (updated) {
                 log.info("재디스패치 복귀 — candidate 재실, ACTIVE (sessionId={})", session.getId());
             }
         } else {
-            int updated = transitionExecutor.execute(session.getUserId(),
-                    now -> sessionRepository.resumeAgentLostToInterrupted(session.getId(), now));
-            if (updated == 1) {
+            boolean updated = transitionExecutor.execute(session.getUserId(),
+                    now -> sessionRepositoryService.resumeAgentLostToInterrupted(session.getId(), now));
+            if (updated) {
                 log.info("재디스패치 복귀 — candidate 부재, INTERRUPTED(잔여 창) (sessionId={})", session.getId());
             }
         }
@@ -126,10 +123,10 @@ public class SessionEventService {
 
     /** room_finished: 행 판별 terminal 확정. 룸은 이미 소멸했으므로 정리할 것이 없다. */
     private void finishRoom(InterviewSession session) {
-        SessionStatus to = transcriptReader.exists(session.getId()) ? SessionStatus.ENDED : SessionStatus.ABORTED;
-        int updated = transitionExecutor.execute(session.getUserId(),
-                now -> sessionRepository.finishFrom(session.getId(), SessionStatus.NON_TERMINAL, to, now));
-        if (updated == 1) {
+        SessionStatus to = sessionRepositoryService.transcriptExists(session.getId()) ? SessionStatus.ENDED : SessionStatus.ABORTED;
+        boolean updated = transitionExecutor.execute(session.getUserId(),
+                now -> sessionRepositoryService.finishFrom(session.getId(), SessionStatus.NON_TERMINAL, to, now));
+        if (updated) {
             log.info("세션 {} 확정 — room_finished (sessionId={})", to, session.getId());
         }
     }
@@ -146,18 +143,18 @@ public class SessionEventService {
      * terminal)는 둘 다 no-op이다.
      */
     private void handleCandidateLeft(InterviewSession session, String rawEvent) {
-        int interrupted = transitionExecutor.execute(session.getUserId(),
-                now -> sessionRepository.interrupt(session.getId(), now));
-        if (interrupted == 1) {
+        boolean interrupted = transitionExecutor.execute(session.getUserId(),
+                now -> sessionRepositoryService.interrupt(session.getId(), now));
+        if (interrupted) {
             log.info("candidate 이탈 — INTERRUPTED 전이 (sessionId={}, event={})",
                     session.getId(), rawEvent);
             // [커밋 후] 즉시 대조 — reason 미실림 시 가짜 INTERRUPTED를 왕복 1회 안에 보정
             restoreIfBothPresent(session, "즉시 대조");
             return;
         }
-        int recorded = transitionExecutor.execute(session.getUserId(),
-                now -> sessionRepository.recordDisconnectedIfAbsent(session.getId(), now));
-        if (recorded == 1) {
+        boolean recorded = transitionExecutor.execute(session.getUserId(),
+                now -> sessionRepositoryService.recordDisconnectedIfAbsent(session.getId(), now));
+        if (recorded) {
             log.info("AGENT_LOST 중 candidate 이탈 — disconnected_at 기록 (sessionId={})",
                     session.getId());
         }
@@ -180,9 +177,9 @@ public class SessionEventService {
                     "복귀 대조 실패 — webhook 재전송 유도 (sessionId=%d)".formatted(session.getId()));
         }
         if (presence.bothPresent()) {
-            int updated = transitionExecutor.execute(session.getUserId(),
-                    now -> sessionRepository.resumeFromInterrupted(session.getId(), now));
-            if (updated == 1) {
+            boolean updated = transitionExecutor.execute(session.getUserId(),
+                    now -> sessionRepositoryService.resumeFromInterrupted(session.getId(), now));
+            if (updated) {
                 log.info("candidate 재입장 — ACTIVE 복귀 (sessionId={}, event={})", session.getId(), rawEvent);
             }
         } else {
@@ -196,9 +193,9 @@ public class SessionEventService {
         RoomPresence presence = roomManager.probeRoomPresence(
                 session.getLivekitRoom(), CandidateIdentity.of(session.getId()));
         if (presence.bothPresent()) {
-            int updated = transitionExecutor.execute(session.getUserId(),
-                    now -> sessionRepository.resumeFromInterrupted(session.getId(), now));
-            if (updated == 1) {
+            boolean updated = transitionExecutor.execute(session.getUserId(),
+                    now -> sessionRepositoryService.resumeFromInterrupted(session.getId(), now));
+            if (updated) {
                 log.info("{} — candidate 실존, ACTIVE 복원(가짜 INTERRUPTED 보정) (sessionId={})",
                         path, session.getId());
             }
@@ -214,29 +211,29 @@ public class SessionEventService {
      */
     private void arbitrateLoss(InterviewSession session, String rawEvent) {
         long sessionId = session.getId();
-        if (transcriptReader.exists(sessionId)) {
-            int updated = transitionExecutor.execute(session.getUserId(),
-                    now -> sessionRepository.finishFrom(sessionId, LOSS_OBSERVABLE, SessionStatus.ENDED, now));
-            if (updated == 1) {
+        if (sessionRepositoryService.transcriptExists(sessionId)) {
+            boolean updated = transitionExecutor.execute(session.getUserId(),
+                    now -> sessionRepositoryService.finishFrom(sessionId, LOSS_OBSERVABLE, SessionStatus.ENDED, now));
+            if (updated) {
                 log.info("판별 ① 행 존재 → ENDED (sessionId={}, event={})", sessionId, rawEvent);
                 roomManager.deleteRoomQuietly(session.getLivekitRoom());
             }
             return;
         }
-        Optional<TerminationMarker> marker = markerReader.read(sessionId);
+        Optional<TerminationMarker> marker = sessionRepositoryService.readTerminationMarker(sessionId);
         if (marker.isPresent()) {
-            int updated = transitionExecutor.execute(session.getUserId(),
-                    now -> sessionRepository.finishFrom(sessionId, LOSS_OBSERVABLE, SessionStatus.ABORTED, now));
-            if (updated == 1) {
+            boolean updated = transitionExecutor.execute(session.getUserId(),
+                    now -> sessionRepositoryService.finishFrom(sessionId, LOSS_OBSERVABLE, SessionStatus.ABORTED, now));
+            if (updated) {
                 log.info("판별 ② 표식 존재 → ABORTED (sessionId={}, event={}, cause={}, markedAt={})",
                         sessionId, rawEvent, marker.get().cause(), marker.get().markedAt());
                 roomManager.deleteRoomQuietly(session.getLivekitRoom());
             }
             return;
         }
-        int updated = transitionExecutor.execute(session.getUserId(),
-                now -> sessionRepository.markAgentLost(sessionId, now));
-        if (updated == 1) {
+        boolean updated = transitionExecutor.execute(session.getUserId(),
+                now -> sessionRepositoryService.markAgentLost(sessionId, now));
+        if (updated) {
             log.info("판별 ③ 증거 없음 → AGENT_LOST — 재디스패치 시도 후 유예 수렴 (sessionId={}, event={})",
                     sessionId, rawEvent);
             // [커밋 후] 재디스패치 — 실시간 판별 ③ 전용(stale 회수는 즉시 ABORTED라 트리거 없음).

@@ -4,7 +4,7 @@ import com.aisw.kkori.session.domain.InterviewSession;
 import com.aisw.kkori.session.domain.InterviewType;
 import com.aisw.kkori.session.domain.Position;
 import com.aisw.kkori.session.dto.AudioAnalysisRequestedMessage;
-import com.aisw.kkori.session.repository.InterviewSessionRepository;
+import com.aisw.kkori.session.repositoryservice.SessionRepositoryService;
 import com.aisw.kkori.session.service.AudioAnalysisRequestPublisher;
 import com.aisw.kkori.session.service.SessionRecordingService;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,10 +46,10 @@ class SessionRecordingServiceTest {
     private static final String BUCKET = "kkori-rec";
     private static final String OBJECT_KEY = "recordings/room-r-123.ogg";
 
-    private final InterviewSessionRepository sessionRepository = mock(InterviewSessionRepository.class);
+    private final SessionRepositoryService sessionRepositoryService = mock(SessionRepositoryService.class);
     private final AudioAnalysisRequestPublisher publisher = mock(AudioAnalysisRequestPublisher.class);
     private final SessionRecordingService service = new SessionRecordingService(
-            sessionRepository, publisher,
+            sessionRepositoryService, publisher,
             new TransactionTemplate(mock(PlatformTransactionManager.class)),
             Clock.fixed(Instant.parse("2026-08-11T10:00:00Z"), ZoneOffset.UTC));
 
@@ -59,9 +59,9 @@ class SessionRecordingServiceTest {
     void seedSession() {
         session = InterviewSession.pending(1L, null, InterviewType.THIRTY_MIN, Position.BACKEND, "room-r");
         ReflectionTestUtils.setField(session, "id", 42L);
-        when(sessionRepository.findByEgressId(EGRESS_ID)).thenReturn(Optional.of(session));
-        when(sessionRepository.recordRecordingResult(anyLong(), anyString(), anyString(), any()))
-                .thenReturn(1);
+        when(sessionRepositoryService.findByEgressId(EGRESS_ID)).thenReturn(Optional.of(session));
+        when(sessionRepositoryService.recordRecordingResult(anyLong(), anyString(), anyString(), any()))
+                .thenReturn(true);
     }
 
     @Test
@@ -69,9 +69,9 @@ class SessionRecordingServiceTest {
     void publishesBeforeRecording() {
         service.completeRecording(EGRESS_ID, BUCKET, OBJECT_KEY);
 
-        InOrder order = inOrder(publisher, sessionRepository);
+        InOrder order = inOrder(publisher, sessionRepositoryService);
         order.verify(publisher).publish(new AudioAnalysisRequestedMessage(42L, BUCKET, OBJECT_KEY));
-        order.verify(sessionRepository).recordRecordingResult(anyLong(), anyString(), anyString(), any());
+        order.verify(sessionRepositoryService).recordRecordingResult(anyLong(), anyString(), anyString(), any());
     }
 
     @Test
@@ -82,13 +82,13 @@ class SessionRecordingServiceTest {
         assertThatCode(() -> service.completeRecording(EGRESS_ID, BUCKET, OBJECT_KEY))
                 .doesNotThrowAnyException();
 
-        verify(sessionRepository, never()).recordRecordingResult(anyLong(), anyString(), anyString(), any());
+        verify(sessionRepositoryService, never()).recordRecordingResult(anyLong(), anyString(), anyString(), any());
     }
 
     @Test
     @DisplayName("기록 실패는 전파된다 (500 → LiveKit 재전송 유도, 중복 발행은 워커 멱등이 흡수)")
     void recordingFailurePropagates() {
-        when(sessionRepository.recordRecordingResult(anyLong(), anyString(), anyString(), any()))
+        when(sessionRepositoryService.recordRecordingResult(anyLong(), anyString(), anyString(), any()))
                 .thenThrow(new RuntimeException("db down"));
 
         assertThatThrownBy(() -> service.completeRecording(EGRESS_ID, BUCKET, OBJECT_KEY))
@@ -103,6 +103,6 @@ class SessionRecordingServiceTest {
         service.completeRecording(EGRESS_ID, BUCKET, OBJECT_KEY);
 
         verifyNoInteractions(publisher);
-        verify(sessionRepository, never()).recordRecordingResult(anyLong(), anyString(), anyString(), any());
+        verify(sessionRepositoryService, never()).recordRecordingResult(anyLong(), anyString(), anyString(), any());
     }
 }

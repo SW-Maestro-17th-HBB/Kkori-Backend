@@ -5,9 +5,8 @@ import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.session.domain.InterviewSession;
 import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.dto.AgentPresence;
-import com.aisw.kkori.session.repository.InterviewSessionRepository;
-import com.aisw.kkori.session.repository.InterviewTranscriptReader;
-import com.aisw.kkori.user.repository.UserRepository;
+import com.aisw.kkori.session.repositoryservice.SessionRepositoryService;
+import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -47,9 +46,8 @@ public class SessionEndService {
     // INTERRUPTED는 HBB1-308로 ACTIVE 동일 취급이 되었다 — 즉시 정리 대상은 AGENT_LOST뿐이다
     // (에이전트 소실이 판별 ③으로 관측된 상태 — 부재가 증거 기반).
 
-    private final InterviewSessionRepository sessionRepository;
-    private final UserRepository userRepository;
-    private final InterviewTranscriptReader transcriptReader;
+    private final SessionRepositoryService sessionRepositoryService;
+    private final UserRepositoryService userRepositoryService;
     private final SessionEndSignalSender endSignalSender;
     private final SessionRoomManager roomManager;
     private final TransactionTemplate transactionTemplate;
@@ -57,11 +55,7 @@ public class SessionEndService {
 
     /** 세션 종료 요청을 수리한다 — 소유자만, 상태 무관. */
     public void end(Long userId, Long sessionId) {
-        InterviewSession session = sessionRepository.findById(sessionId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
-        if (!session.getUserId().equals(userId)) {
-            throw new BusinessException(ErrorCode.SESSION_FORBIDDEN);
-        }
+        InterviewSession session = sessionRepositoryService.getOwned(userId, sessionId);
 
         // [트랜잭션] user 잠금 하에 상태를 재판정하고 기록한다 — 잠금 획득 시점의 상태 기준.
         EndAction action = transactionTemplate.execute(status -> planInTransaction(userId, sessionId, null));
@@ -86,21 +80,20 @@ public class SessionEndService {
 
     private EndAction planInTransaction(Long userId, Long sessionId, PendingResolution resolution) {
         // 활성 재확인 없는 잠금 — 소유 검증은 이미 끝났고, 전이 직렬화만 필요하다(전이 경로 공통)
-        userRepository.findWithLockById(userId);
+        userRepositoryService.lockUser(userId);
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
-        InterviewSession session = sessionRepository.findById(sessionId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
+        InterviewSession session = sessionRepositoryService.getById(sessionId);
         return switch (session.getStatus()) {
             // INTERRUPTED 포함(HBB1-308) — 에이전트가 살아 대기 중이라 SendData가 도달하고,
             // 진행된 면접 산출물(행·리포트)이 클로징·flush로 보존된다(즉시 ABORTED는 내용 손실)
             case ACTIVE, INTERRUPTED -> {
                 // first-wins — 중복 /end는 재발신하되(에이전트 처리는 멱등) fallback 창을 연장하지 않는다
-                sessionRepository.recordEndRequested(sessionId, now);
+                sessionRepositoryService.recordEndRequested(sessionId, now);
                 yield EndAction.SEND_END_SIGNAL;
             }
             case PENDING -> planPending(sessionId, resolution, now);
             case AGENT_LOST -> {
-                sessionRepository.finishFrom(sessionId, Set.of(SessionStatus.AGENT_LOST), SessionStatus.ABORTED, now);
+                sessionRepositoryService.finishFrom(sessionId, Set.of(SessionStatus.AGENT_LOST), SessionStatus.ABORTED, now);
                 log.info("소실 관측 세션 즉시 종료 — AGENT_LOST → ABORTED (sessionId={})", sessionId);
                 yield EndAction.CLEAN_ROOM;
             }
@@ -115,20 +108,20 @@ public class SessionEndService {
         }
         return switch (resolution.kind()) {
             case TRANSCRIPT_EXISTS -> {
-                sessionRepository.finishFrom(sessionId, Set.of(SessionStatus.PENDING), SessionStatus.ENDED, now);
+                sessionRepositoryService.finishFrom(sessionId, Set.of(SessionStatus.PENDING), SessionStatus.ENDED, now);
                 log.info("PENDING /end — 행 존재, ENDED 확정 (sessionId={})", sessionId);
                 yield EndAction.CLEAN_ROOM;
             }
             case AGENT_PRESENT -> {
                 // joined 유실의 관측 기반 보정 — 복원 후 ACTIVE와 동일 처리(정상 클로징 보존)
                 Instant startedAt = resolution.joinedAt() != null ? resolution.joinedAt() : now;
-                sessionRepository.activate(sessionId, startedAt, now);
-                sessionRepository.recordEndRequested(sessionId, now);
+                sessionRepositoryService.activate(sessionId, startedAt, now);
+                sessionRepositoryService.recordEndRequested(sessionId, now);
                 log.info("PENDING /end — AGENT 관측, ACTIVE 복원 후 종료 신호 (sessionId={})", sessionId);
                 yield EndAction.SEND_END_SIGNAL;
             }
             case AGENT_ABSENT -> {
-                sessionRepository.finishFrom(sessionId, Set.of(SessionStatus.PENDING), SessionStatus.ABORTED, now);
+                sessionRepositoryService.finishFrom(sessionId, Set.of(SessionStatus.PENDING), SessionStatus.ABORTED, now);
                 log.info("PENDING /end — 부재 확정, ABORTED (sessionId={})", sessionId);
                 yield EndAction.CLEAN_ROOM;
             }
@@ -137,7 +130,7 @@ public class SessionEndService {
 
     /** PENDING 대조 — 행 판별을 먼저(대조 불필요한 확정 증거), 그 다음 룸 참가자 대조. */
     private PendingResolution resolvePending(InterviewSession session) {
-        if (transcriptReader.exists(session.getId())) {
+        if (sessionRepositoryService.transcriptExists(session.getId())) {
             return PendingResolution.transcriptExists();
         }
         AgentPresence presence = roomManager.probeAgentPresence(session.getLivekitRoom());

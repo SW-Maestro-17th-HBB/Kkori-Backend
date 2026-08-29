@@ -34,7 +34,15 @@ docker compose up -d         # 로컬 PostgreSQL(5432) + Redis(6379) + MinIO(900
 
 - **도메인 기준(package-by-feature)** — `com.aisw.kkori` 아래 `global/`(공통)과 도메인 패키지(예: `resume`, `interview`, `user`)를 두고, 각 도메인 안에 계층별 하위 패키지를 둔다. 계층형(controller/service가 최상위)이 아님
 - 각 도메인의 하위 패키지: `controller`(@RestController) / `service` / `repositoryservice`(영속성 접근 계층 — 다음 항목 참조, JPA repository 외의 네이티브 접근 클래스도 여기) / `repository`(JPA) / `api`(**Swagger 문서화 인터페이스** — `@Tag`/`@Operation` 담긴 interface, controller가 `implements`) / `dto`(요청·응답) / `domain`(@Entity, `global.entity.BaseEntity` 상속)
-- **service와 repository 사이에 repositoryService 계층을 둔다** — DB에서 가져오고 저장하는 영속성 접근 작업(조회·저장, 존재 검증과 도메인 예외 변환 포함)은 repositoryService(패키지명은 Java 관례대로 소문자 `repositoryservice`, 클래스 예: `ReportRepositoryService`)가 담당하고, service는 repositoryService만 의존해 비즈니스 흐름을 조립한다. 의존 방향: `service → repositoryService → repository` (service가 repository를 직접 의존하지 않음). **기존 코드는 아직 이 구조가 아니며 추후 일괄 리팩터링 예정** — 신규 코드는 이 구조로 작성할 것
+- **service와 repository 사이에 repositoryService 계층을 둔다** — DB에서 가져오고 저장하는 영속성 접근 작업(조회·저장, 존재 검증과 도메인 예외 변환 포함)은 repositoryService(패키지명은 Java 관례대로 소문자 `repositoryservice`, 클래스명은 `<도메인>RepositoryService`, 예: `ReportRepositoryService`)가 담당하고, service는 repositoryService만 의존해 비즈니스 흐름을 조립한다. 의존 방향: `service → repositoryService → repository` (service가 repository를 직접 의존하지 않음). 전 도메인 적용 완료(HBB1-325) — main 소스에서 raw repository 의존은 `repositoryservice` 패키지 안에만 존재한다(테스트의 데이터 준비·단언용 @Autowired는 예외)
+- **타 도메인 영속성 접근도 해당 도메인의 repositoryService를 경유한다** — 타 도메인의 raw repository import 금지 (예: 세션의 user 행 잠금은 `UserRepositoryService.lockUser`). repositoryService는 자기 도메인의 repository만 의존하고 타 repositoryService를 의존하지 않는다(도메인 간 빈 순환 차단). repositoryService는 트랜잭션을 소유하지 않는다 — 잠금 메서드는 호출자의 트랜잭션 안에서만 호출(비관적 잠금의 수명이 트랜잭션에 묶임)
+- **repositoryService 메서드 명명 컨벤션** — service가 DB 접근 방식(쿼리·잠금·영향 행 수)을 모르도록, 이름은 의도를 담고 쿼리 파생 이름(`findByStatusAnd...`)·행 수 판정(`== 1`)을 노출하지 않는다:
+  - `find…`: 조회, 없을 수 있음 — `Optional`/`List` 반환, 예외 없음(분기는 호출자)
+  - `get…`: 조회, 있어야 정상 — 부재·부적합 시 도메인 예외(`BusinessException`). 소유 검증 조회는 도메인 불문 `getOwned…`
+  - `lock…`: 비관적 잠금(호출자 트랜잭션 필수). 예외 없는 변형은 `try` 접두사(`tryLockActive`)
+  - `require…`: 상태 검증만, 통과 또는 도메인 예외
+  - `exists…`/`has…`/`is…`: boolean 판정
+  - 쓰기·전이는 동사(`save…`, `softDelete`, `activate`…) — 조건부 전이(벌크 UPDATE)는 행 수가 아닌 **전이 여부 boolean**을 반환
 - 문서화 애너테이션은 컨트롤러에 직접 달지 말고 `api` 인터페이스로 분리해 컨트롤러를 얇게 유지
 - 공통 계층 `global/`: `response`(ApiResponse/ErrorResponse), `exception`(ErrorCode/BusinessException/GlobalExceptionHandler), `entity`(BaseEntity), `config`(JpaConfig/SecurityConfig/SwaggerConfig)
 

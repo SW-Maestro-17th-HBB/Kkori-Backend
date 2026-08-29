@@ -1,4 +1,4 @@
-package com.aisw.kkori.session.service;
+package com.aisw.kkori.session.repositoryservice;
 
 import com.aisw.kkori.session.dto.TerminationMarker;
 import com.fasterxml.jackson.databind.JsonNode;
