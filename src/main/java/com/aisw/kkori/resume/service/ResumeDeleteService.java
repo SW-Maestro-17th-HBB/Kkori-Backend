@@ -3,7 +3,8 @@ package com.aisw.kkori.resume.service;
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.resume.domain.Resume;
-import com.aisw.kkori.user.repository.UserRepository;
+import com.aisw.kkori.resume.repositoryservice.ResumeRepositoryService;
+import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,17 +25,17 @@ import java.time.Clock;
 @RequiredArgsConstructor
 public class ResumeDeleteService {
 
-    private final ResumeAccessGuard accessGuard;
-    private final UserRepository userRepository;
+    private final ResumeRepositoryService resumeRepositoryService;
+    private final UserRepositoryService userRepositoryService;
     private final ResumeUsageChecker resumeUsageChecker;
     private final Clock clock;
 
     @Transactional
     public void delete(Long userId, Long resumeId) {
         // 세션 생성과의 직렬화 지점 — user 행 잠금 + 활성 재확인 (유저 상태 경로 공통 관례)
-        userRepository.findActiveWithLock(userId);
+        userRepositoryService.lockActive(userId);
         // 존재(404) → 소유(403) — 이미 삭제된 이력서는 @SQLRestriction으로 404에 수렴한다
-        Resume resume = accessGuard.findAuthorized(userId, resumeId);
+        Resume resume = resumeRepositoryService.getOwned(userId, resumeId);
         // 진행 중 면접에서 사용 중인 이력서는 삭제 불가 — R013 (면접이 검색할 청크 보호)
         if (resumeUsageChecker.isInUse(resumeId)) {
             throw new BusinessException(ErrorCode.RESUME_IN_USE);

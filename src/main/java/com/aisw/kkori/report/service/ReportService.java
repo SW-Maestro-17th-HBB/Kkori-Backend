@@ -16,8 +16,6 @@ import com.aisw.kkori.report.dto.ReportStatusResponse;
 import com.aisw.kkori.report.dto.ReportSummaryResponse;
 import com.aisw.kkori.report.dto.ReportTimelineResponse;
 import com.aisw.kkori.report.dto.TranscriptUtterance;
-import com.aisw.kkori.report.repository.ReportRepository;
-import com.aisw.kkori.report.repository.ReportScoreRepository;
 import com.aisw.kkori.report.repositoryservice.ReportRepositoryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -51,9 +49,6 @@ public class ReportService {
      */
     static final String AI_DISCLAIMER = "AI 분석 결과는 참고용이며 실제 면접 평가와 다를 수 있습니다.";
 
-    // getList·getStats·getDetail의 직접 의존은 repositoryService 일괄 리팩터링 때 전환 예정
-    private final ReportRepository reportRepository;
-    private final ReportScoreRepository reportScoreRepository;
     private final ReportRepositoryService reportRepositoryService;
     private final ReportGenerationRequestPublisher generationRequestPublisher;
 
@@ -81,14 +76,14 @@ public class ReportService {
                 // 동시각 동점은 id로 순서를 고정한다 — 페이지 경계에서 항목이 흔들리지 않게
                 Pageable pageable = PageRequest.of(page, size,
                         Sort.by(direction, "createdAt").and(Sort.by(direction, "id")));
-                yield reportRepository.findPage(userId, status, pageable);
+                yield reportRepositoryService.findPage(userId, status, pageable);
             }
             case "overallScore" -> {
                 // null을 항상 뒤로 보내는 정렬은 쿼리에 고정되어 있어 Pageable에는 정렬을 싣지 않는다
                 Pageable pageable = PageRequest.of(page, size);
                 yield descending
-                        ? reportRepository.findPageOrderByOverallScoreDesc(userId, status, pageable)
-                        : reportRepository.findPageOrderByOverallScoreAsc(userId, status, pageable);
+                        ? reportRepositoryService.findPageOrderByOverallScoreDesc(userId, status, pageable)
+                        : reportRepositoryService.findPageOrderByOverallScoreAsc(userId, status, pageable);
             }
             default -> throw new BusinessException(ErrorCode.INVALID_INPUT_VALUE);
         };
@@ -97,10 +92,9 @@ public class ReportService {
 
     @Transactional(readOnly = true)
     public ReportDetailResponse getDetail(Long userId, Long reportId) {
-        Report report = reportRepositoryService.findOwnedCompleted(userId, reportId);
+        Report report = reportRepositoryService.getOwnedCompleted(userId, reportId);
         // COMPLETED 리포트에는 텍스트 3축 점수가 반드시 존재한다(Worker가 한 트랜잭션으로 저장).
-        ReportScore score = reportScoreRepository.findByReportId(report.getId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR));
+        ReportScore score = reportRepositoryService.getScore(report.getId());
         List<ReportFeedback> feedbacks = reportRepositoryService.findFeedbacks(report.getId());
         return ReportDetailResponse.of(report, score, feedbacks, AI_DISCLAIMER);
     }
@@ -110,7 +104,7 @@ public class ReportService {
      */
     @Transactional(readOnly = true)
     public ReportTimelineResponse getTimeline(Long userId, Long reportId) {
-        Report report = reportRepositoryService.findOwnedCompleted(userId, reportId);
+        Report report = reportRepositoryService.getOwnedCompleted(userId, reportId);
         List<TranscriptUtterance> utterances =
                 reportRepositoryService.getUtterances(report.getInterviewSessionId());
         List<ReportFeedback> feedbacks = reportRepositoryService.findFeedbacks(report.getId());
@@ -125,7 +119,7 @@ public class ReportService {
      */
     @Transactional
     public ReportRegenerateResponse regenerate(Long userId, Long reportId) {
-        Report report = reportRepositoryService.findOwnedFailedForUpdate(userId, reportId);
+        Report report = reportRepositoryService.lockOwnedFailed(userId, reportId);
         report.restartForRegeneration();
         reportRepositoryService.updateJobRequestedAtToNow(report.getId());
         generationRequestPublisher.publishForRegeneration(
@@ -145,8 +139,7 @@ public class ReportService {
      */
     @Transactional(readOnly = true)
     public ReportStatsResponse getStats(Long userId) {
-        List<Report> completed =
-                reportRepository.findByUserIdAndStatusOrderByCompletedAtAscIdAsc(userId, ReportStatus.COMPLETED);
+        List<Report> completed = reportRepositoryService.findCompletedOrderByCompletedAt(userId);
         if (completed.isEmpty()) {
             return ReportStatsResponse.empty();
         }
@@ -197,7 +190,7 @@ public class ReportService {
      */
     private ReportStatsResponse.AxisAverages axisAverages(List<Report> completed) {
         List<Long> ids = completed.stream().map(Report::getId).toList();
-        List<ReportScore> scores = reportScoreRepository.findByReportIdIn(ids);
+        List<ReportScore> scores = reportRepositoryService.findScoresByReportIdIn(ids);
         List<Integer> deliveries = completed.stream().map(Report::getDeliveryScore)
                 .filter(Objects::nonNull).toList();
         return new ReportStatsResponse.AxisAverages(
@@ -247,6 +240,6 @@ public class ReportService {
      */
     @Transactional(readOnly = true)
     public ReportStatusResponse getStatus(Long userId, Long reportId) {
-        return ReportStatusResponse.from(reportRepositoryService.findOwned(userId, reportId));
+        return ReportStatusResponse.from(reportRepositoryService.getOwned(userId, reportId));
     }
 }

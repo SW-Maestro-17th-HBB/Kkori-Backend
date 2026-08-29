@@ -9,8 +9,7 @@ import com.aisw.kkori.resume.domain.Resume;
 import com.aisw.kkori.resume.domain.ResumeAnalysisStatus;
 import com.aisw.kkori.resume.dto.ResumeParseRequestedMessage;
 import com.aisw.kkori.resume.dto.ResumeUploadResponse;
-import com.aisw.kkori.resume.repository.ResumeAnalysisStatusRepository;
-import com.aisw.kkori.resume.repository.ResumeRepository;
+import com.aisw.kkori.resume.repositoryservice.ResumeRepositoryService;
 import io.awspring.cloud.s3.ObjectMetadata;
 import io.awspring.cloud.s3.S3Template;
 import lombok.RequiredArgsConstructor;
@@ -43,8 +42,7 @@ public class ResumeUploadService {
 
     private final PdfValidator pdfValidator;
     private final S3Template s3Template;
-    private final ResumeRepository resumeRepository;
-    private final ResumeAnalysisStatusRepository statusRepository;
+    private final ResumeRepositoryService resumeRepositoryService;
     private final ResumeAnalysisRequestPublisher analysisRequestPublisher;
     private final TransactionTemplate transactionTemplate;
     private final S3Properties s3Properties;
@@ -59,7 +57,7 @@ public class ResumeUploadService {
         // 중복 업로드: 같은 사용자의 같은 해시 활성 이력서가 있으면 아무것도 바꾸지 않고 기존 정보만 반환한다.
         // 분석 상태와 무관한 단일 규칙 — FAILED 복구도 재분석 API의 몫이지 업로드의 부수효과가 아니다 (PRD §1).
         // 조회 범위는 반드시 (userId + fileHash) — 해시만으로 조회하면 타 사용자의 이력서가 노출된다.
-        var existing = resumeRepository.findFirstByUserIdAndFileHash(userId, fileHash);
+        var existing = resumeRepositoryService.findDuplicate(userId, fileHash);
         if (existing.isPresent()) {
             Resume duplicate = existing.get();
             return ResumeUploadResponse.duplicated(duplicate, currentStatusOf(duplicate));
@@ -72,7 +70,7 @@ public class ResumeUploadService {
 
         try {
             return transactionTemplate.execute(tx -> {
-                Resume resume = resumeRepository.save(Resume.builder()
+                Resume resume = resumeRepositoryService.save(Resume.builder()
                         .userId(userId)
                         .title(resolvedTitle)
                         .fileHash(fileHash)
@@ -83,7 +81,7 @@ public class ResumeUploadService {
                         .mimeType(file.getContentType())
                         .pageCount(pageCount)
                         .build());
-                ResumeAnalysisStatus status = statusRepository.save(ResumeAnalysisStatus.init(resume));
+                ResumeAnalysisStatus status = resumeRepositoryService.saveStatus(ResumeAnalysisStatus.init(resume));
 
                 analysisRequestPublisher.publish(new ResumeParseRequestedMessage(
                         resume.getId(), userId, s3Properties.bucket(), objectKey, AnalysisMode.FULL));
@@ -93,16 +91,14 @@ public class ResumeUploadService {
         } catch (DataIntegrityViolationException e) {
             // 동시 중복 업로드 레이스: 중복 조회는 둘 다 통과했지만 부분 유니크 인덱스
             // (ux_resumes_active_user_file_hash)가 최종 심판 — 진 쪽은 먼저 들어간 레코드를 반환한다.
-            return resumeRepository.findFirstByUserIdAndFileHash(userId, fileHash)
+            return resumeRepositoryService.findDuplicate(userId, fileHash)
                     .map(winner -> ResumeUploadResponse.duplicated(winner, currentStatusOf(winner)))
                     .orElseThrow(() -> e);   // 해시 충돌이 아닌 다른 무결성 위반이면 그대로 전파
         }
     }
 
     private AnalysisStatus currentStatusOf(Resume resume) {
-        return statusRepository.findByResumeId(resume.getId())
-                .map(ResumeAnalysisStatus::getParseStatus)
-                .orElse(AnalysisStatus.UPLOADED);
+        return resumeRepositoryService.getCurrentParseStatus(resume.getId());
     }
 
     /**

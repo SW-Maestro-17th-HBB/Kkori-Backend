@@ -4,13 +4,18 @@ import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.report.domain.Report;
 import com.aisw.kkori.report.domain.ReportFeedback;
+import com.aisw.kkori.report.domain.ReportScore;
 import com.aisw.kkori.report.domain.ReportStatus;
 import com.aisw.kkori.report.dto.TranscriptUtterance;
 import com.aisw.kkori.report.repository.ReportFeedbackRepository;
 import com.aisw.kkori.report.repository.ReportRepository;
+import com.aisw.kkori.report.repository.ReportScoreRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -22,6 +27,7 @@ import java.util.List;
 public class ReportRepositoryService {
 
     private final ReportRepository reportRepository;
+    private final ReportScoreRepository reportScoreRepository;
     private final ReportFeedbackRepository reportFeedbackRepository;
     private final TranscriptReader transcriptReader;
     private final JdbcReportJobWriter jdbcReportJobWriter;
@@ -30,7 +36,7 @@ public class ReportRepositoryService {
      * 본인 소유 검증 — 존재(404) → 소유(403) 순서.
      * 타인의 리포트는 존재를 숨기지 않고 403으로 명확히 거부한다(이력서 R009 선례).
      */
-    public Report findOwned(Long userId, Long reportId) {
+    public Report getOwned(Long userId, Long reportId) {
         Report report = reportRepository.findById(reportId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.REPORT_NOT_FOUND));
         if (!report.getUserId().equals(userId)) {
@@ -40,8 +46,8 @@ public class ReportRepositoryService {
     }
 
     /** 본인 소유 + COMPLETED 검증 — 존재(404) → 소유(403) → 상태(409) 순서. */
-    public Report findOwnedCompleted(Long userId, Long reportId) {
-        Report report = findOwned(userId, reportId);
+    public Report getOwnedCompleted(Long userId, Long reportId) {
+        Report report = getOwned(userId, reportId);
         if (report.getStatus() == ReportStatus.FAILED) {
             throw new BusinessException(ErrorCode.REPORT_GENERATION_FAILED);
         }
@@ -58,7 +64,7 @@ public class ReportRepositoryService {
      * 잠금은 트랜잭션이 끝날 때 풀리므로 반드시 호출자의 쓰기 트랜잭션 안에서 호출해야 한다
      * — 트랜잭션 없이 호출하면 잠금 쿼리가 예외로 실패한다.
      */
-    public Report findOwnedFailedForUpdate(Long userId, Long reportId) {
+    public Report lockOwnedFailed(Long userId, Long reportId) {
         Report report = reportRepository.findForUpdateById(reportId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.REPORT_NOT_FOUND));
         if (!report.getUserId().equals(userId)) {
@@ -87,5 +93,32 @@ public class ReportRepositoryService {
     public List<TranscriptUtterance> getUtterances(long sessionId) {
         return transcriptReader.findUtterances(sessionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR));
+    }
+
+    public Page<Report> findPage(Long userId, ReportStatus status, Pageable pageable) {
+        return reportRepository.findPage(userId, status, pageable);
+    }
+
+    public Page<Report> findPageOrderByOverallScoreDesc(Long userId, ReportStatus status, Pageable pageable) {
+        return reportRepository.findPageOrderByOverallScoreDesc(userId, status, pageable);
+    }
+
+    public Page<Report> findPageOrderByOverallScoreAsc(Long userId, ReportStatus status, Pageable pageable) {
+        return reportRepository.findPageOrderByOverallScoreAsc(userId, status, pageable);
+    }
+
+    /** 통계 집계용 — 본인의 COMPLETED 리포트 전량, 완료 시각 오름차순(동시각은 id 순). */
+    public List<Report> findCompletedOrderByCompletedAt(Long userId) {
+        return reportRepository.findByUserIdAndStatusOrderByCompletedAtAscIdAsc(userId, ReportStatus.COMPLETED);
+    }
+
+    /** 텍스트 3축 점수 — COMPLETED 리포트에 점수가 없는 것은 Worker 계약상 불가능한 상태라 500. */
+    public ReportScore getScore(Long reportId) {
+        return reportScoreRepository.findByReportId(reportId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR));
+    }
+
+    public List<ReportScore> findScoresByReportIdIn(Collection<Long> reportIds) {
+        return reportScoreRepository.findByReportIdIn(reportIds);
     }
 }

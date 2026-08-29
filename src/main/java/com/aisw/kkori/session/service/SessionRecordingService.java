@@ -2,7 +2,7 @@ package com.aisw.kkori.session.service;
 
 import com.aisw.kkori.session.domain.InterviewSession;
 import com.aisw.kkori.session.dto.AudioAnalysisRequestedMessage;
-import com.aisw.kkori.session.repository.InterviewSessionRepository;
+import com.aisw.kkori.session.repositoryservice.SessionRepositoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -32,14 +32,14 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class SessionRecordingService {
 
-    private final InterviewSessionRepository sessionRepository;
+    private final SessionRepositoryService sessionRepositoryService;
     private final AudioAnalysisRequestPublisher publisher;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
 
     /** 업로드 완료된 녹음을 세션에 기록하고 음성 분석 요청을 발행한다 — egress_ended 어댑터 분기의 종착. */
     public void completeRecording(String egressId, String bucket, String objectKey) {
-        Optional<InterviewSession> found = sessionRepository.findByEgressId(egressId);
+        Optional<InterviewSession> found = sessionRepositoryService.findByEgressId(egressId);
         if (found.isEmpty()) {
             log.info("미등록 egress webhook — no-op (egressId={})", egressId);
             return;
@@ -58,9 +58,9 @@ public class SessionRecordingService {
             return;
         }
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
-        Integer updated = transactionTemplate.execute(status ->
-                sessionRepository.recordRecordingResult(session.getId(), bucket, objectKey, now));
-        if (updated != null && updated == 1) {
+        Boolean recorded = transactionTemplate.execute(status ->
+                sessionRepositoryService.recordRecordingResult(session.getId(), bucket, objectKey, now));
+        if (Boolean.TRUE.equals(recorded)) {
             log.info("녹음 업로드 기록·음성 분석 요청 발행 (sessionId={}, bucket={}, objectKey={})",
                     session.getId(), bucket, objectKey);
         } else {

@@ -1,4 +1,4 @@
-package com.aisw.kkori.session.repository;
+package com.aisw.kkori.session.repositoryservice;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;

@@ -3,7 +3,7 @@ package com.aisw.kkori.auth.service;
 import com.aisw.kkori.auth.domain.RefreshToken;
 import com.aisw.kkori.auth.dto.KakaoLoginResponse;
 import com.aisw.kkori.auth.dto.TokenResponse;
-import com.aisw.kkori.auth.repository.RefreshTokenRepository;
+import com.aisw.kkori.auth.repositoryservice.AuthRepositoryService;
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.global.jwt.JwtProperties;
@@ -14,8 +14,7 @@ import com.aisw.kkori.user.config.AccountPolicyProperties;
 import com.aisw.kkori.user.domain.DeletionLog;
 import com.aisw.kkori.user.domain.DeletionStatus;
 import com.aisw.kkori.user.domain.User;
-import com.aisw.kkori.user.repository.DeletionLogRepository;
-import com.aisw.kkori.user.repository.UserRepository;
+import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -40,9 +39,8 @@ public class TokenService {
 
     private static final Duration GRACE_PERIOD = Duration.ofSeconds(60);
 
-    private final UserRepository userRepository;
-    private final RefreshTokenRepository refreshTokenRepository;
-    private final DeletionLogRepository deletionLogRepository;
+    private final UserRepositoryService userRepositoryService;
+    private final AuthRepositoryService authRepositoryService;
     private final JwtTokenProvider jwtTokenProvider;
     private final JwtProperties jwtProperties;
     private final AccountPolicyProperties accountPolicyProperties;
@@ -58,8 +56,7 @@ public class TokenService {
      */
     @Transactional
     public KakaoLoginResponse processKakaoLogin(KakaoUserInfo info) {
-        return userRepository.findIdByProviderId(info.providerId())
-                .flatMap(userRepository::findWithLockById)
+        return userRepositoryService.lockUserByProviderId(info.providerId())
                 .map(user -> user.isDeleted()
                         ? judgeDeletedUser(user, info)
                         : KakaoLoginResponse.loggedIn(issueTokenPair(user.getId())))
@@ -91,8 +88,8 @@ public class TokenService {
     }
 
     private Long latestDeletionLogId(User user) {
-        return deletionLogRepository
-                .findFirstByUserIdOrderByRequestedAtDescIdDesc(user.getId())
+        return userRepositoryService
+                .findLatestDeletionLog(user.getId())
                 .map(DeletionLog::getId)
                 .orElse(null);
     }
@@ -102,10 +99,7 @@ public class TokenService {
         if (deletionLogId == null) {
             return null;
         }
-        // 반환값은 사용하지 않지만 이 잠금 자체가 목적이다 — 배치의 미커밋 PURGING 선점이
-        // 있으면 이 호출이 커밋까지 블로킹되어야 아래 스칼라 재확인이 안전해진다. 삭제 금지.
-        deletionLogRepository.findWithLockById(deletionLogId);
-        return deletionLogRepository.findStatusById(deletionLogId).orElse(null);
+        return userRepositoryService.lockAndReadDeletionStatus(deletionLogId).orElse(null);
     }
 
     /**
@@ -146,7 +140,7 @@ public class TokenService {
         Instant expiresAt = issuedAt.plus(jwtProperties.refreshTokenTtl());
 
         String refreshToken = jwtTokenProvider.createRefreshToken(userId, jti, issuedAt, expiresAt);
-        refreshTokenRepository.save(
+        authRepositoryService.save(
                 RefreshToken.issue(userId, TokenHasher.sha256Hex(refreshToken), jti, issuedAt, expiresAt));
 
         return new TokenResponse(jwtTokenProvider.createAccessToken(userId), refreshToken);
@@ -169,15 +163,13 @@ public class TokenService {
         }
         String tokenHash = TokenHasher.sha256Hex(refreshToken);
         // 스칼라 조회 — 엔티티로 읽으면 아래 잠금 조회가 낡은 관리 인스턴스를 반환할 수 있다
-        Long userId = refreshTokenRepository.findUserIdByTokenHash(tokenHash)
+        Long userId = authRepositoryService.findUserIdByTokenHash(tokenHash)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RT_NOT_FOUND));
-        boolean active = userRepository.findWithLockById(userId)
-                .filter(user -> !user.isDeleted())
-                .isPresent();
+        boolean active = userRepositoryService.tryLockActive(userId).isPresent();
         if (!active) {
             throw new BusinessException(ErrorCode.RT_NOT_FOUND);
         }
-        RefreshToken current = refreshTokenRepository.findWithLockByTokenHash(tokenHash)
+        RefreshToken current = authRepositoryService.findWithLockByTokenHash(tokenHash)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RT_NOT_FOUND));
         Instant now = clock.instant();
 
@@ -200,9 +192,8 @@ public class TokenService {
 
         boolean withinGrace = Duration.between(current.getRevokedAt(), now).compareTo(GRACE_PERIOD) <= 0;
         if (withinGrace) {
-            RefreshToken replacement = refreshTokenRepository
-                    .findByTokenHash(current.getReplacedByTokenHash())
-                    .filter(rt -> !rt.isRevoked() && !rt.isExpired(now))
+            RefreshToken replacement = authRepositoryService
+                    .findValidReplacement(current.getReplacedByTokenHash(), now)
                     .orElse(null);
             if (replacement != null) {
                 return new TokenResponse(
@@ -212,7 +203,7 @@ public class TokenService {
             throw new BusinessException(ErrorCode.RT_NOT_FOUND);
         }
 
-        refreshTokenRepository.revokeAllByUserId(current.getUserId(), now);
+        authRepositoryService.revokeAllByUserId(current.getUserId(), now);
         throw new BusinessException(ErrorCode.RT_REUSE_DETECTED);
     }
 
@@ -238,8 +229,7 @@ public class TokenService {
      */
     @Transactional
     public void logout(Long userId, String refreshToken) {
-        refreshTokenRepository.findByTokenHash(TokenHasher.sha256Hex(refreshToken))
-                .filter(rt -> rt.getUserId().equals(userId))
+        authRepositoryService.findOwnedByTokenHash(userId, TokenHasher.sha256Hex(refreshToken))
                 .ifPresent(rt -> rt.revoke(clock.instant()));
     }
 }
