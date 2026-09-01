@@ -12,6 +12,8 @@ permissions:
   id-token: write
   contents: read
 
+# 실행 중 배포는 취소하지 않고, 대기 중 실행은 최신 push로 대체된다(GitHub 기본 큐 동작).
+# 최신 main만 prod에 반영되면 되므로 중간 커밋 배포 생략은 의도된 동작 — queue: max 불필요.
 concurrency:
   group: deploy
   cancel-in-progress: false
@@ -23,21 +25,25 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # 액션은 커밋 SHA로 고정 — 이 워크플로는 AWS 자격증명을 쥐므로 태그 탈취 시 피해가 큼.
+    # 갱신은 Dependabot(.github/dependabot.yml)이 SHA와 버전 주석을 함께 올린다.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false  # 이후 단계에서 인증된 git 명령을 쓰지 않음
 
       # ECS 노드가 Graviton(arm64)이라 크로스 빌드 — GHA 레이어 캐시로 2회차부터 단축
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           role-to-assume: arn:aws:iam::172630972882:role/kkori-cd
           aws-region: ${{ env.AWS_REGION }}
 
-      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           platforms: linux/arm64
