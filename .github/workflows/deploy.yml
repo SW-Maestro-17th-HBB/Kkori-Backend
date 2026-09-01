@@ -1,0 +1,52 @@
+# CD — main 브랜치 push(= develop→main 머지) 시 프로드 배포.
+# 인증은 GitHub OIDC → kkori-cd 롤 (액세스 키 없음, Kkori-Infra envs/prod/cicd.tf 참조).
+# 주의: DB 스키마 변경(엔티티 컬럼 추가 등)은 이 파이프라인이 처리하지 않는다 —
+#       prod는 ddl-auto validate라 스키마 마이그레이션을 먼저 적용해야 배포가 성공한다.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-2
+  IMAGE: 172630972882.dkr.ecr.ap-northeast-2.amazonaws.com/kkori/backend:prod
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ECS 노드가 Graviton(arm64)이라 크로스 빌드 — GHA 레이어 캐시로 2회차부터 단축
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::172630972882:role/kkori-cd
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: ECS 재배포 및 안정화 대기
+        run: |
+          aws ecs update-service --cluster kkori-prod --service kkori-prod-spring --force-new-deployment
+          aws ecs wait services-stable --cluster kkori-prod --services kkori-prod-spring
