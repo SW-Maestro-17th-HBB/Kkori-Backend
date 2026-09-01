@@ -1,0 +1,14 @@
+# Dependabot — GitHub Actions 버전 갱신.
+# deploy.yml은 액션을 커밋 SHA로 고정하므로, 이 설정이 없으면 핀이 갱신되지 않는다.
+# 액션 bump는 주 1회, PR 1개로 묶어서 올린다 (.github/workflows/ 전체 대상).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
