@@ -8,8 +8,11 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
+import java.time.Instant;
+import java.util.Collection;
 import java.util.Optional;
 
 public interface ResumeAnalysisStatusRepository extends JpaRepository<ResumeAnalysisStatus, Long> {
@@ -48,4 +51,18 @@ public interface ResumeAnalysisStatusRepository extends JpaRepository<ResumeAnal
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<ResumeAnalysisStatus> findForUpdateByResumeId(Long resumeId);
+
+    /**
+     * 조건부 FAILED 전이 — 종단 상태({@code excluded})가 아닌 행만 한 문장으로 갱신한다.
+     * 읽고-확인-쓰기 대신 조건부 UPDATE인 이유: 커밋 후 실패 처리 경로(동기 디스패치)에서
+     * 워커의 상태 갱신과 경합해도 종단 상태를 덮어쓰지 않게 하기 위함이다.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("""
+            update ResumeAnalysisStatus s
+               set s.parseStatus = :failed, s.errorMessage = :errorMessage, s.failedAt = :failedAt
+             where s.resume.id = :resumeId and s.parseStatus not in :excluded
+            """)
+    int updateStatusToFailedIfNotIn(Long resumeId, AnalysisStatus failed, String errorMessage,
+                                    Instant failedAt, Collection<AnalysisStatus> excluded);
 }
