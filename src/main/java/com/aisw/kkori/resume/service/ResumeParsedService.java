@@ -16,6 +16,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 파싱 결과 조회·수정·재분석 오케스트레이션 (docs/requirements/resume/resume.md §4).
@@ -39,8 +40,9 @@ public class ResumeParsedService {
     private final ResumeRepositoryService resumeRepositoryService;
     private final UserRepositoryService userRepositoryService;
     private final ResumeUsageChecker resumeUsageChecker;
-    private final ResumeAnalysisRequestPublisher analysisRequestPublisher;
+    private final ResumeAnalysisRequester analysisRequester;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate transactionTemplate;
 
     @Transactional(readOnly = true)
     public ResumeParsedResponse getParsed(Long userId, Long resumeId) {
@@ -65,26 +67,36 @@ public class ResumeParsedService {
         return ResumeParsedResponse.of(resume, status.getParseStatus());
     }
 
-    @Transactional
+    /**
+     * 애너테이션(@Transactional) 대신 TransactionTemplate을 쓰는 이유: 동기 디스패치 모드는
+     * 워커 HTTP 호출을 커밋 <b>후</b>에 해야 하는데(잠금·커넥션을 쥔 채 블로킹 금지),
+     * 애너테이션 트랜잭션은 메서드 전체를 감싸 "커밋 후" 시점이 메서드 안에 없기 때문이다.
+     */
     public ResumeReanalyzeResponse reanalyze(Long userId, Long resumeId) {
-        lockActiveUser(userId);
-        Resume resume = resumeRepositoryService.getOwned(userId, resumeId);
-        ResumeAnalysisStatus status = resumeRepositoryService.lockStatus(resumeId);
+        ReanalyzeOutcome outcome = transactionTemplate.execute(tx -> {
+            lockActiveUser(userId);
+            Resume resume = resumeRepositoryService.getOwned(userId, resumeId);
+            ResumeAnalysisStatus status = resumeRepositoryService.lockStatus(resumeId);
 
-        AnalysisMode mode = switch (status.getParseStatus()) {
-            case EMBEDDED -> AnalysisMode.REINDEX;   // 수정 반영 — DB structuredData부터 청킹·색인
-            case FAILED -> AnalysisMode.FULL;        // 실패 복구 — S3 원본부터 전체 파이프라인
-            default -> throw new BusinessException(ErrorCode.RESUME_ANALYSIS_IN_PROGRESS);
-        };
-        // 상태 게이트(switch) 통과 후에만 세션 존재 검사 — updateParsed와 동일한 순서 원칙
-        requireNotInUse(resumeId);
+            AnalysisMode mode = switch (status.getParseStatus()) {
+                case EMBEDDED -> AnalysisMode.REINDEX;   // 수정 반영 — DB structuredData부터 청킹·색인
+                case FAILED -> AnalysisMode.FULL;        // 실패 복구 — S3 원본부터 전체 파이프라인
+                default -> throw new BusinessException(ErrorCode.RESUME_ANALYSIS_IN_PROGRESS);
+            };
+            // 상태 게이트(switch) 통과 후에만 세션 존재 검사 — updateParsed와 동일한 순서 원칙
+            requireNotInUse(resumeId);
 
-        // 상태 재설정과 발행은 같은 트랜잭션 — restartFor javadoc의 계약(Worker 회수 규칙 오인 방지) 참조
-        status.restartFor(mode);
-        analysisRequestPublisher.publish(new ResumeParseRequestedMessage(
-                resume.getId(), userId, resume.getOriginalFileBucket(), resume.getOriginalFileKey(), mode));
+            // 상태 재설정과 비동기 발행은 같은 트랜잭션 — restartFor javadoc의 계약(Worker 회수 규칙 오인 방지) 참조
+            status.restartFor(mode);
+            ResumeParseRequestedMessage message = new ResumeParseRequestedMessage(
+                    resume.getId(), userId, resume.getOriginalFileBucket(), resume.getOriginalFileKey(), mode);
+            analysisRequester.dispatchInTransaction(message);
 
-        return new ResumeReanalyzeResponse(resume.getId(), status.getParseStatus());
+            return new ReanalyzeOutcome(
+                    new ResumeReanalyzeResponse(resume.getId(), status.getParseStatus()), message);
+        });
+        analysisRequester.dispatchAfterCommit(outcome.message());
+        return outcome.response();
     }
 
     /** 세션 생성과의 직렬화 지점 — user 행 잠금 + 활성 재확인 (유저 상태 경로 공통 관례). */
@@ -108,5 +120,9 @@ public class ResumeParsedService {
         } catch (JsonProcessingException e) {
             throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /** 트랜잭션 블록의 결과 — 커밋 후 디스패치(dispatchAfterCommit)에 쓸 메시지를 블록 밖으로 나른다. */
+    private record ReanalyzeOutcome(ResumeReanalyzeResponse response, ResumeParseRequestedMessage message) {
     }
 }

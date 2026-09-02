@@ -34,6 +34,9 @@ import java.util.HexFormat;
  * S3 업로드는 외부 시스템이라 롤백이 불가능하므로 트랜잭션 밖에서 선행하고,
  * DB 저장과 이벤트 발행만 하나의 트랜잭션으로 묶는다. 발행 실패 시 DB는 롤백되고
  * S3 객체만 남지만, 해시 기반 키라 다음 업로드에서 재사용된다.
+ *
+ * <p>분석 요청 전달은 {@link ResumeAnalysisRequester}의 2단계 계약을 따른다 — 트랜잭션 안
+ * 발행(비동기 모드) / 커밋 후 워커 HTTP 호출(동기 모드, HBB1-327 부하 테스트 실험).
  */
 @Slf4j
 @Service
@@ -43,7 +46,7 @@ public class ResumeUploadService {
     private final PdfValidator pdfValidator;
     private final S3Template s3Template;
     private final ResumeRepositoryService resumeRepositoryService;
-    private final ResumeAnalysisRequestPublisher analysisRequestPublisher;
+    private final ResumeAnalysisRequester analysisRequester;
     private final TransactionTemplate transactionTemplate;
     private final S3Properties s3Properties;
 
@@ -69,7 +72,7 @@ public class ResumeUploadService {
         String resolvedTitle = StringUtils.hasText(title) ? title : file.getOriginalFilename();
 
         try {
-            return transactionTemplate.execute(tx -> {
+            UploadOutcome outcome = transactionTemplate.execute(tx -> {
                 Resume resume = resumeRepositoryService.save(Resume.builder()
                         .userId(userId)
                         .title(resolvedTitle)
@@ -83,11 +86,14 @@ public class ResumeUploadService {
                         .build());
                 ResumeAnalysisStatus status = resumeRepositoryService.saveStatus(ResumeAnalysisStatus.init(resume));
 
-                analysisRequestPublisher.publish(new ResumeParseRequestedMessage(
-                        resume.getId(), userId, s3Properties.bucket(), objectKey, AnalysisMode.FULL));
+                ResumeParseRequestedMessage message = new ResumeParseRequestedMessage(
+                        resume.getId(), userId, s3Properties.bucket(), objectKey, AnalysisMode.FULL);
+                analysisRequester.dispatchInTransaction(message);
 
-                return ResumeUploadResponse.created(resume, status.getParseStatus());
+                return new UploadOutcome(ResumeUploadResponse.created(resume, status.getParseStatus()), message);
             });
+            analysisRequester.dispatchAfterCommit(outcome.message());
+            return outcome.response();
         } catch (DataIntegrityViolationException e) {
             // 동시 중복 업로드 레이스: 중복 조회는 둘 다 통과했지만 부분 유니크 인덱스
             // (ux_resumes_active_user_file_hash)가 최종 심판 — 진 쪽은 먼저 들어간 레코드를 반환한다.
@@ -99,6 +105,10 @@ public class ResumeUploadService {
 
     private AnalysisStatus currentStatusOf(Resume resume) {
         return resumeRepositoryService.getCurrentParseStatus(resume.getId());
+    }
+
+    /** 트랜잭션 블록의 결과 — 커밋 후 디스패치(dispatchAfterCommit)에 쓸 메시지를 블록 밖으로 나른다. */
+    private record UploadOutcome(ResumeUploadResponse response, ResumeParseRequestedMessage message) {
     }
 
     /**
