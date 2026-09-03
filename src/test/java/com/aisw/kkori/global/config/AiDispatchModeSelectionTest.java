@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -56,9 +57,32 @@ class AiDispatchModeSelectionTest {
     }
 
     @Test
-    @DisplayName("잘못된 mode 값이면 어느 구현체도 등록되지 않는다")
+    @DisplayName("잘못된 mode 값이면 조건부 빈 계층에서 어느 구현체도 등록되지 않는다")
     void invalidMode_registersNoImplementation() {
         runner.withPropertyValues("app.ai-dispatch.mode=banana")
                 .run(context -> assertThat(context).doesNotHaveBean(ResumeAnalysisRequester.class));
+    }
+
+    /** 실제 앱의 첫 번째 방어선(프로퍼티 바인딩) 검증용 — 위 러너에는 바인딩이 없어 이 계층이 빠진다. */
+    @EnableConfigurationProperties(AiDispatchProperties.class)
+    static class PropertiesBindingConfig {
+    }
+
+    @Test
+    @DisplayName("잘못된 mode 값이면 프로퍼티 바인딩 실패로 기동이 실패한다")
+    void invalidMode_failsContextStartup() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(PropertiesBindingConfig.class)
+                .withPropertyValues("app.ai-dispatch.mode=banana")
+                .run(context -> assertThat(context).hasFailed());
+    }
+
+    @Test
+    @DisplayName("sync 모드인데 워커 주소가 없으면 기동이 실패한다 (fail-fast)")
+    void syncWithoutWorkerUrl_failsContextStartup() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(PropertiesBindingConfig.class)
+                .withPropertyValues("app.ai-dispatch.mode=sync", "app.ai-dispatch.worker-base-url=")
+                .run(context -> assertThat(context).hasFailed());
     }
 }
