@@ -20,6 +20,13 @@ spring:
 app:
   s3:
     bucket: ${S3_BUCKET}
+  # 동기/비동기 디스패치 실험 토글 (HBB1-327, docs/experiments/sync-dispatch.md).
+  # 의도적 규칙 이탈: 이 환경 파일은 기본값 없는 ${ENV}가 원칙이지만, 실험 토글은
+  # "미주입 = async(현행 동작)"이 안전한 기본이라 기본값을 준다. url·timeout은 sync일 때만 필수.
+  ai-dispatch:
+    mode: ${AI_DISPATCH_MODE:async}
+    worker-base-url: ${AI_WORKER_BASE_URL:}
+    sync-read-timeout: ${AI_DISPATCH_SYNC_READ_TIMEOUT:120s}
 
 jwt:
   secret: ${JWT_SECRET}

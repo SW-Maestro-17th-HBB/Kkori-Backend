@@ -26,6 +26,12 @@ spring:
 app:
   s3:
     bucket: kkori-resumes
+  # 동기/비동기 디스패치 실험 토글 (HBB1-327, docs/experiments/sync-dispatch.md).
+  # 미주입 = async(현행 스트림 발행). url·timeout은 sync일 때만 필수(fail-fast).
+  ai-dispatch:
+    mode: ${AI_DISPATCH_MODE:async}
+    worker-base-url: ${AI_WORKER_BASE_URL:http://localhost:8000}
+    sync-read-timeout: ${AI_DISPATCH_SYNC_READ_TIMEOUT:120s}
 
 # ── 로컬 개발용 시크릿 ──
 # 아래 더미는 실제 자격증명이 아니라 커밋해도 무해함. 환경변수로 덮어쓸 수 있게 ${ENV:더미} 형태 유지

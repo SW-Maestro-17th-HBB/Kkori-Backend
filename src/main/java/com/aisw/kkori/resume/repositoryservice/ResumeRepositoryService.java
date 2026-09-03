@@ -13,6 +13,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -90,6 +92,16 @@ public class ResumeRepositoryService {
 
     public ResumeAnalysisStatus saveStatus(ResumeAnalysisStatus status) {
         return statusRepository.save(status);
+    }
+
+    /**
+     * 분석 실패 확정 — 종단 상태(EMBEDDED·FAILED)가 아닐 때만 FAILED로 전이한다(전이 여부 반환).
+     * 동기 디스패치의 커밋 후 실패 처리 전용: 워커가 그 사이 완주했다면 결과를 덮어쓰지 않는다.
+     * 호출자의 트랜잭션 안에서만 호출한다.
+     */
+    public boolean failAnalysis(Long resumeId, String errorMessage, Instant failedAt) {
+        return statusRepository.updateStatusToFailedIfNotIn(resumeId, AnalysisStatus.FAILED, errorMessage,
+                failedAt, List.of(AnalysisStatus.EMBEDDED, AnalysisStatus.FAILED)) == 1;
     }
 
     /** 현재 분석 상태 — 상태 행 부재(정합 깨짐 방어)는 UPLOADED로 간주하는 관대한 조회(업로드 중복 응답 전용). */
