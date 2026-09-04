@@ -1,22 +1,20 @@
-# CD — main 브랜치 push(= develop→main 머지)로 도는 CI가 "성공"해야만 프로드 배포.
+# CD — main 브랜치 push(= develop→main 머지) 시, CI를 재사용 워크플로로 직접 돌려
+# 통과한 경우에만 프로드 배포한다 (needs: ci).
+# workflow_run 방식은 기본 브랜치 컨텍스트로 실행돼 OIDC sub가 develop이 되면서
+# main 전용 IAM 신뢰 조건과 충돌했다 — push 트리거 + workflow_call 호출로 sub를 main으로 유지한다.
 # 인증은 GitHub OIDC → kkori-cd 롤 (액세스 키 없음, Kkori-Infra envs/prod/cicd.tf 참조).
-# workflow_run 트리거는 기본 브랜치(develop)에 있는 이 파일 기준으로 동작한다 — develop 머지 후부터 유효.
 # 주의: DB 스키마 변경(엔티티 컬럼 추가 등)은 이 파이프라인이 처리하지 않는다 —
 #       prod는 ddl-auto validate라 스키마 마이그레이션을 먼저 적용해야 배포가 성공한다.
 name: Deploy
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
     branches: [main]
 
 permissions:
   id-token: write
   contents: read
 
-# 실행 중 배포는 취소하지 않고, 대기 중 실행은 최신 push로 대체된다(GitHub 기본 큐 동작).
-# 최신 main만 prod에 반영되면 되므로 중간 커밋 배포 생략은 의도된 동작 — queue: max 불필요.
 concurrency:
   group: deploy
   cancel-in-progress: false
@@ -26,15 +24,17 @@ env:
   IMAGE: 172630972882.dkr.ecr.ap-northeast-2.amazonaws.com/kkori/backend:prod
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
-    if: github.event.workflow_run.conclusion == 'success' # CI 실패·취소 시 배포하지 않음
+    needs: ci
     runs-on: ubuntu-latest
     # 액션은 커밋 SHA로 고정 — 이 워크플로는 AWS 자격증명을 쥐므로 태그 탈취 시 피해가 큼.
     # 갱신은 Dependabot(.github/dependabot.yml)이 SHA와 버전 주석을 함께 올린다.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ github.event.workflow_run.head_sha }} # CI가 검증한 바로 그 커밋을 빌드
           persist-credentials: false  # 이후 단계에서 인증된 git 명령을 쓰지 않음
 
       # ECS 노드가 Graviton(arm64)이라 크로스 빌드 — GHA 레이어 캐시로 2회차부터 단축
