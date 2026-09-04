@@ -36,5 +36,14 @@ out/
 ### VS Code ###
 .vscode/
 
+### macOS ###
+.DS_Store
+
 ### Claude Code ###
 .claude/
+
+### 확정 전 개인 초안 ###
+docs/drafts/
+
+### 로컬 시크릿 (커밋 금지 — 템플릿은 .env.example) ###
+.env

@@ -1,0 +1,81 @@
+# 로컬 개발 환경 — docker compose(PostgreSQL/Redis/MinIO) 기준.
+# 아래 값들은 로컬 컨테이너용 더미 자격증명이라 커밋해도 무해함.
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/kkori
+    username: kkori
+    password: kkori
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  jpa:
+    hibernate:
+      ddl-auto: update
+  cloud:
+    aws:
+      s3:
+        endpoint: http://localhost:9000        # MinIO
+        path-style-access-enabled: true        # MinIO 필수 설정
+      credentials:
+        access-key: kkori
+        secret-key: kkori1234
+      region:
+        static: ap-northeast-2
+
+app:
+  s3:
+    bucket: kkori-resumes
+  # 동기/비동기 디스패치 실험 토글 (HBB1-327, docs/experiments/sync-dispatch.md).
+  # 미주입 = async(현행 스트림 발행). url·timeout은 sync일 때만 필수(fail-fast).
+  ai-dispatch:
+    mode: ${AI_DISPATCH_MODE:async}
+    worker-base-url: ${AI_WORKER_BASE_URL:http://localhost:8000}
+    sync-read-timeout: ${AI_DISPATCH_SYNC_READ_TIMEOUT:120s}
+
+# ── 로컬 개발용 시크릿 ──
+# 아래 더미는 실제 자격증명이 아니라 커밋해도 무해함. 환경변수로 덮어쓸 수 있게 ${ENV:더미} 형태 유지
+# (예: 카카오 실연동 테스트 시 KAKAO_* 환경변수로 실값 임시 주입).
+jwt:
+  secret: ${JWT_SECRET:kkori-local-dev-jwt-secret-key-must-be-32bytes}
+  signup-secret: ${JWT_SIGNUP_SECRET:kkori-local-dev-signup-secret-key-32bytes!}
+  access-token-ttl: ${JWT_ACCESS_TTL:30m}
+  refresh-token-ttl: ${JWT_REFRESH_TTL:14d}
+  signup-token-ttl: ${JWT_SIGNUP_TTL:10m}
+
+# 계정 정책 — 탈퇴 후 파기 유예 기간
+account:
+  withdrawal-grace-period: ${WITHDRAWAL_GRACE_PERIOD:3d}
+
+log-masking:
+  hmac-key: ${LOG_HMAC_KEY:kkori-local-dev-log-hmac-key-32bytes!}
+
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+
+kakao:
+  client-id: ${KAKAO_CLIENT_ID:local-dev-client-id}
+  client-secret: ${KAKAO_CLIENT_SECRET:local-dev-client-secret}
+  redirect-uri: ${KAKAO_REDIRECT_URI:http://localhost:3000/auth/kakao/callback}
+  admin-key: ${KAKAO_ADMIN_KEY:local-dev-admin-key}
+  app-id: ${KAKAO_APP_ID:local-dev-app-id}
+
+# LiveKit은 로컬도 실제 Cloud 자격증명을 쓴다
+livekit:
+  url: ${LIVEKIT_URL}
+  api-key: ${LIVEKIT_API_KEY}
+  api-secret: ${LIVEKIT_API_SECRET}
+  token-ttl: ${LIVEKIT_TOKEN_TTL:10m}
+  api-timeout: ${LIVEKIT_API_TIMEOUT:3s}
+  # 녹음(Egress) S3 출력 — 실제 버킷명이 필요해 기본값 없이 .env로 채운다 (LIVEKIT_URL과 동급)
+  recording:
+    bucket: ${LIVEKIT_RECORDING_BUCKET}
+    region: ${LIVEKIT_RECORDING_REGION:ap-northeast-2}
+
+# 세션 수렴 스위퍼 — 값 근거는 PRD(interview-session-completion.md 공통: 스위퍼·설정)
+session:
+  end-fallback-timeout: ${SESSION_END_FALLBACK_TIMEOUT:180s}
+  agent-lost-grace: ${SESSION_AGENT_LOST_GRACE:90s}
+  stale-recovery-timeout: ${SESSION_STALE_RECOVERY_TIMEOUT:45m}
+  sweep-interval: ${SESSION_SWEEP_INTERVAL:10s}
+  reconnect-window: ${SESSION_RECONNECT_WINDOW:3m}

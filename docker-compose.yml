@@ -1,6 +1,7 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector 동봉 이미지 — 임베딩 벡터 스키마(resume_chunks.embedding vector, PRD resume.md §1) 지원
+    image: pgvector/pgvector:pg16
     container_name: kkori-postgres
     ports:
       - "5432:5432"
@@ -10,6 +11,8 @@ services:
       POSTGRES_PASSWORD: kkori
     volumes:
       - kkori-postgres-data:/var/lib/postgresql/data
+      # 최초 볼륨 생성 시에만 실행 — pgvector 확장 활성화
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U kkori -d kkori"]
       interval: 5s
@@ -27,5 +30,37 @@ services:
       timeout: 3s
       retries: 10
 
+  minio:
+    image: minio/minio:latest
+    container_name: kkori-minio
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # 웹 콘솔
+    environment:
+      MINIO_ROOT_USER: kkori
+      MINIO_ROOT_PASSWORD: kkori1234
+    command: server /data --console-address ":9001"
+    volumes:
+      - kkori-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # 최초 기동 시 기본 버킷 생성 후 종료
+  minio-init:
+    image: minio/mc
+    container_name: kkori-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 kkori kkori1234 &&
+      mc mb --ignore-existing local/kkori-resumes
+      "
+
 volumes:
   kkori-postgres-data:
+  kkori-minio-data:
