@@ -36,7 +36,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 | FAILED | 생성 실패 — **텍스트 분석 경로의 실패에 한정** (Worker 재시도 소진 또는 재전달 임계 초과). 음성 분석 실패는 FAILED로 만들지 않는다(유예 완성 경로) |
 
 - 상태의 진실 원천은 `REPORTS.status`다(사용자 노출 상태). `REPORT_GENERATION_JOBS`는 시도 추적·운영 관찰용(retry_count, error_message, 시각 필드)이며 사용자 노출 판단에 쓰지 않는다.
-- 생성 수명주기(로우 생성 → 상태 전이 → 산출물 저장)는 전부 Worker가 수행하고, 단계 진입 시 상태를 갱신하며 상태 이벤트를 발행한다. Spring은 상태 이벤트를 소비해 SSE로 중계하고, 재생성 시 생성 요청을 재발행하는 것만 담당한다.
+- 생성 수명주기(로우 생성 → 상태 전이 → 산출물 저장)는 전부 Worker가 수행하고, 단계 진입 시 상태를 갱신하며 상태 이벤트를 발행한다. Spring은 상태 이벤트를 구독해 SSE로 중계하고, 재생성 시 생성 요청을 재발행하는 것만 담당한다.
 - `retry_count`·Job의 진행 시각은 Worker가 기록하고 서버는 읽기 전용(이력서 `retry_count` 선례와 동일). 단 하나의 예외로, FAILED 재생성 시 `requested_at` 갱신은 Spring(재생성 API)이 수행한다(§1 재생성 규칙).
 
 ### 기능 요구사항
@@ -128,10 +128,10 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 ### 인터페이스 요구사항
 
 - `POST /api/v1/reports/{reportId}/retry` (바디 없음) — FAILED 재생성. 그 외 생성은 API가 아닌 생성 요청 소비로 트리거
-- Redis Stream 3종. **스트림별 메시지 스키마의 정의 원천은 계약 record**. 스트림 키는 기존 이력서 스트림(`resume.parse.requested` 등)과 같은 점 표기·요청형 명명을 따른다(2026-07-30 면접 도메인과 합의):
+- Redis Stream 2종 + Pub/Sub 채널 1종. **메시지별 스키마의 정의 원천은 계약 record**. 스트림 키·채널 이름은 기존 이력서 스트림(`resume.parse.requested` 등)과 같은 점 표기·요청형 명명을 따른다(2026-07-30 면접 도메인과 합의):
   - **`report.generation.requested` — 리포트 생성 요청(Worker가 소비)**: 발행자는 면접 도메인(에이전트, 대본 저장 성공 후)과 Spring(FAILED 재생성 API — 2026-08-06 추가). 어느 발행자인지는 각 발행자의 로그로 구분한다. `ReportGenerationRequestedMessage`(**sessionId 하나 — 2026-07-30 확정**. 소유자·이력서는 Worker가 세션 행에서 읽고, 발행 측이 덧붙이는 그 외 필드(requestedAt 등)는 소비 측이 무시한다)
   - **`report.audio.analysis.requested` — 음성 분석 요청(Worker가 소비)**: 발행자는 면접 도메인(녹음 파일 S3 업로드 완료 시). `AudioAnalysisRequestedMessage`(sessionId, bucket, objectKey — 필드 확정은 면접 도메인과 합의, **미정**)
-  - **`report.status.changed` — 상태 이벤트(Worker가 발행, Spring이 소비)**: `ReportStatusChangedMessage`(reportId, userId, status, message — userId는 SSE 라우팅 근거로 Worker가 에코). **발행되는 status는 PROCESSING·COMPLETED·FAILED 3종뿐이다**(§5 — PENDING 미발행을 Worker 계약 모델이 강제)
+  - **`report.status.changed` — 상태 이벤트 Pub/Sub 채널(Worker가 JSON 문자열로 PUBLISH, Spring 전 인스턴스가 구독 — 2026-09-05 HBB1-332, 스트림 소비에서 전환. 사유는 이력서 PRD 기능 3 제약사항과 동일)**: `ReportStatusChangedMessage`(reportId, userId, status, message — userId는 SSE 라우팅 근거로 Worker가 에코). **발행되는 status는 PROCESSING·COMPLETED·FAILED 3종뿐이다**(§5 — PENDING 미발행을 Worker 계약 모델이 강제)
   - Python Worker는 3개 계약 record 전부를 계약 문서로 참조 (Worker 레포에 남아 있는 `RegenerateRequested` 계약은 폐기 대상 — 재생성 스트림 폐기에 따른 정리)
 - **jsonb 산출물의 스키마 정의 원천도 계약 record** (이력서 `StructuredData` 선례) — `weakness_tags`(코드 문자열 배열), `weakness_tag_summary`(`[{tag, count}]`), `improvement_tasks`(답변 단위, `[{title, description}]`). `resume_context`는 Worker 소관의 자유 구조로 백엔드는 불투명하게 취급한다(계약 없음).
 - 응답은 공통 엔벨로프 `ApiResponse<T>`를 따른다 (이하 모든 REST API 동일)
@@ -400,7 +400,7 @@ SSE 이벤트는 3종이며 data 스키마는 단일 형식이다:
 ### 실행 조건
 
 - 사용자가 인증된 상태여야 하며, 상태 조회는 **본인 리포트만** 가능하다 — 다른 사용자의 리포트는 403(REPORT_FORBIDDEN), 없는 리포트는 404(REPORT_NOT_FOUND).
-- Spring이 상태 이벤트 스트림을 소비 중이어야 SSE push가 동작한다.
+- Spring이 상태 이벤트 채널(Redis Pub/Sub)을 구독 중이어야 SSE push가 동작한다.
 
 ### 검증 기준
 
@@ -434,6 +434,7 @@ SSE 이벤트는 3종이며 data 스키마는 단일 형식이다:
 ### 제약사항
 
 - SSE로 놓친 이벤트는 재전송하지 않는다 — 복구는 REST 동기화로만 한다.
+- 상태 이벤트는 Redis Pub/Sub 채널로 전달한다 — 구독 중인 모든 Spring 인스턴스가 받으므로 다중 인스턴스에서도 SSE 연결이 있는 인스턴스가 전달한다. 메시지를 저장하지 않아 생기는 유실은 위 규칙대로 REST 동기화로 복구한다. (2026-09-05 HBB1-332)
 - 사용자 단위 SSE 연결이 도메인별로 늘고 있다(resumes·reports) — 브라우저 동시 연결 한도를 고려해 **3개 도메인째 SSE 채널이 필요해지면 단일 이벤트 채널로의 통합을 재검토한다.**
 
 ### 기타 요구사항

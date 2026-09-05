@@ -80,7 +80,7 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
 
 - `POST /api/v1/resumes` — multipart/form-data (`file`: PDF, `title`: string 선택)
 - 응답은 공통 엔벨로프 `ApiResponse<T>`를 따른다 (이하 모든 REST API 동일)
-- Redis Stream: 분석 요청 스트림(발행), 상태 이벤트 스트림(소비). **스트림별 메시지 스키마의 정의 원천은 계약 record** — `ResumeParseRequestedMessage`(요청: resumeId, userId, bucket, objectKey, **mode**[FULL|REINDEX] — 신규 업로드도 FULL로 발행하며, 5개 필드는 모드와 무관하게 전부 필수. REINDEX에서 bucket/objectKey는 무시됨), `ResumeStatusChangedMessage`(상태: resumeId, **userId**, status, message — userId는 SSE 사용자별 라우팅 근거로, Worker가 요청 메시지의 userId를 에코). Python Worker는 이 두 파일을 계약 문서로 참조
+- Redis Stream: 분석 요청 스트림(발행). Redis Pub/Sub: 상태 이벤트 채널(구독 — 2026-09-05 HBB1-332, 스트림 소비에서 전환). **메시지별 스키마의 정의 원천은 계약 record** — `ResumeParseRequestedMessage`(요청: resumeId, userId, bucket, objectKey, **mode**[FULL|REINDEX] — 신규 업로드도 FULL로 발행하며, 5개 필드는 모드와 무관하게 전부 필수. REINDEX에서 bucket/objectKey는 무시됨), `ResumeStatusChangedMessage`(상태: resumeId, **userId**, status, message — userId는 SSE 사용자별 라우팅 근거로, Worker가 요청 메시지의 userId를 에코. Worker가 채널 `resume.parse.status.changed`에 JSON 문자열로 PUBLISH하며 모든 값은 문자열). Python Worker는 이 두 파일을 계약 문서로 참조
 - 분석 요청 스트림은 Consumer Group 기반 **at-least-once** — 동일 메시지가 중복 전달될 수 있으므로 Worker 처리는 **resumeId 기준 멱등**이어야 한다(이행 방법은 Worker 소관). **모든 분석 요청은 반드시 EMBEDDED 또는 FAILED로 끝난다** — Worker는 ACK 없이 오래 방치된 메시지를 회수(XAUTOCLAIM)해 DB 상태 기준 체크포인트에서 재개하고, 재전달 횟수가 임계를 넘은 메시지는 재처리 없이 FAILED로 끝낸다(상세는 Worker PRD)
 
 ### 제약사항
@@ -179,7 +179,7 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 ### 실행 조건
 
 - 사용자가 인증된 상태여야 한다.
-- Spring이 Redis Stream 상태 이벤트를 소비 중이어야 SSE push가 동작한다.
+- Spring이 상태 이벤트 채널(Redis Pub/Sub)을 구독 중이어야 SSE push가 동작한다.
 
 ### 검증 기준
 
@@ -202,6 +202,7 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 ### 제약사항
 
 - SSE로 놓친 이벤트는 재전송하지 않는다 — 복구는 REST 동기화로만 한다.
+- 상태 이벤트는 Redis Pub/Sub 채널로 전달한다 — 구독 중인 모든 Spring 인스턴스가 받으므로, 다중 인스턴스에서 SSE 연결이 어느 인스턴스에 있든 그 인스턴스가 전달한다. Pub/Sub은 메시지를 저장하지 않아 구독 중이 아닐 때의 이벤트는 사라지지만, 위 규칙대로 REST 동기화로 복구한다. (2026-09-05 HBB1-332 — Consumer Group 하나로 스트림을 읽던 구조는 인스턴스 2대에서 Redis가 메시지를 나눠 줘서 약 절반이 유실되는 것을 로컬에서 직접 측정해 확인)
 
 ### 기타 요구사항
 

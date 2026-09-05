@@ -8,10 +8,10 @@ import com.aisw.kkori.user.repository.UserRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
-import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.net.URI;
@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 /**
- * 리포트 SSE 경계 계약 테스트 — Worker가 할 행위(상태 스트림 XADD)를 그대로 수행해
+ * 리포트 SSE 경계 계약 테스트 — Worker가 할 행위(상태 채널에 JSON PUBLISH)를 그대로 수행해
  * SSE 수신까지의 중계와 사용자별 라우팅(타인 이벤트 미수신)을 검증한다.
  * 실제 JWT 인증을 사용한다 (필터가 User 존재까지 확인하므로 실제 레코드 필요).
  */
@@ -36,6 +36,7 @@ class ReportSseIntegrationTest {
 
     @LocalServerPort int port;
     @Autowired StringRedisTemplate redisTemplate;
+    @Autowired ObjectMapper objectMapper;
     @Autowired UserRepository userRepository;
     @Autowired JwtTokenProvider jwtTokenProvider;
 
@@ -107,10 +108,10 @@ class ReportSseIntegrationTest {
         }
     }
 
-    /** Worker가 할 발행을 계약 record 그대로 수행한다 — toMap()이 실제 직렬화 규칙. */
-    private void publishStatus(long reportId, long userId, String status, String message) {
-        redisTemplate.opsForStream().add(StreamRecords
-                .mapBacked(new ReportStatusChangedMessage(reportId, userId, status, message).toMap())
-                .withStreamKey(ReportStatusChangedMessage.STREAM_KEY));
+    /** Worker가 할 발행을 계약 record 그대로 수행한다 — toMap()의 필드를 JSON 문자열로 PUBLISH. */
+    private void publishStatus(long reportId, long userId, String status, String message) throws Exception {
+        String json = objectMapper.writeValueAsString(
+                new ReportStatusChangedMessage(reportId, userId, status, message).toMap());
+        redisTemplate.convertAndSend(ReportStatusChangedMessage.CHANNEL, json);
     }
 }
