@@ -15,6 +15,7 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -47,11 +48,13 @@ class StatusChannelBroadcastTest {
         List<String> receivedByB = new CopyOnWriteArrayList<>();
         RedisMessageListenerContainer instanceA = subscribe(channel, receivedByA);
         RedisMessageListenerContainer instanceB = subscribe(channel, receivedByB);
+        List<String> published = new ArrayList<>();
         try {
             for (int i = 1; i <= EVENT_COUNT; i++) {
                 // 계약 형식 그대로 발행 — 앱 구독자도 파싱에 성공하되, 연결 없는 userId라 버린다
                 String json = objectMapper.writeValueAsString(
                         new ResumeStatusChangedMessage(1L, 999_999L, "PARSED", "n-" + i).toMap());
+                published.add(json);
                 redisTemplate.convertAndSend(channel, json);
             }
 
@@ -59,8 +62,9 @@ class StatusChannelBroadcastTest {
                 assertThat(receivedByA).hasSize(EVENT_COUNT);
                 assertThat(receivedByB).hasSize(EVENT_COUNT);
             });
-            // 나눠 받은 게 아니라 둘 다 같은 100건을 받았다
-            assertThat(receivedByA).containsExactlyInAnyOrderElementsOf(receivedByB);
+            // 나눠 받은 게 아니라 둘 다 발행한 100건을 빠짐없이, 중복 없이 받았다 (리뷰 반영: 발행 목록과 각각 비교)
+            assertThat(receivedByA).containsExactlyInAnyOrderElementsOf(published);
+            assertThat(receivedByB).containsExactlyInAnyOrderElementsOf(published);
         } finally {
             instanceA.destroy();
             instanceB.destroy();

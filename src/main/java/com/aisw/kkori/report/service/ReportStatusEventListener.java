@@ -44,7 +44,14 @@ public class ReportStatusEventListener implements StatusChannelListener {
     public void onMessage(Message message, byte[] pattern) {
         Map<String, String> fields = Map.of();
         try {
-            fields = objectMapper.readValue(new String(message.getBody(), StandardCharsets.UTF_8), FIELDS);
+            Map<String, String> parsed = objectMapper.readValue(
+                    new String(message.getBody(), StandardCharsets.UTF_8), FIELDS);
+            if (parsed == null) {
+                // JSON 리터럴 null은 Jackson이 예외 없이 null로 읽는다 — 빈 페이로드로 보고 버린다 (리뷰 반영)
+                log.warn("리포트 상태 이벤트 페이로드가 비어 있음(JSON null) — 전송 생략");
+                return;
+            }
+            fields = parsed;
             ReportStatusChangedMessage status = ReportStatusChangedMessage.from(fields);
             String eventName = eventNameFor(status.status());
             if (eventName == null) {
