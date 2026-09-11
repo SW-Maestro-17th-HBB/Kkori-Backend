@@ -6,6 +6,8 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -36,6 +38,30 @@ public class JdbcResumePurger {
                 (rs, rowNum) -> new ObjectRef(rs.getLong("id"), rs.getString("original_file_bucket"),
                         rs.getString("original_file_key")),
                 userId);
+    }
+
+    /** 개별 삭제 물리 삭제 후보 — 공유 키 판정에 필요한 소유자·해시를 함께 든다. */
+    public record Candidate(long resumeId, long userId, String fileHash, String bucket, String key) {
+    }
+
+    /**
+     * 개별 삭제(soft delete) 이력서의 물리 삭제 후보 (PRD deletion.md 기능 5) — soft delete 후 지연이 지났고,
+     * 분석이 terminal(EMBEDDED·FAILED)이거나 보류 상한({@code ceilingCutoff})까지 지난 행. 상태 행 부재(정합
+     * 깨짐)는 보류할 근거가 없으므로 포함한다.
+     */
+    public List<Candidate> findPhysicalDeleteCandidates(Instant delayCutoff, Instant ceilingCutoff) {
+        return jdbcTemplate.query("""
+                SELECT r.id, r.user_id, r.file_hash, r.original_file_bucket, r.original_file_key
+                FROM resumes r
+                LEFT JOIN resume_analysis_status s ON s.resume_id = r.id
+                WHERE r.deleted_at IS NOT NULL
+                  AND r.deleted_at <= ?
+                  AND (s.parse_status IS NULL OR s.parse_status IN ('EMBEDDED', 'FAILED') OR r.deleted_at <= ?)
+                ORDER BY r.deleted_at, r.id
+                """,
+                (rs, rowNum) -> new Candidate(rs.getLong("id"), rs.getLong("user_id"), rs.getString("file_hash"),
+                        rs.getString("original_file_bucket"), rs.getString("original_file_key")),
+                Timestamp.from(delayCutoff), Timestamp.from(ceilingCutoff));
     }
 
     /** 청크(Worker 소유) → 분석 상태 → 이력서 행 순 물리 삭제. 이미 지워진 id는 0행으로 멱등. */

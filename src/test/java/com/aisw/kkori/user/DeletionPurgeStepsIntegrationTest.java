@@ -1,5 +1,6 @@
 package com.aisw.kkori.user;
 
+import com.aisw.kkori.ResumeSeeder;
 import com.aisw.kkori.TestcontainersConfiguration;
 import com.aisw.kkori.auth.AuthIntegrationTestSupport;
 import com.aisw.kkori.auth.domain.RefreshToken;
@@ -67,6 +68,8 @@ class DeletionPurgeStepsIntegrationTest extends AuthIntegrationTestSupport {
     @MockitoBean
     private SessionRoomManager roomManager;
 
+    private ResumeSeeder seeder;
+
     /** 카카오 unlink는 로컬·테스트에서 호출 불가 — 포트를 더블로 대체(계약은 KakaoUnlinkPurgeStepIntegrationTest). */
     @MockitoBean
     private KakaoUnlinkClient unlinkClient;
@@ -77,17 +80,8 @@ class DeletionPurgeStepsIntegrationTest extends AuthIntegrationTestSupport {
         if (!s3Template.bucketExists(BUCKET)) {
             s3Template.createBucket(BUCKET);
         }
-        // Worker 소유 resume_chunks — 파기는 DELETE만 하므로 벡터 차원은 계약값(1024)이 아니어도 무방
-        jdbcTemplate.execute("CREATE EXTENSION IF NOT EXISTS vector");
-        jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS resume_chunks (
-                    id BIGSERIAL PRIMARY KEY,
-                    resume_id BIGINT NOT NULL,
-                    content TEXT NOT NULL,
-                    metadata JSONB NOT NULL,
-                    embedding vector(3) NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                )""");
+        seeder = new ResumeSeeder(resumeRepository, statusRepository, jdbcTemplate);
+        seeder.ensureChunkTable(); // Worker 소유 resume_chunks — 계약 픽스처 DDL
         jdbcTemplate.update("DELETE FROM resume_chunks");
         reportFixtures.deleteAll(); // interview_transcript · report_generation_jobs 픽스처 DDL 보장 + 정리
         sessionRepository.deleteAll();
@@ -117,8 +111,7 @@ class DeletionPurgeStepsIntegrationTest extends AuthIntegrationTestSupport {
                 .fileSize(1L).mimeType("application/pdf").pageCount(1).build());
         statusRepository.save(ResumeAnalysisStatus.init(resume));
         for (int i = 0; i < chunks; i++) {
-            jdbcTemplate.update("INSERT INTO resume_chunks (resume_id, content, metadata, embedding) "
-                    + "VALUES (?, 'chunk', '{}'::jsonb, '[1,2,3]'::vector)", resume.getId());
+            seeder.chunk(resume.getId());
         }
         if (softDeleted) {
             jdbcTemplate.update("UPDATE resumes SET deleted_at = now() WHERE id = ?", resume.getId());

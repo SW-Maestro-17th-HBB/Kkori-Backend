@@ -46,6 +46,16 @@ public class ResumeRepositoryService {
         return resumePurger.deleteByResumeIds(resumeIds);
     }
 
+    /** 개별 삭제 이력서의 물리 삭제 후보 — 지연 경과 + (분석 terminal 또는 보류 상한 경과). */
+    public List<JdbcResumePurger.Candidate> findPhysicalDeleteCandidates(Instant delayCutoff, Instant ceilingCutoff) {
+        return resumePurger.findPhysicalDeleteCandidates(delayCutoff, ceilingCutoff);
+    }
+
+    /** 같은 사용자·같은 파일 해시의 활성 이력서 존재 여부 — 해시 기반 S3 키를 공유하므로 물리 삭제 전 참조 확인. */
+    public boolean existsActiveDuplicate(Long userId, String fileHash) {
+        return resumeRepository.findFirstByUserIdAndFileHash(userId, fileHash).isPresent();
+    }
+
     /**
      * 존재(404) → 소유(403). 타인 이력서에 404가 아닌 403을 주는 것은 resume PRD §4의 계약이다.
      * soft delete된 이력서는 {@code @SQLRestriction}으로 조회되지 않아 404로 수렴한다.
