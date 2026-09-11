@@ -87,6 +87,19 @@ public interface DeletionLogRepository extends JpaRepository<DeletionLog, Long> 
                                           @Param("staleCutoff") Instant staleCutoff);
 
     /**
+     * 보존 만료 정리 대상 — 파기 완료 후 보존 기간이 지났고 가명 users 행이 아직 남아 있는 건
+     * (PRD deletion.md 기능 7). users 행 부재가 "정리 완료"의 표식이라 별도 상태 컬럼이 없다.
+     */
+    @Query("""
+            select d from DeletionLog d
+            where d.status = com.aisw.kkori.user.domain.DeletionStatus.PURGED
+              and d.purgedAt <= :retentionCutoff
+              and exists (select u.id from User u where u.id = d.userId)
+            order by d.purgedAt asc, d.id asc
+            """)
+    List<DeletionLog> findRetentionExpired(@Param("retentionCutoff") Instant retentionCutoff);
+
+    /**
      * 조건부 선점 — 후보 조건을 술어에 중복 포함해 스캔~선점 사이의 상태 변화(복구의 CANCELLED,
      * 타 인스턴스의 선점)를 흡수한다. 영향 행 수 1인 인스턴스만 파기를 진행한다. {@code claimedAt}이
      * 이 건의 펜싱 토큰이 된다. 잠금은 잡지 않는다 — 복구 경로가 로그 행 잠금을 쥐면 이 UPDATE가

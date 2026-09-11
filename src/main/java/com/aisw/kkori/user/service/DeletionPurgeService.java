@@ -65,6 +65,31 @@ public class DeletionPurgeService {
                         candidate.getId(), candidate.getUserId(), e.getClass().getSimpleName());
             }
         }
+        cleanupExpiredRetention(now.minus(properties.consentRetention()));
+    }
+
+    /**
+     * 보존 만료 정리 (PRD 기능 7) — 파기 완료({@code purged_at})로부터 보존 기간이 지난 건의 동의 이력과
+     * 가명 users 행을 삭제한다. {@code deletion_log}는 식별정보가 없으므로 파기 audit으로 남긴다.
+     * users 행 부재가 정리 완료의 표식이라 재실행은 대상 없음으로 멱등이다.
+     */
+    private void cleanupExpiredRetention(Instant retentionCutoff) {
+        for (DeletionLog expired : userRepositoryService.findRetentionExpiredPurges(retentionCutoff)) {
+            try {
+                transactionTemplate.executeWithoutResult(status -> {
+                    if (userRepositoryService.tryLockUser(expired.getUserId()).isEmpty()) {
+                        return; // 스캔~잠금 사이에 다른 인스턴스가 정리했다
+                    }
+                    int consents = userRepositoryService.deleteConsentsByUserId(expired.getUserId());
+                    userRepositoryService.deleteUserRow(expired.getUserId());
+                    log.info("보존 만료 정리 — 동의 이력·가명 users 행 삭제 (deletionLogId={}, userId={}, consents={})",
+                            expired.getId(), expired.getUserId(), consents);
+                });
+            } catch (RuntimeException e) {
+                log.warn("보존 만료 정리 중 예외 — 다음 회차 재시도 (deletionLogId={}, userId={}): {}",
+                        expired.getId(), expired.getUserId(), e.getClass().getSimpleName());
+            }
+        }
     }
 
     private void purge(DeletionLog candidate, Instant graceCutoff, Instant staleCutoff) {

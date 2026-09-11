@@ -4,8 +4,10 @@ import com.aisw.kkori.auth.AuthIntegrationTestSupport;
 import com.aisw.kkori.user.config.AccountPolicyProperties;
 import com.aisw.kkori.user.domain.DeletionLog;
 import com.aisw.kkori.user.domain.DeletionStatus;
+import com.aisw.kkori.user.domain.ConsentType;
 import com.aisw.kkori.user.domain.PurgeDetail;
 import com.aisw.kkori.user.domain.User;
+import com.aisw.kkori.user.domain.UserConsent;
 import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import com.aisw.kkori.user.service.DeletionPurgeScheduler;
 import com.aisw.kkori.user.service.DeletionPurgeService;
@@ -97,10 +99,15 @@ class DeletionPurgeIntegrationTest extends AuthIntegrationTestSupport {
         }
     }
 
+    private static final Duration RETENTION = Duration.ofDays(365);
+
     private DeletionPurgeService serviceAt(Instant now, PurgeStep... steps) {
+        return serviceAt(now, RETENTION, steps);
+    }
+
+    private DeletionPurgeService serviceAt(Instant now, Duration retention, PurgeStep... steps) {
         AccountPolicyProperties props = new AccountPolicyProperties(
-                GRACE, accountPolicyProperties.purgeInterval(), PURGING_TIMEOUT,
-                accountPolicyProperties.consentRetention());
+                GRACE, accountPolicyProperties.purgeInterval(), PURGING_TIMEOUT, retention);
         return new DeletionPurgeService(userRepositoryService, List.of(steps), props, transactionTemplate,
                 Clock.fixed(now, ZoneOffset.UTC));
     }
@@ -136,6 +143,30 @@ class DeletionPurgeIntegrationTest extends AuthIntegrationTestSupport {
 
     private User userRow(long userId) {
         return userRepository.findById(userId).orElseThrow();
+    }
+
+    /** 파기 완료 상태 재현 — 식별정보 마스킹·스냅샷 NULL·PURGED·purged_at. */
+    private long purgedUser(String providerId, Instant purgedAt) {
+        long userId = graceExpiredUser(providerId);
+        jdbcTemplate.update("update users set provider_id = ?, email = null, name = null where id = ?",
+                "PURGED_" + userId, userId);
+        jdbcTemplate.update("update deletion_log set status = 'PURGED', provider_id = null, purged_at = ?, updated_at = ? "
+                + "where user_id = ?", Timestamp.from(purgedAt), Timestamp.from(purgedAt), userId);
+        return userId;
+    }
+
+    private void consent(long userId, boolean agreed) {
+        userConsentRepository.save(UserConsent.create(userId, ConsentType.MARKETING, agreed, 1, NOW.minus(Duration.ofDays(400))));
+    }
+
+    private int consentCount(long userId) {
+        Integer count = jdbcTemplate.queryForObject("select count(*) from user_consent where user_id = ?", Integer.class, userId);
+        return count == null ? 0 : count;
+    }
+
+    private int logCount(long userId) {
+        Integer count = jdbcTemplate.queryForObject("select count(*) from deletion_log where user_id = ?", Integer.class, userId);
+        return count == null ? 0 : count;
     }
 
     private boolean inTx(java.util.function.Supplier<Boolean> write) {
@@ -398,6 +429,75 @@ class DeletionPurgeIntegrationTest extends AuthIntegrationTestSupport {
         DeletionLog log = logOf(userId);
         assertThat(log.getStatus()).isEqualTo(DeletionStatus.PURGED);
         assertThat(log.getPurgedAt()).isEqualTo(nanoNow.truncatedTo(ChronoUnit.MICROS));
+    }
+
+    // ── 기능 7 보존 만료 정리 ──
+
+    @Test
+    @DisplayName("파기 완료 후 보존 기간이 지난 건은 동의 이력과 가명 users 행이 삭제되고 deletion_log(CANCELLED 이력 포함)는 남는다")
+    void retentionExpiryDeletesConsentsAndUserRowButKeepsLogs() {
+        long userId = purgedUser("kakao-rt-1", NOW.minus(RETENTION)); // 경계 정각 = 만료
+        consent(userId, true);
+        consent(userId, false);
+        // 같은 유저의 옛 CANCELLED 이력(복구 후 재탈퇴) — audit으로 남아야 한다
+        deletionLogRepository.save(DeletionLog.pending(userId, null, NOW.minus(Duration.ofDays(500))));
+        jdbcTemplate.update("update deletion_log set status = 'CANCELLED' where user_id = ? and status = 'PENDING_PURGE'", userId);
+        assertThat(logCount(userId)).isEqualTo(2);
+
+        serviceAt(NOW).runCycle();
+
+        assertThat(consentCount(userId)).isZero();
+        assertThat(userRepository.findById(userId)).isEmpty();
+        assertThat(logCount(userId)).isEqualTo(2);
+        assertThat(logOf(userId).getStatus()).isEqualTo(DeletionStatus.PURGED);
+    }
+
+    @Test
+    @DisplayName("보존 기간 미경과 건은 동의 이력·users 행이 유지된다")
+    void retentionNotExpiredKeepsEverything() {
+        long userId = purgedUser("kakao-rt-2", NOW.minus(RETENTION).plusSeconds(1));
+        consent(userId, true);
+
+        serviceAt(NOW).runCycle();
+
+        assertThat(consentCount(userId)).isEqualTo(1);
+        assertThat(userRepository.findById(userId)).isPresent();
+    }
+
+    @Test
+    @DisplayName("활성 유저·CANCELLED 건의 동의 이력은 영향이 없고, 이미 정리된 건은 재스캔되지 않는다 (멱등)")
+    void retentionCleanupSkipsActiveAndCancelledAndIsIdempotent() {
+        long expired = purgedUser("kakao-rt-3", NOW.minus(Duration.ofDays(400)));
+        consent(expired, true);
+        long active = saveUser("kakao-rt-3-active").getId();
+        consent(active, true);
+        long cancelled = graceExpiredUser("kakao-rt-3-cancelled");
+        consent(cancelled, true);
+        setStatus(cancelled, DeletionStatus.CANCELLED, NOW.minus(Duration.ofDays(400)));
+
+        serviceAt(NOW).runCycle();
+        serviceAt(NOW).runCycle(); // 재실행 — 대상 없음
+
+        assertThat(userRepository.findById(expired)).isEmpty();
+        assertThat(consentCount(expired)).isZero();
+        assertThat(consentCount(active)).isEqualTo(1);
+        assertThat(userRepository.findById(active)).isPresent();
+        assertThat(consentCount(cancelled)).isEqualTo(1);
+        assertThat(userRepository.findById(cancelled)).isPresent();
+    }
+
+    @Test
+    @DisplayName("보존 기간 설정 변경이 반영된다 — 같은 건이 30일 설정에서는 유지되고 1일 설정에서는 정리된다")
+    void retentionSettingOverride() {
+        long userId = purgedUser("kakao-rt-4", NOW.minus(Duration.ofDays(2)));
+        consent(userId, true);
+
+        serviceAt(NOW, Duration.ofDays(30)).runCycle();
+        assertThat(userRepository.findById(userId)).isPresent();
+
+        serviceAt(NOW, Duration.ofDays(1)).runCycle();
+        assertThat(userRepository.findById(userId)).isEmpty();
+        assertThat(consentCount(userId)).isZero();
     }
 
     @Test

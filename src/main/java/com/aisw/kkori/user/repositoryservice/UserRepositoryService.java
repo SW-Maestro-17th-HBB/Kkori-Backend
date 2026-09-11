@@ -205,4 +205,21 @@ public class UserRepositoryService {
     public boolean completePurge(Long id, Instant claimedAt, Instant now, PurgeDetail detail) {
         return deletionLogRepository.completePurge(id, claimedAt, now, detail) == 1;
     }
+
+    // ── 보존 만료 정리 (PRD deletion.md 기능 7) — 호출자의 user 잠금 트랜잭션 안에서 ──
+
+    /** 파기 완료 후 보존 기간이 지났고 가명 users 행이 남아 있는 건. */
+    public List<DeletionLog> findRetentionExpiredPurges(Instant retentionCutoff) {
+        return deletionLogRepository.findRetentionExpired(retentionCutoff);
+    }
+
+    /** 유저의 동의 이력 전체 삭제 — 삭제 건수. append-only 계약의 예외(보존 정책 소관). */
+    public int deleteConsentsByUserId(Long userId) {
+        return userConsentRepository.deleteAllByUserId(userId);
+    }
+
+    /** 가명 users 행 삭제 — 삭제 여부. */
+    public boolean deleteUserRow(Long userId) {
+        return userRepository.deleteRowById(userId) == 1;
+    }
 }
