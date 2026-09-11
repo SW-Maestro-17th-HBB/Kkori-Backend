@@ -122,7 +122,7 @@ class InterviewSessionConcurrencyTest extends InterviewSessionIntegrationTestSup
     }
 
     @Test
-    @DisplayName("생성과 탈퇴가 경합하면 {탈퇴 선점 → 401·세션 없음} 또는 {생성 선점 → 세션 잔존} 중 하나로만 수렴한다")
+    @DisplayName("생성과 탈퇴가 경합하면 {탈퇴 선점 → 401·세션 없음} 또는 {생성 선점 → 생성 후 탈퇴가 ABORTED 정리} 중 하나로만 수렴한다")
     void createVersusWithdrawConverges() throws Exception {
         for (int i = 0; i < ITERATIONS; i++) {
             long userId = saveUser("kakao-c-3-" + i);
@@ -141,16 +141,21 @@ class InterviewSessionConcurrencyTest extends InterviewSessionIntegrationTestSup
                     () -> userService.withdraw(userId));
 
             assertThat(userRepository.findById(userId).orElseThrow().isDeleted()).isTrue();
-            List<InterviewSession> nonTerminal =
-                    sessionRepository.findByUserIdAndStatusIn(userId, SessionStatus.NON_TERMINAL);
-            if (createError.get() != null) {
-                // 탈퇴 선점 — 잠금 후 활성 재확인이 거부, 세션 없음
-                assertThat(createError.get()).isEqualTo(ErrorCode.UNAUTHORIZED);
-                assertThat(nonTerminal).isEmpty();
+            // 어느 순서든 탈퇴 유저 명의의 non-terminal 세션은 남지 않는다 (deletion.md 기능 1 — E1 연계 이행)
+            assertThat(sessionRepository.findByUserIdAndStatusIn(userId, SessionStatus.NON_TERMINAL)).isEmpty();
+            List<InterviewSession> all =
+                    sessionRepository.findByUserIdAndStatusIn(userId, List.of(SessionStatus.values()));
+            if (createError.get() == ErrorCode.UNAUTHORIZED) {
+                // 탈퇴 선점 — 잠금 후 활성 재확인이 거부, 생성은 롤백되어 세션 없음
+                assertThat(all).isEmpty();
             } else {
-                // 생성 선점 — 세션은 남는다. 잔존 세션 정리는 E1 연계(후속 스토리) 소관이며
-                // 그때까지 JWT 필터가 해당 유저의 접근 자체를 차단한다 (PRD 동시성 계약)
-                assertThat(nonTerminal).hasSize(1);
+                // 생성 선점 — 세션이 만들어진 뒤 이어진 탈퇴가 ABORTED로 선기록했다. 커밋~승계 재확인
+                // 사이에 정리되면 생성은 S005로 끝난다(유효한 수렴 결과)
+                if (createError.get() != null) {
+                    assertThat(createError.get()).isEqualTo(ErrorCode.SESSION_SUPERSEDED);
+                }
+                assertThat(all).singleElement()
+                        .satisfies(session -> assertThat(session.getStatus()).isEqualTo(SessionStatus.ABORTED));
             }
         }
     }

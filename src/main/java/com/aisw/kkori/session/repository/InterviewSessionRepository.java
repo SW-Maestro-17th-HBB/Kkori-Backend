@@ -34,6 +34,24 @@ public interface InterviewSessionRepository extends JpaRepository<InterviewSessi
             """)
     int abortPendingByIds(@Param("ids") Collection<Long> ids, @Param("now") Instant now);
 
+    /**
+     * 탈퇴 시 유저의 non-terminal 세션 전부를 ABORTED로 선기록한다 (PRD deletion.md 기능 1 —
+     * 조건부 벌크 UPDATE, terminal은 술어로 제외되어 no-op). {@code endedAt}은 탈퇴 트랜잭션
+     * 시각을 공유한다. 호출 트랜잭션은 user 행 잠금(탈퇴)으로 직렬화되어 있어야 한다.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.status = com.aisw.kkori.session.domain.SessionStatus.ABORTED,
+                s.endedAt = :now,
+                s.updatedAt = :now
+            where s.userId = :userId
+              and s.status in :nonTerminal
+            """)
+    int abortAllByUserIdAndStatusIn(@Param("userId") Long userId,
+                                    @Param("nonTerminal") Collection<SessionStatus> nonTerminal,
+                                    @Param("now") Instant now);
+
     /** "진행 중 면접에서 사용 중인 이력서" 판정 — RESUME_IN_USE 검사의 원천. */
     boolean existsByResumeIdAndStatusIn(Long resumeId, Collection<SessionStatus> statuses);
 

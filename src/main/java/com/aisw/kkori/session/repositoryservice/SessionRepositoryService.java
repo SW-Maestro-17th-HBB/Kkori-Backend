@@ -92,6 +92,16 @@ public class SessionRepositoryService {
         return true;
     }
 
+    /**
+     * 탈퇴 시 유저의 non-terminal 세션 전부를 ABORTED로 선기록하고 전이 건수를 반환한다
+     * (PRD deletion.md 기능 1). 건수는 로그·파기 기록({@code abortedLeftovers})의 재료다 —
+     * 이미 terminal인 세션은 술어로 제외되어 0건도 정상이다. 호출 트랜잭션은 user 행 잠금으로
+     * 직렬화되어 있어야 하며, {@link #abortPending}과 같이 영속성 컨텍스트를 비운다.
+     */
+    public int abortAllNonTerminalByUserId(Long userId, Instant now) {
+        return sessionRepository.abortAllByUserIdAndStatusIn(userId, SessionStatus.NON_TERMINAL, now);
+    }
+
     public boolean activate(Long id, Instant startedAt, Instant now) {
         return sessionRepository.activate(id, startedAt, now) == 1;
     }

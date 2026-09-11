@@ -3,6 +3,7 @@ package com.aisw.kkori.user.service;
 import com.aisw.kkori.auth.repositoryservice.AuthRepositoryService;
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
+import com.aisw.kkori.session.service.UserSessionTerminator;
 import com.aisw.kkori.user.config.AccountPolicyProperties;
 import com.aisw.kkori.user.domain.ConsentAction;
 import com.aisw.kkori.user.domain.ConsentType;
@@ -21,6 +22,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -38,6 +40,7 @@ public class UserService {
 
     private final UserRepositoryService userRepositoryService;
     private final AuthRepositoryService authRepositoryService;
+    private final UserSessionTerminator userSessionTerminator;
     private final AccountPolicyProperties accountPolicyProperties;
     private final Clock clock;
 
@@ -63,12 +66,14 @@ public class UserService {
     }
 
     /**
-     * 회원 탈퇴 — soft delete + RT 전체 폐기 + 동의 철회 append + 파기 대기 등록을
-     * 한 트랜잭션으로 수행한다. 네 기록 모두 같은 트랜잭션 시각을 공유한다(복구 판정·audit 정합).
+     * 회원 탈퇴 — soft delete + RT 전체 폐기 + 진행 중 세션 ABORTED 선기록 + 동의 철회 append
+     * + 파기 대기 등록을 한 트랜잭션으로 수행한다. 모든 기록이 같은 트랜잭션 시각을 공유한다
+     * (복구 판정·audit 정합). 종료된 세션의 LiveKit 룸 삭제는 커밋 후 응답 스레드 밖에서
+     * best-effort로 수행한다(PRD deletion.md 기능 1 — 선기록 후 삭제, 웹훅 3초 응답 보호).
      *
      * <p>동일 유저의 탈퇴 처리는 조건부 UPDATE의 영향 행 수로 직렬화한다: 상태 전이를
      * 실제로 수행한(1행) 트랜잭션만 후속 작업을 진행하고, 밀린(0행) 요청은 기존
-     * {@code deleted_at} 기준의 파기 예정 시각을 반환한다(멱등).
+     * {@code deleted_at} 기준의 파기 예정 시각을 반환한다(멱등 — 세션도 건드리지 않는다).
      */
     @Transactional
     public WithdrawResponse withdraw(Long userId) {
@@ -91,8 +96,11 @@ public class UserService {
         }
 
         authRepositoryService.revokeAllByUserId(userId, now);
+        // 진행 중 세션 선기록(ABORTED) — 벌크 UPDATE라 영속성 컨텍스트를 비운다(이후 엔티티 변이 금지)
+        List<String> abortedRooms = userSessionTerminator.abortAllForWithdrawal(userId, now);
         withdrawAgreedConsents(userId, now);
         userRepositoryService.saveDeletionLog(DeletionLog.pending(userId, providerId, now));
+        userSessionTerminator.deleteRoomsAfterCommit(abortedRooms);
         return new WithdrawResponse(purgeScheduledAt(now));
     }
 
