@@ -52,4 +52,14 @@ public class AuthRepositoryService {
     public int deleteAllByUserId(Long userId) {
         return refreshTokenRepository.deleteAllByUserId(userId);
     }
+
+    /** RT 청소 — 만료된 RT 삭제, 삭제 건수 반환(PRD deletion.md 기능 6). 호출자의 트랜잭션 안에서. */
+    public int deleteExpiredTokens(Instant now) {
+        return refreshTokenRepository.deleteExpired(now);
+    }
+
+    /** RT 청소 — 폐기 후 보존 기간이 지난 RT 삭제, 삭제 건수 반환(PRD deletion.md 기능 6). 호출자의 트랜잭션 안에서. */
+    public int deleteRevokedTokensBefore(Instant cutoff) {
+        return refreshTokenRepository.deleteRevokedBefore(cutoff);
+    }
 }
