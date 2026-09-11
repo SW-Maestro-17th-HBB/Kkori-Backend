@@ -31,6 +31,15 @@ public class ReportRepositoryService {
     private final ReportFeedbackRepository reportFeedbackRepository;
     private final TranscriptReader transcriptReader;
     private final JdbcReportJobWriter jdbcReportJobWriter;
+    private final JdbcReportPurger reportPurger;
+
+    /**
+     * 회원 탈퇴 파기 — 유저의 모든 리포트(soft delete 포함)를 4테이블에서 물리 삭제하고 삭제된 리포트
+     * 수를 반환한다(PRD deletion.md 기능 3). 호출자의 user 잠금 트랜잭션 안에서 부른다. 멱등.
+     */
+    public int purgeByUserId(long userId) {
+        return reportPurger.deleteByReportIds(reportPurger.findReportIdsByUserId(userId));
+    }
 
     /**
      * 본인 소유 검증 — 존재(404) → 소유(403) 순서.

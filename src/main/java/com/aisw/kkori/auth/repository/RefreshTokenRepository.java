@@ -42,4 +42,9 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
     @Modifying(clearAutomatically = true)
     @Query("update RefreshToken rt set rt.revokedAt = :now where rt.userId = :userId and rt.revokedAt is null")
     int revokeAllByUserId(@Param("userId") Long userId, @Param("now") Instant now);
+
+    /** 회원 탈퇴 파기 — 유저의 RT 행 전부 삭제(PRD deletion.md 기능 3). 탈퇴 시 전량 폐기된 뒤라 감지 재료 가치가 없다. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("delete from RefreshToken rt where rt.userId = :userId")
+    int deleteAllByUserId(@Param("userId") Long userId);
 }

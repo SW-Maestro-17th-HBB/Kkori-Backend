@@ -16,6 +16,34 @@ public interface InterviewSessionRepository extends JpaRepository<InterviewSessi
 
     List<InterviewSession> findByUserIdAndStatusIn(Long userId, Collection<SessionStatus> statuses);
 
+    /** 유저의 모든 세션(상태·soft delete 무관 — {@code @SQLRestriction} 없음) — 파기 대상 열거용. */
+    List<InterviewSession> findByUserId(Long userId);
+
+    // ── 파기 (PRD deletion.md 기능 3) — 호출 트랜잭션은 user 행 잠금으로 직렬화 ──
+
+    /** 녹음 객체 삭제 완료 후 포인터 제거 — 재시도 시 재삭제 불필요·"녹음 없음" 상태로 수렴. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.recordingBucket = null,
+                s.recordingObjectKey = null,
+                s.updatedAt = :now
+            where s.id = :id
+              and s.recordingObjectKey is not null
+            """)
+    int clearRecording(@Param("id") Long id, @Param("now") Instant now);
+
+    /** 세션 soft delete(행 유지 — id 연속성·참조 무결성). {@code deleted_at IS NULL} 술어로 멱등. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update InterviewSession s
+            set s.deletedAt = :now,
+                s.updatedAt = :now
+            where s.userId = :userId
+              and s.deletedAt is null
+            """)
+    int softDeleteAllByUserId(@Param("userId") Long userId, @Param("now") Instant now);
+
     /**
      * PENDING 세션을 ABORTED로 교체 정리한다 (조건부 벌크 UPDATE).
      *

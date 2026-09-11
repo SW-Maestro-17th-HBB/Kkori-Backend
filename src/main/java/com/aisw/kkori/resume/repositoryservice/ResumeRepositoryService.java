@@ -32,6 +32,19 @@ public class ResumeRepositoryService {
 
     private final ResumeRepository resumeRepository;
     private final ResumeAnalysisStatusRepository statusRepository;
+    private final JdbcResumePurger resumePurger;
+
+    // ── 파기 (PRD deletion.md 기능 3·5 — 호출자의 user 잠금 트랜잭션 안에서) ──
+
+    /** 유저의 모든 이력서(soft delete 포함)의 S3 원본 참조 — 파기 배치가 포인터 삭제 전에 객체를 지우는 재료. */
+    public List<JdbcResumePurger.ObjectRef> findPurgeTargetsByUserId(long userId) {
+        return resumePurger.findObjectRefsByUserId(userId);
+    }
+
+    /** 청크(Worker 소유) → 분석 상태 → 이력서 행 물리 삭제. 멱등. */
+    public JdbcResumePurger.PurgeCounts purgeByIds(List<Long> resumeIds) {
+        return resumePurger.deleteByResumeIds(resumeIds);
+    }
 
     /**
      * 존재(404) → 소유(403). 타인 이력서에 404가 아닌 403을 주는 것은 resume PRD §4의 계약이다.

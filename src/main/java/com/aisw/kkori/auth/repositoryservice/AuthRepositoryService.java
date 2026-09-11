@@ -47,4 +47,9 @@ public class AuthRepositoryService {
     public void revokeAllByUserId(Long userId, Instant now) {
         refreshTokenRepository.revokeAllByUserId(userId, now);
     }
+
+    /** 회원 탈퇴 파기 — 유저의 RT 행 전부 삭제, 삭제 건수 반환(PRD deletion.md 기능 3). 호출자의 트랜잭션 안에서. */
+    public int deleteAllByUserId(Long userId) {
+        return refreshTokenRepository.deleteAllByUserId(userId);
+    }
 }

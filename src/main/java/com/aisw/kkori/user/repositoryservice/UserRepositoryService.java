@@ -88,6 +88,13 @@ public class UserRepositoryService {
         return userRepository.findByProviderId(providerId);
     }
 
+    /** 같은 카카오 회원번호의 활성 계정 존재 여부 — 파기 배치의 unlink 생략 판정(유예 초과 재가입 보호). */
+    public boolean existsActiveByProviderId(String providerId) {
+        return userRepository.findByProviderId(providerId)
+                .filter(user -> !user.isDeleted())
+                .isPresent();
+    }
+
     public User saveAndFlush(User user) {
         return userRepository.saveAndFlush(user);
     }
@@ -177,6 +184,11 @@ public class UserRepositoryService {
     /** 중간 기록 — 펜스 불일치(재선점됨)면 false. */
     public boolean recordPurgeDetail(Long id, Instant claimedAt, PurgeDetail detail) {
         return deletionLogRepository.recordPurgeDetail(id, claimedAt, detail) == 1;
+    }
+
+    /** unlink 재료인 회원번호 스냅샷 — NULL(완료·복구·미기록)이면 empty. 매 시도마다 새로 읽는다. */
+    public Optional<String> findProviderSnapshot(Long id) {
+        return deletionLogRepository.findById(id).map(DeletionLog::getProviderId);
     }
 
     /** unlink 완료·생략 후 스냅샷 제거 — 펜스 불일치면 false. */
