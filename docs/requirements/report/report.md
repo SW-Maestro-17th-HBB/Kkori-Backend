@@ -24,7 +24,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 - **delivery_score의 저장 위치는 `REPORTS` 컬럼이다**: REPORT_SCORES 행은 텍스트 분석(1단계)이 만드는데, 음성 분석(2단계)이 먼저 끝날 수도 있다. REPORTS 행은 PENDING 시점부터 항상 존재하므로 여기에 두면 어느 단계가 먼저 끝나든 단순 UPDATE로 저장할 수 있다. 세션 단위 단일 값이라 overall_score와 같은 테이블에 있는 것이 의미상으로도 맞다. (REPORT_SCORES는 텍스트 3축 전용)
 - **평가는 2단계 파이프라인이다 (2026-07-23 확정)**: 텍스트 분석(LLM — 3축 평가·총평·태그·과제)과 음성 분석(LLM 무관 — VAD+결정적 수식으로 delivery_score)을 분리 수행하고, **둘 다 끝나야 COMPLETED**다. 텍스트 분석은 세션 종료 직후 시작하고, 음성 분석은 녹음 파일이 준비된 뒤 수행한다. LLM 호출은 텍스트 단계 1회뿐이라 단계 분리로 인한 LLM 비용 증가는 없다.
 - **음성 분석이 늦으면 기다리지 않고 완성한다**: 오디오가 **유예 시간 내 준비되지 않으면 텍스트 3축만으로 COMPLETED 처리한다(delivery_score null)** — 녹음 사고가 리포트를 영구 미완성에 머물게 하거나 복기 기록을 잃게 하지 않는다. 총평·약점 태그·개선 과제는 텍스트 단계 소관으로 한정하므로, 음성 단계가 늦거나 생략되어도 달라지는 것은 delivery_score(와 그에 따른 overall) 하나뿐이다. **음성 분석의 실패도 같은 경로로 처리한다(2026-07-27 확정)** — 처리 실패가 반복된 음성 분석 요청은 리포트를 FAILED로 만들지 않고 포기(ACK)하며, 그 리포트는 위의 유예 완성 경로(delivery null)로 완성된다. FAILED는 텍스트 분석 경로의 실패에 한정한다.
-- **녹음 파일은 전 환경 S3 호환 저장소를 경유한다 (2026-07-23 확정)**: 자체 호스팅 LiveKit의 Egress(사용자 트랙 분리 녹음)가 로컬은 MinIO, prod는 실제 S3의 전용 prefix(예: `recordings/`)에 업로드하고, Worker는 전 환경 동일하게 S3 클라이언트로 다운로드한다(이력서 PDF와 같은 패턴 — 코드 경로 단일). 로컬 파일·볼륨 공유 방식은 호스트 결합·유실·파기 통제 문제로 채택하지 않는다. **녹음 파일의 수명 (2026-08-06 변경 — "분석 후 즉시 삭제" 폐기)**: 객체 키는 고정 규칙으로 유도하지 않는다(2026-08-11 HBB1-318 확정 — 기존 `recordings/{sessionId}` 키 계약 폐기). 세션 도메인이 `egress_ended` 웹훅의 실제 업로드 키(예: `recordings/{room_name}-{time}.ogg`)를 `interview_session.recording_object_key`에 기록하고 음성 분석 요청 메시지(bucket·objectKey)에 실어 전달하며, **Worker와 파기 배치는 키를 유도하지 않고 이 기록·메시지를 원천으로 쓴다**(`docs/requirements/session/interview-recording.md` §발행 계약). **분석 후에도 삭제하지 않고 7일 보관한다** — 삭제는 S3 수명주기 규칙(`recordings/` prefix, 7일 자동 삭제)이 일괄 수행하며 Worker에 삭제 단계를 두지 않는다. 보관 실익은 음성 분석 재트리거 여지·디버깅이다. 회원 탈퇴 파기 시에는 수명주기를 기다리지 않고 즉시 삭제한다(비기능 요구사항의 파기 규칙 — 대상 키는 세션 행 `recording_object_key` 기준, 웹훅 유실로 미기록된 객체는 수명주기 7일이 흡수).
+- **녹음 파일은 전 환경 S3 호환 저장소를 경유한다 (2026-07-23 확정)**: 자체 호스팅 LiveKit의 Egress(사용자 트랙 분리 녹음)가 로컬은 MinIO, prod는 실제 S3의 전용 prefix(예: `recordings/`)에 업로드하고, Worker는 전 환경 동일하게 S3 클라이언트로 다운로드한다(이력서 PDF와 같은 패턴 — 코드 경로 단일). 로컬 파일·볼륨 공유 방식은 호스트 결합·유실·파기 통제 문제로 채택하지 않는다. **녹음 파일의 수명 (2026-08-06 변경 — "분석 후 즉시 삭제" 폐기)**: 객체 키는 고정 규칙으로 유도하지 않는다(2026-08-11 HBB1-318 확정 — 기존 `recordings/{sessionId}` 키 계약 폐기). 세션 도메인이 `egress_ended` 웹훅의 실제 업로드 키(예: `recordings/{room_name}-{time}.ogg`)를 `interview_session.recording_object_key`에 기록하고 음성 분석 요청 메시지(bucket·objectKey)에 실어 전달하며, **Worker와 파기 배치는 키를 유도하지 않고 이 기록·메시지를 원천으로 쓴다**(`docs/requirements/session/interview-recording.md` §발행 계약). **분석 후에도 삭제하지 않고 7일 보관한다** — 삭제는 S3 수명주기 규칙(`recordings/` prefix, 7일 자동 삭제)이 일괄 수행하며 Worker에 삭제 단계를 두지 않는다. 보관 실익은 음성 분석 재트리거 여지·디버깅이다. 회원 탈퇴 파기 시에는 수명주기를 기다리지 않고 즉시 삭제한다(`docs/requirements/user/deletion.md` 기능 3 — 대상 키는 세션 행 `recording_object_key` 기준, 웹훅 유실로 미기록된 객체는 수명주기 7일이 흡수).
 
 ### 생성 상태
 
@@ -150,7 +150,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 - **녹음·음성 분석의 남은 확정 사항** — ~~자체 호스팅 LiveKit의 Egress 설정, 음성 분석 요청의 발행 시점·필드~~(2026-08-11 HBB1-318 확정 — Egress는 RoomComposite audio-only·DUAL_CHANNEL_AGENT, 발행은 `egress_ended` 업로드 완료 시점에 sessionId·bucket·objectKey — `docs/requirements/session/interview-recording.md`), 음성 유예 시간 값, audio_usage 동의와 녹음의 연결. 확정 전까지 Worker는 텍스트 3축으로만 동작하고 delivery_score는 null이다. **전달력 점수를 항상 제공하는 방법**(대본 발화 타임스탬프 기반 근사 등)은 MVP에서 도입하지 않고 추후 논의한다(2026-07-27 확정 — 음성 실패·유예 초과 시 delivery null 완성을 유지).
 - **계약 변경 권한은 백엔드** — 스트림·상태·점수 산식·jsonb 계약이 양 repo에서 어긋나면 본 문서와 계약 record가 우선한다(이력서와 동일). Worker PRD는 계약 전문의 자기완결 사본을 유지한다.
 - **알려진 한계 (수용)**: 세션 종료~COMPLETED 사이에 사용자가 해당 이력서의 파싱 결과 수정·재분석을 실행하면 평가가 최신 파싱 결과 기준이 될 수 있다. 파싱 결과 수정은 면접 전 보정 단계의 행동이라 이 창구간에 겹칠 확률이 낮고 피해도 경미하므로 잠금 없이 수용한다.
-- **회원 탈퇴 파기**: 탈퇴 후 3일 경과 시 해당 회원의 리포트 데이터 전체(REPORTS·REPORT_SCORES·REPORT_FEEDBACKS·REPORT_GENERATION_JOBS)와 **아직 남아 있는 녹음 파일(해당 회원 세션들의 `recording_object_key`가 가리키는 S3 객체)**을 완전 삭제한다(이력서와 동일 정책, DELETION_LOG 파기 대상에 포함).
+- **회원 탈퇴 파기**: 탈퇴 후 3일 경과 시 해당 회원의 리포트 데이터 전체(REPORTS·REPORT_SCORES·REPORT_FEEDBACKS·REPORT_GENERATION_JOBS)와 **아직 남아 있는 녹음 파일(해당 회원 세션들의 `recording_object_key`가 가리키는 S3 객체)**을 완전 삭제한다(이력서와 동일 정책, DELETION_LOG 파기 대상에 포함). 절차는 deletion.md 기능 3(HBB1-13) — 리포트 4테이블은 `report_feedbacks` → `report_scores` → `report_generation_jobs` → `reports` 순 물리 삭제(soft delete된 리포트 포함, Worker 소유 Job 테이블은 Spring이 JDBC로 직접 삭제), 녹음 객체는 세션 단계에서 삭제 후 `recording_bucket`·`recording_object_key`를 NULL 처리.
 - 샘플 면접 리포트(HBB1-202)는 본 문서의 스키마·계약을 따르는 시드 데이터로 준비한다(준비 방식은 배포 작업 소관).
 
 ---
@@ -369,7 +369,7 @@ Worker의 평가 입력은 해당 세션의 `INTERVIEW_TRANSCRIPTS`(질문-답�
 ### 기타 요구사항
 
 - 질문-답변 그룹핑의 유일 키는 questionNumber다(같은 번호의 면접관 발화=질문, 사용자 발화=답변). 꼬리의 소속 표시("꼬리 Q1")는 parentQuestionNumber를 그대로 전달받아 프론트가 쓴다 — 별도 유도 규칙 없음. speaker·questionType 값 집합 등 대본 JSON 스키마는 §1 기타의 대본 계약 항목을 따른다.
-- 세션 soft delete(`INTERVIEW_SESSIONS.deleted_at`)·transcripts 삭제와 리포트 조회의 관계는 면접 도메인의 삭제 정책 확정 시 정합을 재확인한다(**면접 도메인 의존**).
+- 세션 soft delete(`INTERVIEW_SESSIONS.deleted_at`)·transcripts 마스킹(`content = []` + `deleted_at`)은 회원 탈퇴 파기 배치가 수행한다(deletion.md 기능 3, 2026-09-11 정합 확인). 같은 파기에서 리포트가 물리 삭제되므로 리포트 조회가 마스킹된 대본에 도달하는 경로는 없다 — 대본 읽기 경로(`JdbcTranscriptReader`)에 `deleted_at` 조건을 추가하지 않는다.
 
 ---
 

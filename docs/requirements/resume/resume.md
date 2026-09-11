@@ -273,7 +273,7 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 
 ### 설명
 
-사용자가 이력서를 삭제하면(`DELETE /api/v1/resumes/{resumeId}`) 이력서 원본 파일(S3), 구조화 데이터, 청크, 임베딩이 삭제 대상으로 표시된다. MVP에서는 soft delete 후 배치로 물리 삭제한다.
+사용자가 이력서를 삭제하면(`DELETE /api/v1/resumes/{resumeId}`) 이력서 원본 파일(S3), 구조화 데이터, 청크, 임베딩이 삭제 대상으로 표시된다. MVP에서는 soft delete 후 배치로 물리 삭제한다 — 물리 삭제 배치의 조건·절차·S3 공유 키 참조 확인은 `docs/requirements/user/deletion.md` 기능 5가 정의한다(HBB1-13).
 
 ### 실행 조건
 
@@ -298,8 +298,8 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 
 ### 제약사항
 
-- soft delete 후 물리 삭제 배치의 주기: **미정**
+- soft delete 후 물리 삭제 배치의 주기·지연·조건은 deletion.md 기능 5가 정의한다(2026-09-11 HBB1-13 확정 — 주기 10분·soft delete 후 10분 지연·분석 terminal 또는 상한 경과, 전부 설정값)
 
 ### 기타 요구사항
 
-- **개인정보 파기**: 회원 탈퇴 후 3일이 경과하면 해당 회원의 모든 이력서 데이터(S3 원본, 이력서·분석 상태 레코드, structuredData, 청크·임베딩)를 완전 삭제한다.
+- **개인정보 파기**: 회원 탈퇴 후 3일이 경과하면 해당 회원의 모든 이력서 데이터(S3 원본, 이력서·분석 상태 레코드, structuredData, 청크·임베딩)를 완전 삭제한다 — 절차는 deletion.md 기능 3(S3 prefix `resumes/{userId}/` 전체 삭제 후 `resume_chunks`·`resume_analysis_status`·`resumes` 물리 삭제, soft delete된 이력서 포함).

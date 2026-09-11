@@ -332,6 +332,6 @@ LiveKit Cloud가 발송하는 webhook을 수신·검증해 이벤트→전이 �
 - candidate 재연결(`INTERRUPTED` 전이·`disconnected_at`·재입장 토큰) — **HBB1-308로 도입 완료** (`interview-session-reconnection.md`)
 - `AGENT_LOST` 재dispatch·에이전트 복원 — **HBB1-308로 도입 완료** (동 문서)
 - 리포트 생성·소비(리포트 요청 발행은 에이전트 소관으로 이미 구현됨), egress·전달력 연계
-- E1(탈퇴) 연계 — 탈퇴 시 세션 즉시 abort·파기
+- E1(탈퇴) 연계 — 탈퇴 시 세션 즉시 abort·파기 → **HBB1-13에서 정의됨** (`docs/requirements/user/deletion.md` 기능 1: 탈퇴 트랜잭션의 non-terminal 세션 `ABORTED` 선기록 + 커밋 후 룸 삭제 / 기능 3: 유예 후 녹음 삭제·대본 마스킹·세션 soft delete)
 - 프론트 종료 UI — 프론트는 `ROOM_DELETED` 수신으로 종료를 감지하므로 본 스토리에 따른 추가 작업 없음
 - **AI 레포 변경 없음** — 크로스 레포 계약은 전부 기구현 확정분의 인용이다
