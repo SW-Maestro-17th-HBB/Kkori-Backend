@@ -57,6 +57,20 @@ public class ResumeRepositoryService {
     }
 
     /**
+     * 업로드와 물리 삭제 배치의 직렬화 지점 — 같은 사용자·같은 해시의 soft delete 행을 잠근다(없으면 즉시 반환).
+     * 배치가 그 행을 잠근 채 S3 객체를 지우는 동안 업로드가 "객체 있음"으로 판단하는 것을 막는다.
+     * 호출자의 트랜잭션 안에서만 호출한다.
+     */
+    public void lockSoftDeletedDuplicates(Long userId, String fileHash) {
+        resumePurger.lockSoftDeletedByUserIdAndFileHash(userId, fileHash);
+    }
+
+    /** 물리 삭제 후보 행 잠금 — 그 사이 사라졌으면 false. 호출자의 트랜잭션 안에서만 호출한다. */
+    public boolean lockPhysicalDeleteCandidate(Long resumeId) {
+        return resumePurger.lockSoftDeletedById(resumeId);
+    }
+
+    /**
      * 존재(404) → 소유(403). 타인 이력서에 404가 아닌 403을 주는 것은 resume PRD §4의 계약이다.
      * soft delete된 이력서는 {@code @SQLRestriction}으로 조회되지 않아 404로 수렴한다.
      */

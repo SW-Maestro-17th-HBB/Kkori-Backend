@@ -13,8 +13,8 @@ import com.aisw.kkori.resume.service.ResumePhysicalDeleteScheduler;
 import com.aisw.kkori.resume.service.ResumePhysicalDeleteService;
 import com.aisw.kkori.resume.service.ResumeUploadService;
 import com.aisw.kkori.user.domain.User;
+import com.aisw.kkori.user.service.WebhookWithdrawalExecutor;
 import com.aisw.kkori.user.repository.UserRepository;
-import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import io.awspring.cloud.s3.ObjectMetadata;
 import io.awspring.cloud.s3.S3Template;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,6 +34,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.io.ByteArrayInputStream;
 import java.security.MessageDigest;
 import java.util.HexFormat;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.sql.Timestamp;
 import java.time.Clock;
@@ -63,8 +68,8 @@ class ResumePhysicalDeleteIntegrationTest {
     @Autowired ResumeAnalysisStatusRepository statusRepository;
     @Autowired UserRepository userRepository;
     @Autowired ResumeRepositoryService resumeRepositoryService;
-    @Autowired UserRepositoryService userRepositoryService;
     @Autowired ResumeUploadService resumeUploadService;
+    @Autowired WebhookWithdrawalExecutor webhookWithdrawalExecutor;
     @Autowired JdbcTemplate jdbcTemplate;
 
     /** 업로드 경로의 잠금 전 존재 확인 직후에 배치를 끼워 넣는 경합 재현용 — 그 외 호출은 실물이다. */
@@ -88,7 +93,7 @@ class ResumePhysicalDeleteIntegrationTest {
     }
 
     private ResumePhysicalDeleteService serviceAt(Instant now) {
-        return new ResumePhysicalDeleteService(resumeRepositoryService, userRepositoryService, s3Template,
+        return new ResumePhysicalDeleteService(resumeRepositoryService, s3Template,
                 new ResumePhysicalDeleteProperties(Duration.ofMinutes(10), DELAY), transactionTemplate,
                 Clock.fixed(now, ZoneOffset.UTC));
     }
@@ -277,6 +282,37 @@ class ResumePhysicalDeleteIntegrationTest {
         assertThat(rowExists(old)).isFalse();
         assertThat(resumeRepositoryService.existsActiveDuplicate(userId, hash)).isTrue();
         assertThat(s3Template.objectExists(BUCKET, key)).isTrue();
+    }
+
+    @Test
+    @DisplayName("배치가 S3 삭제에 오래 걸려도 같은 유저의 탈퇴 웹훅 트랜잭션(2초 타임아웃)은 대기하지 않고 완료된다")
+    void slowS3DeleteDoesNotBlockWithdrawalWebhook() throws Exception {
+        long userId = user("kakao-pd-9");
+        long resumeId = resume(userId, "h9", AnalysisStatus.EMBEDDED);
+        softDeletedAt(resumeId, NOW.minus(DELAY));
+        CountDownLatch deleting = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            deleting.countDown();
+            Thread.sleep(3_000); // S3 지연 — 이 동안 후보 행 잠금은 유지되지만 users 행은 잠기지 않는다
+            return invocation.callRealMethod();
+        }).when(s3Template).deleteObject(eq(BUCKET), eq(keyOf(userId, "h9")));
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> batch = pool.submit(() -> serviceAt(NOW).runCycle());
+            assertThat(deleting.await(5, TimeUnit.SECONDS)).isTrue();
+
+            long started = System.nanoTime();
+            WebhookWithdrawalExecutor.Result result = webhookWithdrawalExecutor.withdrawIfActive("kakao-pd-9");
+            long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
+
+            assertThat(result).isEqualTo(WebhookWithdrawalExecutor.Result.WITHDRAWN);
+            assertThat(elapsedMillis).isLessThan(2_000);
+            assertThat(userRepository.findById(userId).orElseThrow().isDeleted()).isTrue();
+            batch.get(10, TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(rowExists(resumeId)).isFalse();
     }
 
     private static String sha256Hex(byte[] bytes) throws Exception {

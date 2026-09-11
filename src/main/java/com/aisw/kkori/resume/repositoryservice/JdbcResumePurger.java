@@ -64,6 +64,26 @@ public class JdbcResumePurger {
                 Timestamp.from(delayCutoff), Timestamp.from(ceilingCutoff));
     }
 
+    /**
+     * 같은 사용자·같은 해시의 soft delete 행들을 잠근다(FOR UPDATE, id 순) — 업로드가 물리 삭제 배치와
+     * 직렬화하는 지점. users 행이 아니라 이 행을 잠그는 이유: 배치가 S3 왕복 동안 users 행을 쥐면 같은
+     * 유저의 탈퇴 웹훅(2초 트랜잭션)이 밀리는데, 이 행은 웹훅·계정 경로가 건드리지 않는다.
+     * 호출자의 트랜잭션 안에서만 의미가 있다(잠금 수명 = 트랜잭션).
+     */
+    public List<Long> lockSoftDeletedByUserIdAndFileHash(long userId, String fileHash) {
+        return jdbcTemplate.queryForList(
+                "SELECT id FROM resumes WHERE user_id = ? AND file_hash = ? AND deleted_at IS NOT NULL "
+                        + "ORDER BY id FOR UPDATE",
+                Long.class, userId, fileHash);
+    }
+
+    /** 물리 삭제 후보 행 잠금 — 이미 사라졌으면(탈퇴 파기·타 인스턴스) false. 호출자의 트랜잭션 안에서. */
+    public boolean lockSoftDeletedById(long resumeId) {
+        return !jdbcTemplate.queryForList(
+                "SELECT id FROM resumes WHERE id = ? AND deleted_at IS NOT NULL FOR UPDATE",
+                Long.class, resumeId).isEmpty();
+    }
+
     /** 청크(Worker 소유) → 분석 상태 → 이력서 행 순 물리 삭제. 이미 지워진 id는 0행으로 멱등. */
     public PurgeCounts deleteByResumeIds(List<Long> resumeIds) {
         if (resumeIds.isEmpty()) {

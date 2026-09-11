@@ -10,7 +10,6 @@ import com.aisw.kkori.resume.domain.ResumeAnalysisStatus;
 import com.aisw.kkori.resume.dto.ResumeParseRequestedMessage;
 import com.aisw.kkori.resume.dto.ResumeUploadResponse;
 import com.aisw.kkori.resume.repositoryservice.ResumeRepositoryService;
-import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import io.awspring.cloud.s3.ObjectMetadata;
 import io.awspring.cloud.s3.S3Template;
 import lombok.RequiredArgsConstructor;
@@ -31,14 +30,15 @@ import java.util.HexFormat;
  * 이력서 업로드 오케스트레이션 (docs/requirements/resume/resume.md §1).
  *
  * <p>검증 → 해시 계산 → 중복 조회(있으면 무부수효과 조기 반환) → S3 저장(없을 때만)
- * → [user 잠금] 객체 존재 재확인(없으면 재저장) → DB 저장(Resume + 분석 상태) + 분석 요청 발행 → 응답.
+ * → [같은 해시의 soft delete 행 잠금] 객체 존재 재확인(없으면 재저장) → DB 저장(Resume + 분석 상태) + 분석 요청 발행 → 응답.
  * S3 업로드는 외부 시스템이라 롤백이 불가능하므로 트랜잭션 밖에서 선행하고,
  * DB 저장과 이벤트 발행만 하나의 트랜잭션으로 묶는다. 발행 실패 시 DB는 롤백되고
  * S3 객체만 남지만, 해시 기반 키라 다음 업로드에서 재사용된다.
  *
- * <p>잠금 안의 존재 재확인은 물리 삭제 배치(deletion.md 기능 5)와의 직렬화다 — 배치는 같은 user 잠금 안에서
- * 활성 참조를 확인한 뒤 같은 키의 객체를 지우므로, 잠금 밖의 "존재함 → 저장 생략" 판단이 낡았을 수 있다.
- * 잠금은 활성 재확인 없는 {@code lockUser}다 — 활성 여부는 JWT 필터가 매 요청 검증하며, 여기서는 직렬화만 필요하다.
+ * <p>잠금 안의 존재 재확인은 물리 삭제 배치(deletion.md 기능 5)와의 직렬화다 — 배치는 같은 해시의 soft delete
+ * 행을 잠근 채 활성 참조를 확인하고 같은 키의 객체를 지우므로, 잠금 밖의 "존재함 → 저장 생략" 판단이 낡았을 수
+ * 있다. 잠금 대상이 users 행이 아니라 soft delete 행인 이유: S3 왕복 동안 users 행을 쥐면 같은 유저의 탈퇴
+ * 웹훅(2초 트랜잭션)이 밀린다. 같은 해시의 soft delete 행이 없으면(첫 업로드) 잠글 것이 없어 비용이 없다.
  *
  * <p>분석 요청 전달은 {@link ResumeAnalysisRequester}의 2단계 계약을 따른다 — 트랜잭션 안
  * 발행(비동기 모드) / 커밋 후 워커 HTTP 호출(동기 모드, HBB1-327 부하 테스트 실험).
@@ -51,7 +51,6 @@ public class ResumeUploadService {
     private final PdfValidator pdfValidator;
     private final S3Template s3Template;
     private final ResumeRepositoryService resumeRepositoryService;
-    private final UserRepositoryService userRepositoryService;
     private final ResumeAnalysisRequester analysisRequester;
     private final TransactionTemplate transactionTemplate;
     private final S3Properties s3Properties;
@@ -79,8 +78,9 @@ public class ResumeUploadService {
 
         try {
             UploadOutcome outcome = transactionTemplate.execute(tx -> {
-                // 물리 삭제 배치와 직렬화 — 잠금 안에서 객체 존재를 재확인하고, 그 사이 지워졌으면 다시 저장한다
-                userRepositoryService.lockUser(userId);
+                // 물리 삭제 배치와 직렬화 — 같은 해시의 soft delete 행을 잠근 뒤 객체 존재를 재확인하고,
+                // 그 사이 지워졌으면 다시 저장한다
+                resumeRepositoryService.lockSoftDeletedDuplicates(userId, fileHash);
                 uploadToS3IfAbsent(file, objectKey);
 
                 Resume resume = resumeRepositoryService.save(Resume.builder()
