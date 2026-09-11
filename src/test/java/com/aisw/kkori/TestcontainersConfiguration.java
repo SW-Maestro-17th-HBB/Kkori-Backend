@@ -45,4 +45,6 @@ public class TestcontainersConfiguration {
             registry.add("app.s3.bucket", () -> TEST_BUCKET);
         };
     }
+    // 배치 빈 비활성화(app.batch.enabled=false)는 여기가 아니라 BatchDisablingEnvironmentPostProcessor가 담당한다 —
+    // DynamicPropertyRegistrar는 빈 정의 등록 뒤에 실행되어 @ConditionalOnProperty 평가에 반영되지 않는다.
 }

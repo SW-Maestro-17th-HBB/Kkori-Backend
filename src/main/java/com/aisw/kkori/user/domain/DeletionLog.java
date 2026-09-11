@@ -25,7 +25,9 @@ import java.time.Instant;
  *
  * <p>{@code updatedAt}은 마지막 상태 전이 시각으로, 생성 시 {@code requestedAt}과 같은 값으로 시작한다.
  * 상태 전이는 조건부 UPDATE(벌크 쿼리)로 수행되어 auditing이 적용되지 않으므로,
- * 전이 쿼리는 반드시 {@code updatedAt = :now}를 함께 갱신해야 한다.
+ * 전이 쿼리는 반드시 {@code updatedAt = :now}를 함께 갱신해야 한다. 파기 배치는 선점 시각
+ * (= 선점 UPDATE가 기록한 {@code updatedAt})을 그 건의 후속 쓰기에 대한 펜싱 토큰으로 쓴다
+ * (PRD deletion.md 기능 2).
  */
 @Getter
 @Entity
@@ -44,7 +46,7 @@ public class DeletionLog {
     /**
      * 탈퇴 시점의 카카오 회원번호 스냅샷 — 파기 배치의 unlink 호출 재료.
      * {@code users.provider_id}는 유예 만료 처리로 먼저 마스킹될 수 있어 여기 확보해 둔다.
-     * 개인 식별정보이므로 복구(CANCELLED 전환)·파기 완료(unlink 후) 시 NULL 처리한다.
+     * 개인 식별정보이므로 복구(CANCELLED 전환)·unlink 완료·생략 시 NULL 처리한다.
      */
     @Column(name = "provider_id", length = 64)
     private String providerId;
@@ -53,7 +55,7 @@ public class DeletionLog {
     @Column(name = "requested_at", nullable = false, updatable = false)
     private Instant requestedAt;
 
-    /** 파기 완료 시각. NULL이면 미파기. 기록은 영구 삭제 스토리 범위. */
+    /** 파기 완료 시각. NULL이면 미파기. 동의 이력 보존 기간의 기산점(PRD deletion.md 기능 7). */
     @Column(name = "purged_at")
     private Instant purgedAt;
 
@@ -61,12 +63,12 @@ public class DeletionLog {
     @Column(nullable = false, length = 16)
     private DeletionStatus status;
 
-    /** 파기 대상·결과 구조화(jsonb). 구조 정의·기록은 영구 삭제 스토리 범위 — 그 전까지 항상 NULL. */
+    /** 파기 단계별 건수·상태 기록(jsonb). 스키마 원천은 {@link PurgeDetail}. 첫 선점 전까지 NULL. */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "purge_detail")
-    private String purgeDetail;
+    private PurgeDetail purgeDetail;
 
-    /** 마지막 상태 전이 시각. stale PURGING 회수·FAILED 재시도 판정 재료(영구 삭제 스토리). */
+    /** 마지막 상태 전이 시각. stale PURGING 회수·FAILED 재시도 판정 재료이자 선점 펜싱 토큰. */
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 

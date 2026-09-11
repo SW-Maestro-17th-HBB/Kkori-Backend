@@ -42,4 +42,21 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
     @Modifying(clearAutomatically = true)
     @Query("update RefreshToken rt set rt.revokedAt = :now where rt.userId = :userId and rt.revokedAt is null")
     int revokeAllByUserId(@Param("userId") Long userId, @Param("now") Instant now);
+
+    /** 회원 탈퇴 파기 — 유저의 RT 행 전부 삭제(PRD deletion.md 기능 3). 탈퇴 시 전량 폐기된 뒤라 감지 재료 가치가 없다. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("delete from RefreshToken rt where rt.userId = :userId")
+    int deleteAllByUserId(@Param("userId") Long userId);
+
+    // ── RT 청소 배치 (PRD deletion.md 기능 6) — 시각 조건의 벌크 DELETE, 다중 인스턴스 동시 실행은 늦은 쪽이 0행 ──
+
+    /** 만료된 RT 즉시 삭제 — 만료 후에는 재발급·Grace 어느 경로에서도 유효하게 취급되지 않는다. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("delete from RefreshToken rt where rt.expiredAt <= :now")
+    int deleteExpired(@Param("now") Instant now);
+
+    /** 폐기 후 보존 기간이 지난 RT 삭제 — 보존 기간은 Grace Period·재사용 탈취 감지 창의 재료다. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("delete from RefreshToken rt where rt.revokedAt is not null and rt.revokedAt <= :cutoff")
+    int deleteRevokedBefore(@Param("cutoff") Instant cutoff);
 }

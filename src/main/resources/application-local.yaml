@@ -42,10 +42,21 @@ jwt:
   access-token-ttl: ${JWT_ACCESS_TTL:30m}
   refresh-token-ttl: ${JWT_REFRESH_TTL:14d}
   signup-token-ttl: ${JWT_SIGNUP_TTL:10m}
+  # RT 청소 배치 — 만료 즉시 · 폐기 후 보존 기간 경과 시 삭제 (deletion.md 기능 6)
+  refresh-token-cleanup-interval: ${RT_CLEANUP_INTERVAL:1h}
+  revoked-refresh-token-retention: ${RT_REVOKED_RETENTION:2d}
 
-# 계정 정책 — 탈퇴 후 파기 유예 기간
+# 계정 정책 — 탈퇴 후 파기 유예 기간 · 파기 배치 · 동의 이력 보존 (deletion.md 공통: 배치 실행·설정)
 account:
   withdrawal-grace-period: ${WITHDRAWAL_GRACE_PERIOD:3d}
+  purge-interval: ${PURGE_INTERVAL:10m}
+  purging-timeout: ${PURGING_TIMEOUT:30m}
+  consent-retention: ${CONSENT_RETENTION:365d}
+
+# 이력서 물리 삭제 배치 (deletion.md 기능 5)
+resume:
+  physical-delete-interval: ${RESUME_PHYSICAL_DELETE_INTERVAL:10m}
+  physical-delete-delay: ${RESUME_PHYSICAL_DELETE_DELAY:10m}
 
 log-masking:
   hmac-key: ${LOG_HMAC_KEY:kkori-local-dev-log-hmac-key-32bytes!}

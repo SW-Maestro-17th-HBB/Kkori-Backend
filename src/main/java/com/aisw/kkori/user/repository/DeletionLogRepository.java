@@ -2,6 +2,7 @@ package com.aisw.kkori.user.repository;
 
 import com.aisw.kkori.user.domain.DeletionLog;
 import com.aisw.kkori.user.domain.DeletionStatus;
+import com.aisw.kkori.user.domain.PurgeDetail;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
@@ -10,6 +11,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 public interface DeletionLogRepository extends JpaRepository<DeletionLog, Long> {
@@ -60,4 +62,114 @@ public interface DeletionLogRepository extends JpaRepository<DeletionLog, Long> 
               and d.requestedAt > :graceCutoff
             """)
     int cancelPendingPurge(@Param("id") Long id, @Param("now") Instant now, @Param("graceCutoff") Instant graceCutoff);
+
+    // ── 파기 배치 (PRD deletion.md 기능 2) ──
+    // 선점·종결·실패·기록은 전부 조건부 벌크 UPDATE다. 선점이 기록한 updated_at(선점 시각)이
+    // 그 건의 후속 쓰기 전부에 대한 펜싱 토큰이라, stale 회수로 재선점된 건에 대한 이전 인스턴스의
+    // 쓰기는 0행으로 무시된다. 벌크 쿼리라 updated_at을 명시 갱신하며, updated_at을 바꾸는 쓰기는
+    // 선점과 종결·실패 전환뿐이다(중간 기록은 펜스 값을 유지해야 한다).
+
+    /**
+     * 파기 후보 — 유예 경과 PENDING_PURGE · FAILED · stale PURGING(선점 인스턴스 중단)의 합.
+     * 유예 경계 정각({@code requested_at + 유예 = now})은 경과로 판정한다 — 복구 가능 판정
+     * ({@link #cancelPendingPurge}의 {@code requested_at > graceCutoff})의 정확한 여집합.
+     */
+    @Query("""
+            select d from DeletionLog d
+            where (d.status = com.aisw.kkori.user.domain.DeletionStatus.PENDING_PURGE
+                   and d.requestedAt <= :graceCutoff)
+               or d.status = com.aisw.kkori.user.domain.DeletionStatus.FAILED
+               or (d.status = com.aisw.kkori.user.domain.DeletionStatus.PURGING
+                   and d.updatedAt <= :staleCutoff)
+            order by d.requestedAt asc, d.id asc
+            """)
+    List<DeletionLog> findPurgeCandidates(@Param("graceCutoff") Instant graceCutoff,
+                                          @Param("staleCutoff") Instant staleCutoff);
+
+    /**
+     * 보존 만료 정리 대상 — 파기 완료 후 보존 기간이 지났고 가명 users 행이 아직 남아 있는 건
+     * (PRD deletion.md 기능 7). users 행 부재가 "정리 완료"의 표식이라 별도 상태 컬럼이 없다.
+     */
+    @Query("""
+            select d from DeletionLog d
+            where d.status = com.aisw.kkori.user.domain.DeletionStatus.PURGED
+              and d.purgedAt <= :retentionCutoff
+              and exists (select u.id from User u where u.id = d.userId)
+            order by d.purgedAt asc, d.id asc
+            """)
+    List<DeletionLog> findRetentionExpired(@Param("retentionCutoff") Instant retentionCutoff);
+
+    /**
+     * 조건부 선점 — 후보 조건을 술어에 중복 포함해 스캔~선점 사이의 상태 변화(복구의 CANCELLED,
+     * 타 인스턴스의 선점)를 흡수한다. 영향 행 수 1인 인스턴스만 파기를 진행한다. {@code claimedAt}이
+     * 이 건의 펜싱 토큰이 된다. 잠금은 잡지 않는다 — 복구 경로가 로그 행 잠금을 쥐면 이 UPDATE가
+     * 커밋까지 대기한 뒤 재평가되어 0행이 된다(READ COMMITTED의 갱신 후 재검사).
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update DeletionLog d
+            set d.status = com.aisw.kkori.user.domain.DeletionStatus.PURGING,
+                d.updatedAt = :claimedAt
+            where d.id = :id
+              and ((d.status = com.aisw.kkori.user.domain.DeletionStatus.PENDING_PURGE
+                    and d.requestedAt <= :graceCutoff)
+                   or d.status = com.aisw.kkori.user.domain.DeletionStatus.FAILED
+                   or (d.status = com.aisw.kkori.user.domain.DeletionStatus.PURGING
+                       and d.updatedAt <= :staleCutoff))
+            """)
+    int claimForPurge(@Param("id") Long id, @Param("claimedAt") Instant claimedAt,
+                      @Param("graceCutoff") Instant graceCutoff, @Param("staleCutoff") Instant staleCutoff);
+
+    /** 중간 기록 — 펜스 값(updated_at)은 유지한다. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update DeletionLog d
+            set d.purgeDetail = :detail
+            where d.id = :id
+              and d.status = com.aisw.kkori.user.domain.DeletionStatus.PURGING
+              and d.updatedAt = :claimedAt
+            """)
+    int recordPurgeDetail(@Param("id") Long id, @Param("claimedAt") Instant claimedAt,
+                          @Param("detail") PurgeDetail detail);
+
+    /** unlink 완료·생략 후 스냅샷 제거 (PRD 기능 4) — 펜스 값 유지. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update DeletionLog d
+            set d.providerId = null
+            where d.id = :id
+              and d.status = com.aisw.kkori.user.domain.DeletionStatus.PURGING
+              and d.updatedAt = :claimedAt
+            """)
+    int clearProviderSnapshot(@Param("id") Long id, @Param("claimedAt") Instant claimedAt);
+
+    /** PURGING → FAILED (재시도 대상). */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update DeletionLog d
+            set d.status = com.aisw.kkori.user.domain.DeletionStatus.FAILED,
+                d.updatedAt = :now,
+                d.purgeDetail = :detail
+            where d.id = :id
+              and d.status = com.aisw.kkori.user.domain.DeletionStatus.PURGING
+              and d.updatedAt = :claimedAt
+            """)
+    int failPurge(@Param("id") Long id, @Param("claimedAt") Instant claimedAt,
+                  @Param("now") Instant now, @Param("detail") PurgeDetail detail);
+
+    /** PURGING → PURGED (종결) — 파기 완료 시각 기록, 스냅샷 NULL 확인. */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update DeletionLog d
+            set d.status = com.aisw.kkori.user.domain.DeletionStatus.PURGED,
+                d.purgedAt = :now,
+                d.updatedAt = :now,
+                d.providerId = null,
+                d.purgeDetail = :detail
+            where d.id = :id
+              and d.status = com.aisw.kkori.user.domain.DeletionStatus.PURGING
+              and d.updatedAt = :claimedAt
+            """)
+    int completePurge(@Param("id") Long id, @Param("claimedAt") Instant claimedAt,
+                      @Param("now") Instant now, @Param("detail") PurgeDetail detail);
 }
