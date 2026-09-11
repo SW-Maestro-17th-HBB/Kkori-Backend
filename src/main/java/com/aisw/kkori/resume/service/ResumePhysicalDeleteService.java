@@ -61,6 +61,24 @@ public class ResumePhysicalDeleteService {
                         candidate.resumeId(), candidate.userId(), e.getClass().getSimpleName());
             }
         }
+        purgeOrphanChunks(delayCutoff);
+    }
+
+    /**
+     * 고아 청크 정리 — 상한 삭제 뒤 Worker가 뒤늦게 남긴 청크(이력서 본문)는 행 기준 후보 조회로 다시 찾지 못하므로
+     * 회차 끝에 거둔다. 생성 후 지연 시간이 지난 것만 대상이다(업로드 직후 행 커밋 전 쓰기 창 제외). 잠금은 잡지
+     * 않는다 — 행이 없는 청크를 다투는 경로가 없고, 행이 있는 이력서의 청크는 술어로 제외된다.
+     */
+    private void purgeOrphanChunks(Instant createdBefore) {
+        try {
+            Integer deleted = transactionTemplate.execute(status ->
+                    resumeRepositoryService.purgeOrphanChunksCreatedBefore(createdBefore));
+            if (deleted != null && deleted > 0) {
+                log.info("고아 청크 정리 (chunks={})", deleted);
+            }
+        } catch (RuntimeException e) {
+            log.warn("고아 청크 정리 실패 — 다음 회차 재시도: {}", e.getClass().getSimpleName());
+        }
     }
 
     /** 후보 행 잠금 하 한 트랜잭션: 공유 키 참조 확인 → S3 삭제(참조 없을 때만) → DB(청크·상태·행). */

@@ -319,6 +319,29 @@ class ResumePhysicalDeleteIntegrationTest {
         assertThat(rowExists(resumeId)).isFalse();
     }
 
+    @Test
+    @DisplayName("이력서 행이 없는 고아 청크는 생성 후 지연 시간이 지난 것만 회차 끝에 삭제되고, 행이 있는 청크와 생성 직후 고아는 유지된다")
+    void purgesAgedOrphanChunksOnly() {
+        long userId = user("kakao-pd-10");
+        long alive = resume(userId, "h10", AnalysisStatus.EMBEDDED); // 활성 이력서의 청크 — 대상 아님
+        long ghost = 987_654_321L; // resumes에 없는 id — 상한 삭제 뒤 Worker가 남긴 청크 재현
+        seeder.chunk(ghost);
+        seeder.chunk(ghost);
+        jdbcTemplate.update("UPDATE resume_chunks SET created_at = ? WHERE resume_id = ?",
+                Timestamp.from(NOW.minus(DELAY)), ghost); // 경계 정각 = 지연 경과
+        long freshGhost = 987_654_322L;
+        seeder.chunk(freshGhost);
+        jdbcTemplate.update("UPDATE resume_chunks SET created_at = ? WHERE resume_id = ?",
+                Timestamp.from(NOW.minus(DELAY).plusSeconds(1)), freshGhost); // 지연 미경과 — 행 커밋 전 쓰기 창
+
+        serviceAt(NOW).runCycle();
+
+        assertThat(seeder.chunkCount(ghost)).isZero();
+        assertThat(seeder.chunkCount(freshGhost)).isEqualTo(1);
+        assertThat(seeder.chunkCount(alive)).isEqualTo(1);
+        assertThat(rowExists(alive)).isTrue();
+    }
+
     private static String sha256Hex(byte[] bytes) throws Exception {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     }

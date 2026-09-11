@@ -84,6 +84,20 @@ public class JdbcResumePurger {
                 Long.class, resumeId).isEmpty();
     }
 
+    /**
+     * 고아 청크 정리 — {@code resumes} 행이 없는 {@code resume_id}의 청크 중 생성 후 {@code createdBefore} 이전 것만
+     * 삭제한다(PRD deletion.md 기능 5). 상한 삭제 뒤 Worker가 뒤늦게 남긴 청크(이력서 본문)는 행 기준 후보 조회로는
+     * 다시 찾지 못하므로 여기서 거둔다. 생성 직후 청크를 제외하는 이유: 업로드가 행 커밋과 같은 트랜잭션에서 분석
+     * 요청을 발행해, Worker가 행 커밋보다 먼저 청크를 쓰는 짧은 창이 이론상 있다(그 청크는 고아가 아니다).
+     */
+    public int deleteOrphanChunksCreatedBefore(Instant createdBefore) {
+        return jdbcTemplate.update("""
+                DELETE FROM resume_chunks c
+                WHERE c.created_at <= ?
+                  AND NOT EXISTS (SELECT 1 FROM resumes r WHERE r.id = c.resume_id)
+                """, Timestamp.from(createdBefore));
+    }
+
     /** 청크(Worker 소유) → 분석 상태 → 이력서 행 순 물리 삭제. 이미 지워진 id는 0행으로 멱등. */
     public PurgeCounts deleteByResumeIds(List<Long> resumeIds) {
         if (resumeIds.isEmpty()) {

@@ -70,6 +70,11 @@ public class ResumeRepositoryService {
         return resumePurger.lockSoftDeletedById(resumeId);
     }
 
+    /** 고아 청크 정리 — 이력서 행이 없고 생성 후 기준 시각을 지난 청크 삭제, 삭제 건수 반환(PRD deletion.md 기능 5). */
+    public int purgeOrphanChunksCreatedBefore(Instant createdBefore) {
+        return resumePurger.deleteOrphanChunksCreatedBefore(createdBefore);
+    }
+
     /**
      * 존재(404) → 소유(403). 타인 이력서에 404가 아닌 403을 주는 것은 resume PRD §4의 계약이다.
      * soft delete된 이력서는 {@code @SQLRestriction}으로 조회되지 않아 404로 수렴한다.
