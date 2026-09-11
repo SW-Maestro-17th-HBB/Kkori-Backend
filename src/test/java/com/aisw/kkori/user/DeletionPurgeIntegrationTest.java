@@ -20,6 +20,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -69,6 +70,9 @@ class DeletionPurgeIntegrationTest extends AuthIntegrationTestSupport {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private ApplicationContext applicationContext;
 
     // ── 가짜 단계 ──
 
@@ -550,8 +554,9 @@ class DeletionPurgeIntegrationTest extends AuthIntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("스케줄러는 account.purge-interval을 fixedDelay로 쓴다 (배치 빈은 테스트 컨텍스트에서 미등록)")
+    @DisplayName("스케줄러는 account.purge-interval을 fixedDelay로 쓴다 (배치 빈은 테스트 컨텍스트에서 미등록) — 테스트 컨텍스트에는 스케줄러 빈이 등록되지 않는다")
     void schedulerIsWiredToConfiguredInterval() throws Exception {
+        assertThat(applicationContext.getBeanNamesForType(DeletionPurgeScheduler.class)).isEmpty();
         Scheduled scheduled = DeletionPurgeScheduler.class.getMethod("run").getAnnotation(Scheduled.class);
 
         assertThat(scheduled).isNotNull();

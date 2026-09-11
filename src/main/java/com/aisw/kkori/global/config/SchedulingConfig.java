@@ -13,7 +13,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  *
  * <p>배치 빈들은 {@code app.batch.enabled}(기본 true)로 등록을 끌 수 있다 — 통합 테스트가
  * 과거 시각을 시딩한 탈퇴 건을 백그라운드 회차가 파기해 버리지 않도록 테스트 컨텍스트에서 끈다
- * ({@code TestcontainersConfiguration}). 배치 로직은 스케줄 메서드를 직접 호출해 검증한다.
+ * (테스트 클래스패스의 {@code EnvironmentPostProcessor}가 빈 조건 평가 전에 주입). 배치 로직은
+ * 스케줄 메서드를 직접 호출해 검증한다.
  */
 @Configuration
 @EnableScheduling

@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -45,6 +46,9 @@ class RefreshTokenCleanupIntegrationTest extends AuthIntegrationTestSupport {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private ApplicationContext applicationContext;
 
     private RefreshTokenCleanupService serviceAt(Instant now, Duration retention) {
         JwtProperties props = new JwtProperties(jwtProperties.secret(), jwtProperties.signupSecret(),
@@ -140,8 +144,9 @@ class RefreshTokenCleanupIntegrationTest extends AuthIntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("스케줄러는 jwt.refresh-token-cleanup-interval을 fixedDelay로 쓴다")
+    @DisplayName("스케줄러는 jwt.refresh-token-cleanup-interval을 fixedDelay로 쓴다 — 테스트 컨텍스트에는 스케줄러 빈이 등록되지 않는다")
     void schedulerIsWiredToConfiguredInterval() throws Exception {
+        assertThat(applicationContext.getBeanNamesForType(RefreshTokenCleanupScheduler.class)).isEmpty();
         Scheduled scheduled = RefreshTokenCleanupScheduler.class.getMethod("run").getAnnotation(Scheduled.class);
 
         assertThat(scheduled).isNotNull();

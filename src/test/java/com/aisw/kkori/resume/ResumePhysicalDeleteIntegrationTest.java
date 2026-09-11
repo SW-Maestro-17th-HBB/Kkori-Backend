@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -70,6 +71,9 @@ class ResumePhysicalDeleteIntegrationTest {
     @Autowired ResumeRepositoryService resumeRepositoryService;
     @Autowired ResumeUploadService resumeUploadService;
     @Autowired WebhookWithdrawalExecutor webhookWithdrawalExecutor;
+
+    @Autowired
+    private ApplicationContext applicationContext;
     @Autowired JdbcTemplate jdbcTemplate;
 
     /** 업로드 경로의 잠금 전 존재 확인 직후에 배치를 끼워 넣는 경합 재현용 — 그 외 호출은 실물이다. */
@@ -320,8 +324,9 @@ class ResumePhysicalDeleteIntegrationTest {
     }
 
     @Test
-    @DisplayName("스케줄러는 resume.physical-delete-interval을 fixedDelay로 쓴다")
+    @DisplayName("스케줄러는 resume.physical-delete-interval을 fixedDelay로 쓴다 — 테스트 컨텍스트에는 스케줄러 빈이 등록되지 않는다")
     void schedulerIsWiredToConfiguredInterval() throws Exception {
+        assertThat(applicationContext.getBeanNamesForType(ResumePhysicalDeleteScheduler.class)).isEmpty();
         Scheduled scheduled = ResumePhysicalDeleteScheduler.class.getMethod("run").getAnnotation(Scheduled.class);
 
         assertThat(scheduled).isNotNull();

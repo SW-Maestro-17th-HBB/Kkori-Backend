@@ -45,14 +45,6 @@ public class TestcontainersConfiguration {
             registry.add("app.s3.bucket", () -> TEST_BUCKET);
         };
     }
-
-    /**
-     * 배치 빈(파기·이력서 물리 삭제·RT 청소) 등록을 끈다 — 통합 테스트는 유예 초과 시나리오를 위해
-     * 과거 시각의 탈퇴 건을 시딩하는데, 백그라운드 회차가 그 건을 실제로 파기하면 검증이 깨진다.
-     * 배치 로직은 각 테스트가 스케줄 메서드를 직접 호출해 검증한다(스위퍼 테스트 관례).
-     */
-    @Bean
-    DynamicPropertyRegistrar batchDisabled() {
-        return registry -> registry.add("app.batch.enabled", () -> "false");
-    }
+    // 배치 빈 비활성화(app.batch.enabled=false)는 여기가 아니라 BatchDisablingEnvironmentPostProcessor가 담당한다 —
+    // DynamicPropertyRegistrar는 빈 정의 등록 뒤에 실행되어 @ConditionalOnProperty 평가에 반영되지 않는다.
 }
