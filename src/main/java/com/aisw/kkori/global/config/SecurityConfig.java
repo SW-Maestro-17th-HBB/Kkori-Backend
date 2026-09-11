@@ -26,7 +26,8 @@ import java.util.List;
  *
  * <p>인증 불필요 경로는 소셜 로그인 진입 3종(kakao·signup·reissue), 동의 항목·버전 메타데이터
  * (GET /api/v1/consents — 가입 전 동의 화면에서 호출), 카카오 연결 해제 웹훅(어드민 키로 자체 검증),
- * Swagger 문서, 관리 포트(8081)의 actuator health·prometheus뿐이며, 나머지는 전부 Bearer AT가 필요하다.
+ * Swagger 문서, ALB 헬스체크(GET /api/v1/health), 관리 포트(8081)의 actuator health·prometheus뿐이며,
+ * 나머지는 전부 Bearer AT가 필요하다.
  * logout은 AT 유저의 RT 소유 확인이 필요하므로 permitAll이 아니다(PRD).
  */
 @Configuration
@@ -56,6 +57,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/webhook/livekit").permitAll()
                         .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**")
                         .permitAll()
+                        // ALB 헬스체크 — 앱 포트(8080) 응답 여부만 보는 엔드포인트, 정확 경로만 공개
+                        .requestMatchers(HttpMethod.GET, "/api/v1/health").permitAll()
                         // actuator(관리 포트 8081) — health는 ALB 헬스체크, prometheus는 메트릭 수집.
                         // 관리 포트는 보안 그룹으로만 열리므로 인증 없이 허용. 나머지 엔드포인트는 비노출(application.yaml)
                         .requestMatchers(EndpointRequest.to("health", "prometheus")).permitAll()
