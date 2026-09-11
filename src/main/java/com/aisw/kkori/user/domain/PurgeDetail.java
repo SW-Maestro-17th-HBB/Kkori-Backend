@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 import java.time.Instant;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -36,7 +37,9 @@ public record PurgeDetail(
     public static final String STEP_IDENTIFIERS = "identifiers";
 
     public PurgeDetail {
-        steps = steps == null ? Map.of() : Map.copyOf(orderedCopy(steps));
+        // 불변 사본 — 메모리·직렬화 JSON은 삽입 순서를 유지하되(Map.copyOf는 순서를 잃는다),
+        // PostgreSQL jsonb는 키 순서를 보존하지 않으므로 읽어 온 기록의 단계 순서에 의존하지 말 것
+        steps = steps == null ? Map.of() : Collections.unmodifiableMap(orderedCopy(steps));
     }
 
     /** 아직 시도되지 않은 건의 초기 기록. */

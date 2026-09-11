@@ -4,6 +4,7 @@ import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.user.domain.DeletionLog;
 import com.aisw.kkori.user.domain.DeletionStatus;
+import com.aisw.kkori.user.domain.PurgeDetail;
 import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.domain.UserConsent;
 import com.aisw.kkori.user.repository.DeletionLogRepository;
@@ -154,5 +155,42 @@ public class UserRepositoryService {
 
     public boolean cancelPendingPurge(Long id, Instant now, Instant graceCutoff) {
         return deletionLogRepository.cancelPendingPurge(id, now, graceCutoff) == 1;
+    }
+
+    // ── 파기 배치 (PRD deletion.md 기능 2) — 선점 이후의 모든 deletion_log 쓰기는 claimedAt 펜싱 ──
+
+    /** 파기 후보 — 유예 경과 PENDING_PURGE · FAILED · stale PURGING. 요청 시각 오름차순. */
+    public List<DeletionLog> findPurgeCandidates(Instant graceCutoff, Instant staleCutoff) {
+        return deletionLogRepository.findPurgeCandidates(graceCutoff, staleCutoff);
+    }
+
+    /** 조건부 선점 — 선점 여부를 반환한다. {@code claimedAt}이 이 건의 펜싱 토큰이 된다. */
+    public boolean claimForPurge(Long id, Instant claimedAt, Instant graceCutoff, Instant staleCutoff) {
+        return deletionLogRepository.claimForPurge(id, claimedAt, graceCutoff, staleCutoff) == 1;
+    }
+
+    /** 현재 파기 기록 — 선점 직후(같은 트랜잭션, 행 잠금 보유)에 읽어 시도 횟수를 잇는다. */
+    public Optional<PurgeDetail> findPurgeDetail(Long id) {
+        return deletionLogRepository.findById(id).map(DeletionLog::getPurgeDetail);
+    }
+
+    /** 중간 기록 — 펜스 불일치(재선점됨)면 false. */
+    public boolean recordPurgeDetail(Long id, Instant claimedAt, PurgeDetail detail) {
+        return deletionLogRepository.recordPurgeDetail(id, claimedAt, detail) == 1;
+    }
+
+    /** unlink 완료·생략 후 스냅샷 제거 — 펜스 불일치면 false. */
+    public boolean clearProviderSnapshot(Long id, Instant claimedAt) {
+        return deletionLogRepository.clearProviderSnapshot(id, claimedAt) == 1;
+    }
+
+    /** PURGING → FAILED — 펜스 불일치면 false. */
+    public boolean failPurge(Long id, Instant claimedAt, Instant now, PurgeDetail detail) {
+        return deletionLogRepository.failPurge(id, claimedAt, now, detail) == 1;
+    }
+
+    /** PURGING → PURGED — 펜스 불일치면 false. */
+    public boolean completePurge(Long id, Instant claimedAt, Instant now, PurgeDetail detail) {
+        return deletionLogRepository.completePurge(id, claimedAt, now, detail) == 1;
     }
 }
