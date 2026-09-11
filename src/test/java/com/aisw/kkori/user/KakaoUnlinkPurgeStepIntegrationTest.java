@@ -145,9 +145,9 @@ class KakaoUnlinkPurgeStepIntegrationTest extends AuthIntegrationTestSupport {
 
     @Test
     @DisplayName("unlink 실패 시 FAILED·스냅샷 유지·식별정보 미마스킹이고, 다음 회차에 다시 호출해 완료한다")
-    void failureKeepsSnapshotAndRetriesNextCycle() {
+    void failureKeepsSnapshotAndRetriesNextCycle(CapturedOutput output) {
         when(unlinkClient.unlink("kakao-uk-5"))
-                .thenThrow(new KakaoUnlinkException("카카오 unlink 통신 실패 (ResourceAccessException)", null))
+                .thenThrow(new KakaoUnlinkException("카카오 unlink 통신 실패 (ResourceAccessException)"))
                 .thenReturn(KakaoUnlinkClient.Outcome.UNLINKED);
         long userId = expiredWithdrawnUser("kakao-uk-5");
 
@@ -157,7 +157,8 @@ class KakaoUnlinkPurgeStepIntegrationTest extends AuthIntegrationTestSupport {
         assertThat(failed.getStatus()).isEqualTo(DeletionStatus.FAILED);
         assertThat(failed.getProviderId()).isEqualTo("kakao-uk-5");
         assertThat(unlinkStatus(userId)).isEqualTo(PurgeDetail.StepResult.FAILED);
-        assertThat(failed.getPurgeDetail().lastError()).startsWith("KakaoUnlinkException");
+        assertThat(failed.getPurgeDetail().lastError()).isEqualTo("KakaoUnlinkException: 카카오 unlink 통신 실패 (ResourceAccessException)");
+        assertThat(output.getOut()).doesNotContain("Caused by").doesNotContain("kakao-uk-5");
         assertThat(userRepository.findById(userId).orElseThrow().getProviderId()).isEqualTo("kakao-uk-5");
 
         purgeService.runCycle();

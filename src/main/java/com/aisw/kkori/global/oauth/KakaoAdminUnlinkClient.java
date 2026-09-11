@@ -51,10 +51,11 @@ public class KakaoAdminUnlinkClient implements KakaoUnlinkClient {
             if (e.getStatusCode().value() == 400 && errorCodeOf(e) == NOT_LINKED_USER) {
                 return Outcome.ALREADY_UNLINKED;
             }
+            // 원인으로 보존하지 않는다 — 원본 예외 메시지에는 응답 본문이 실린다(회원번호 포함 가능)
             throw new KakaoUnlinkException("카카오 unlink 응답 오류 (http=" + e.getStatusCode().value()
-                    + ", code=" + errorCodeOf(e) + ")", e);
+                    + ", code=" + errorCodeOf(e) + ")");
         } catch (RestClientException e) {
-            throw new KakaoUnlinkException("카카오 unlink 통신 실패 (" + e.getClass().getSimpleName() + ")", e);
+            throw new KakaoUnlinkException("카카오 unlink 통신 실패 (" + e.getClass().getSimpleName() + ")");
         }
     }
 

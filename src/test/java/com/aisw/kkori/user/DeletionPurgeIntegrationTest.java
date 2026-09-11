@@ -321,7 +321,9 @@ class DeletionPurgeIntegrationTest extends AuthIntegrationTestSupport {
         assertThat(log.getProviderId()).isEqualTo("kakao-pg-6");
         PurgeDetail detail = log.getPurgeDetail();
         assertThat(detail.attempts()).isEqualTo(1);
-        assertThat(detail.lastError()).isEqualTo("IllegalStateException: report purge exploded");
+        // 임의 예외 메시지는 기록·로그에 싣지 않는다(공통: 로그·개인정보) — 클래스명만
+        assertThat(detail.lastError()).isEqualTo("IllegalStateException");
+        assertThat(output.getOut()).doesNotContain("report purge exploded");
         assertThat(detail.steps().get("resumes").status()).isEqualTo(PurgeDetail.StepResult.DONE);
         assertThat(detail.steps().get("reports").status()).isEqualTo(PurgeDetail.StepResult.FAILED);
         assertThat(detail.steps()).doesNotContainKey("refreshTokens");
@@ -336,6 +338,53 @@ class DeletionPurgeIntegrationTest extends AuthIntegrationTestSupport {
 
         assertThat(logOf(userId).getPurgeDetail().attempts()).isEqualTo(3);
         assertThat(output.getOut()).contains("ERROR").contains("파기 반복 실패 — 운영 개입 필요");
+    }
+
+    @Test
+    @DisplayName("재시도는 이전 시도에서 완료된 단계를 실행하지 않고 그 건수 기록을 보존한다")
+    void retrySkipsCompletedStepsAndKeepsTheirRecords() {
+        long userId = graceExpiredUser("kakao-pg-6b");
+        RecordingStep resumes = new RecordingStep("resumes", PurgeStep.ORDER_RESUMES,
+                target -> new PurgeDetail.StepResult(PurgeDetail.StepResult.DONE, 3, 41, 3, null, null, null));
+        AtomicBoolean reportsHealthy = new AtomicBoolean(false);
+        RecordingStep reports = new RecordingStep("reports", PurgeStep.ORDER_REPORTS, target -> {
+            if (!reportsHealthy.get()) {
+                throw new IllegalStateException("reports down");
+            }
+            return new PurgeDetail.StepResult(PurgeDetail.StepResult.DONE, 2, null, null, null, null, null);
+        });
+
+        serviceAt(NOW, resumes, reports).runCycle();
+        assertThat(logOf(userId).getStatus()).isEqualTo(DeletionStatus.FAILED);
+
+        reportsHealthy.set(true);
+        serviceAt(NOW.plus(Duration.ofMinutes(10)), resumes, reports).runCycle();
+
+        DeletionLog log = logOf(userId);
+        assertThat(log.getStatus()).isEqualTo(DeletionStatus.PURGED);
+        assertThat(resumes.executions.get()).isEqualTo(1); // 완료 단계는 재실행되지 않는다
+        assertThat(reports.executions.get()).isEqualTo(2); // FAILED 단계만 재실행
+        PurgeDetail detail = log.getPurgeDetail();
+        assertThat(detail.steps().get("resumes").rows()).isEqualTo(3); // 이전 실적 보존(0건으로 덮이지 않음)
+        assertThat(detail.steps().get("resumes").chunks()).isEqualTo(41);
+        assertThat(detail.steps().get("reports").rows()).isEqualTo(2);
+        assertThat(detail.lastError()).isEqualTo("IllegalStateException");
+    }
+
+    @Test
+    @DisplayName("예외 요약은 임의 예외의 메시지(컬럼 값 등 개인정보 가능)를 싣지 않고 클래스명·원인 클래스명만 남긴다")
+    void errorSummaryOmitsArbitraryExceptionMessages(CapturedOutput output) {
+        long userId = graceExpiredUser("kakao-pg-6c");
+        RecordingStep failing = new RecordingStep("reports", PurgeStep.ORDER_REPORTS, target -> {
+            throw new org.springframework.dao.DataIntegrityViolationException(
+                    "Key (provider_id)=(kakao-pg-6c-secret) already exists", new RuntimeException("inner detail"));
+        });
+
+        serviceAt(NOW, failing).runCycle();
+
+        PurgeDetail detail = logOf(userId).getPurgeDetail();
+        assertThat(detail.lastError()).isEqualTo("DataIntegrityViolationException <- RuntimeException");
+        assertThat(output.getOut()).doesNotContain("kakao-pg-6c-secret").doesNotContain("inner detail");
     }
 
     @Test

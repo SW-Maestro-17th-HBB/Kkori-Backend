@@ -1,5 +1,6 @@
 package com.aisw.kkori.user.service;
 
+import com.aisw.kkori.global.oauth.KakaoUnlinkException;
 import com.aisw.kkori.user.config.AccountPolicyProperties;
 import com.aisw.kkori.user.domain.DeletionLog;
 import com.aisw.kkori.user.domain.PurgeDetail;
@@ -8,6 +9,7 @@ import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
+import software.amazon.awssdk.awscore.exception.AwsServiceException;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -103,6 +105,13 @@ public class DeletionPurgeService {
                 target.deletionLogId(), target.userId(), detail.attempts());
 
         for (PurgeStep step : steps) {
+            PurgeDetail.StepResult previous = detail.steps().get(step.key());
+            if (previous != null && !PurgeDetail.StepResult.FAILED.equals(previous.status())) {
+                // 이전 시도에서 끝난 단계 — 재실행하면 멱등 결과(0건)가 기록을 덮어 audit을 훼손한다
+                log.info("이전 시도 완료 단계 건너뜀 — 기록 보존 (deletionLogId={}, step={}, status={})",
+                        target.deletionLogId(), step.key(), previous.status());
+                continue;
+            }
             try {
                 detail = detail.withStep(step.key(), step.execute(target));
                 record(target, detail);
@@ -111,14 +120,14 @@ public class DeletionPurgeService {
                         target.deletionLogId(), step.key());
                 return;
             } catch (RuntimeException e) {
-                fail(target, detail.withStep(step.key(), PurgeDetail.StepResult.failed()).withError(summarize(e)), e);
+                fail(target, detail.withStep(step.key(), PurgeDetail.StepResult.failed()).withError(summarize(e)));
                 return;
             }
         }
         try {
             complete(target, detail);
         } catch (RuntimeException e) {
-            fail(target, detail.withError(summarize(e)), e);
+            fail(target, detail.withError(summarize(e)));
         }
     }
 
@@ -173,7 +182,11 @@ public class DeletionPurgeService {
         });
     }
 
-    private void fail(PurgeTarget target, PurgeDetail detail, RuntimeException cause) {
+    /**
+     * 실패 전환 + 로그. 예외 객체(스택 트레이스·원인 메시지)는 기록하지 않는다 — HTTP 예외 메시지에는 응답 본문이,
+     * DB 제약 위반 메시지에는 컬럼 값이 실릴 수 있다(공통: 로그·개인정보). 진단 재료는 {@link #summarize}의 요약뿐이다.
+     */
+    private void fail(PurgeTarget target, PurgeDetail detail) {
         Boolean marked = transactionTemplate.execute(status -> userRepositoryService.failPurge(
                 target.deletionLogId(), target.claimedAt(), clock.instant().truncatedTo(ChronoUnit.MICROS), detail));
         if (!Boolean.TRUE.equals(marked)) {
@@ -182,18 +195,30 @@ public class DeletionPurgeService {
         }
         if (detail.attempts() >= ERROR_LOG_ATTEMPT_THRESHOLD) {
             log.error("파기 반복 실패 — 운영 개입 필요 (deletionLogId={}, userId={}, attempts={}, lastError={})",
-                    target.deletionLogId(), target.userId(), detail.attempts(), detail.lastError(), cause);
+                    target.deletionLogId(), target.userId(), detail.attempts(), detail.lastError());
         } else {
             log.warn("파기 실패 — 다음 회차 재시도 (deletionLogId={}, userId={}, attempts={}, lastError={})",
-                    target.deletionLogId(), target.userId(), detail.attempts(), detail.lastError(), cause);
+                    target.deletionLogId(), target.userId(), detail.attempts(), detail.lastError());
         }
     }
 
-    /** 예외 요약 — 클래스명 + 첫 줄 메시지, 길이 제한. 외부 응답 본문이 통째로 실리지 않게 한다(공통: 로그·개인정보). */
+    /**
+     * 예외 요약 — 클래스명 + 큐레이션된 정보만. 임의 예외의 메시지는 싣지 않는다(개인정보 포함 가능):
+     * 자체 예외({@link KakaoUnlinkException})는 고정 형식 메시지, AWS 예외는 오류 코드·HTTP 상태, 그 외는 원인 클래스명.
+     */
     static String summarize(Throwable e) {
-        String message = e.getMessage();
-        String summary = message == null ? e.getClass().getSimpleName()
-                : e.getClass().getSimpleName() + ": " + message.lines().findFirst().orElse("");
+        String name = e.getClass().getSimpleName();
+        if (e instanceof KakaoUnlinkException) {
+            return truncate(name + ": " + e.getMessage());
+        }
+        if (e instanceof AwsServiceException aws && aws.awsErrorDetails() != null) {
+            return truncate(name + ": " + aws.awsErrorDetails().errorCode() + " (http " + aws.statusCode() + ")");
+        }
+        Throwable cause = e.getCause();
+        return cause == null || cause == e ? name : name + " <- " + cause.getClass().getSimpleName();
+    }
+
+    private static String truncate(String summary) {
         return summary.length() <= MAX_ERROR_SUMMARY_LENGTH
                 ? summary : summary.substring(0, MAX_ERROR_SUMMARY_LENGTH) + "...";
     }

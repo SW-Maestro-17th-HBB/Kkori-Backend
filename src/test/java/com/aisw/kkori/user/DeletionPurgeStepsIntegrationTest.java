@@ -333,7 +333,7 @@ class DeletionPurgeStepsIntegrationTest extends AuthIntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("중간 단계(리포트) 실패 후 재시도하면 앞 단계는 0건으로 지나가고 나머지를 완료해 PURGED가 된다")
+    @DisplayName("중간 단계(리포트) 실패 후 재시도하면 완료된 앞 단계는 실행하지 않고(기록 보존) 나머지를 완료해 PURGED가 된다")
     void retryAfterMidwayFailureCompletesRemainingSteps() {
         long userId = expiredWithdrawnUser("kakao-ps-7");
         resumeWithObject(userId, "e1", false, 1);
@@ -357,7 +357,8 @@ class DeletionPurgeStepsIntegrationTest extends AuthIntegrationTestSupport {
 
         DeletionLog purged = logOf(userId);
         assertThat(purged.getStatus()).isEqualTo(DeletionStatus.PURGED);
-        assertThat(purged.getPurgeDetail().steps().get(PurgeDetail.STEP_RESUMES).rows()).isZero();
+        // 완료 단계는 재실행되지 않고 이전 실적(rows=1)이 보존된다
+        assertThat(purged.getPurgeDetail().steps().get(PurgeDetail.STEP_RESUMES).rows()).isEqualTo(1);
         assertThat(purged.getPurgeDetail().steps().get(PurgeDetail.STEP_REPORTS).rows()).isEqualTo(1);
         assertThat(purged.getPurgeDetail().steps().get(PurgeDetail.STEP_REFRESH_TOKENS).rows()).isEqualTo(1);
         assertThat(count("SELECT count(*) FROM reports WHERE user_id = ?", userId)).isZero();

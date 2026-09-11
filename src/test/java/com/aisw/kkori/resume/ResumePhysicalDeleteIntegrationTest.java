@@ -11,6 +11,7 @@ import com.aisw.kkori.resume.repository.ResumeRepository;
 import com.aisw.kkori.resume.repositoryservice.ResumeRepositoryService;
 import com.aisw.kkori.resume.service.ResumePhysicalDeleteScheduler;
 import com.aisw.kkori.resume.service.ResumePhysicalDeleteService;
+import com.aisw.kkori.resume.service.ResumeUploadService;
 import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.repository.UserRepository;
 import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
@@ -25,10 +26,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.ByteArrayInputStream;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
@@ -36,6 +42,8 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 
 /**
  * 개별 이력서 물리 삭제 배치 (PRD {@code docs/requirements/user/deletion.md} 기능 5 검증 기준).
@@ -56,8 +64,11 @@ class ResumePhysicalDeleteIntegrationTest {
     @Autowired UserRepository userRepository;
     @Autowired ResumeRepositoryService resumeRepositoryService;
     @Autowired UserRepositoryService userRepositoryService;
-    @Autowired S3Template s3Template;
+    @Autowired ResumeUploadService resumeUploadService;
     @Autowired JdbcTemplate jdbcTemplate;
+
+    /** 업로드 경로의 잠금 전 존재 확인 직후에 배치를 끼워 넣는 경합 재현용 — 그 외 호출은 실물이다. */
+    @MockitoSpyBean S3Template s3Template;
     @Autowired TransactionTemplate transactionTemplate;
 
     private ResumeSeeder seeder;
@@ -238,6 +249,38 @@ class ResumePhysicalDeleteIntegrationTest {
         assertThat(s3Template.objectExists(BUCKET, keyOf(other, "h7"))).isTrue();
         assertThat(resumeRepositoryService.existsActiveDuplicate(userId, "h7")).isFalse();
         assertThat(s3Template.objectExists(BUCKET, keyOf(userId, "h7"))).isFalse();
+    }
+
+    @Test
+    @DisplayName("배치 실행 중(활성 참조 확인 직후) 같은 파일이 재업로드되어도 새 이력서의 객체가 남는다 — 잠금 내 존재 재확인·재저장")
+    void reuploadDuringPhysicalDeleteKeepsNewResumeObject() throws Exception {
+        long userId = user("kakao-pd-8");
+        byte[] pdf = ResumePdfFixtures.pdfWithPages(1);
+        String hash = sha256Hex(pdf);
+        String key = keyOf(userId, hash);
+        long old = resume(userId, hash, AnalysisStatus.EMBEDDED);
+        softDeletedAt(old, NOW.minus(DELAY));
+        ResumePhysicalDeleteService batch = serviceAt(NOW);
+        AtomicBoolean interleaved = new AtomicBoolean();
+        // 업로드의 잠금 밖 존재 확인이 "있음"을 본 직후 배치가 객체를 지우는 최악의 순서를 재현한다
+        doAnswer(invocation -> {
+            boolean exists = (boolean) invocation.callRealMethod();
+            if (interleaved.compareAndSet(false, true)) {
+                batch.runCycle();
+            }
+            return exists;
+        }).when(s3Template).objectExists(eq(BUCKET), eq(key));
+
+        resumeUploadService.upload(userId, new MockMultipartFile("file", "resume.pdf", "application/pdf", pdf), "재업로드");
+
+        assertThat(interleaved).isTrue();
+        assertThat(rowExists(old)).isFalse();
+        assertThat(resumeRepositoryService.existsActiveDuplicate(userId, hash)).isTrue();
+        assertThat(s3Template.objectExists(BUCKET, key)).isTrue();
+    }
+
+    private static String sha256Hex(byte[] bytes) throws Exception {
+        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     }
 
     @Test
