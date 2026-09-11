@@ -6,13 +6,17 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
 /**
- * JWT 발급 설정 ({@code jwt.*}).
+ * JWT 발급·Refresh Token 청소 설정 ({@code jwt.*}).
  *
  * <p>{@code secret}은 Access/Refresh Token이 공유하고(token_type claim으로 교차 사용 차단),
  * {@code signupSecret}은 signup token 전용 별도 키다. HS256 특성상 두 키 모두
  * 32바이트(256비트) 이상이어야 한다.
  *
- * <p>잘못된 설정(짧은 키, 0 이하 TTL)은 토큰 발급 시점이 아니라 부팅 시점에 실패시킨다(fail-fast).
+ * <p>{@code refreshTokenCleanupInterval}·{@code revokedRefreshTokenRetention}은 RT 청소 배치
+ * (PRD deletion.md 기능 6)의 회차 간격과 폐기 RT 보존 기간이다 — 만료 RT는 즉시, 폐기 RT는
+ * 보존 기간(재사용 감지 창) 경과 후 삭제한다.
+ *
+ * <p>잘못된 설정(짧은 키, 0 이하 기간)은 토큰 발급 시점이 아니라 부팅 시점에 실패시킨다(fail-fast).
  */
 @ConfigurationProperties(prefix = "jwt")
 public record JwtProperties(
@@ -20,7 +24,9 @@ public record JwtProperties(
         String signupSecret,
         Duration accessTokenTtl,
         Duration refreshTokenTtl,
-        Duration signupTokenTtl
+        Duration signupTokenTtl,
+        Duration refreshTokenCleanupInterval,
+        Duration revokedRefreshTokenRetention
 ) {
 
     private static final int MIN_KEY_BYTES = 32;
@@ -31,6 +37,8 @@ public record JwtProperties(
         requirePositive(accessTokenTtl, "jwt.access-token-ttl");
         requirePositive(refreshTokenTtl, "jwt.refresh-token-ttl");
         requirePositive(signupTokenTtl, "jwt.signup-token-ttl");
+        requirePositive(refreshTokenCleanupInterval, "jwt.refresh-token-cleanup-interval");
+        requirePositive(revokedRefreshTokenRetention, "jwt.revoked-refresh-token-retention");
     }
 
     private static void requireKey(String key, String name) {

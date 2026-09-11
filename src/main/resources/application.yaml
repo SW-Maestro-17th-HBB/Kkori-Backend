@@ -14,6 +14,13 @@ spring:
     client:
       connect-timeout: 3s
       read-timeout: 5s
+  task:
+    scheduling:
+      # 주기 작업 5종(SSE keepalive · 세션 스위퍼 · 파기 배치 · 이력서 물리 삭제 · RT 청소)이 한 스레드를
+      # 나눠 쓰지 않게 작업 수만큼 둔다 — 기본값 1이면 파기 회차(S3·카카오 왕복) 동안 스위퍼가 밀린다
+      # (docs/requirements/user/deletion.md 공통: 배치 실행·설정)
+      pool:
+        size: 5
 
 consent:
   versions:
@@ -25,4 +32,5 @@ consent:
 kakao:
   token-uri: https://kauth.kakao.com/oauth/token
   user-info-uri: https://kapi.kakao.com/v2/user/me
+  unlink-uri: https://kapi.kakao.com/v1/user/unlink   # 어드민 키 방식 연결 끊기 (파기 배치)
 

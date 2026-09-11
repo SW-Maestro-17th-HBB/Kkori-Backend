@@ -508,7 +508,7 @@ consent.md가 "영구 삭제 스토리에서 법무·개인정보 담당 확인�
 | `kakao.unlink-uri` | (공통 파일, 환경변수 아님) | `https://kapi.kakao.com/v1/user/unlink` | unlink 엔드포인트 (기능 4) |
 
 - 기존 설정 재사용: `account.withdrawal-grace-period`(유예 판정), `kakao.admin-key`(unlink), `app.s3.bucket`(이력서 prefix 삭제), `log-masking.hmac-key`(로그 가명화).
-- 테스트에서는 배치 주기를 길게 두고(자동 실행 억제) 스케줄 메서드를 직접 호출해 회차를 검증한다(스위퍼 테스트 관례).
+- 테스트에서는 배치 빈을 등록하지 않고(`app.batch.enabled=false` — 테스트 컨텍스트 전용 스위치, 기본 true) 스케줄 메서드를 직접 호출해 회차를 검증한다(스위퍼 테스트 관례). 통합 테스트가 유예 초과 시나리오용으로 시딩하는 과거 시각의 탈퇴 건을 백그라운드 회차가 실제로 파기하지 않게 하기 위함이다.
 
 ---
 
