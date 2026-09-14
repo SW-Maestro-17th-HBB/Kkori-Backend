@@ -30,6 +30,22 @@ services:
       timeout: 3s
       retries: 10
 
+  # Redis 서버 메트릭을 Prometheus 형식으로 노출 (HBB1-341). 평소에는 안 뜨고 --profile monitoring 때만 기동.
+  # 스크레이프 주소: compose 안에서는 redis-exporter:9121, 호스트에서는 localhost:9121
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.91.1
+    container_name: kkori-redis-exporter
+    profiles: [monitoring]
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      # 스트림 길이·컨슈머 그룹 pending/lag은 여기 적은 키만 수집 — Spring이 발행하는 3종(*RequestedMessage.STREAM_KEY)
+      REDIS_EXPORTER_CHECK_STREAMS: resume.parse.requested,report.generation.requested,report.audio.analysis.requested
+    ports:
+      - "9121:9121"
+
   minio:
     image: minio/minio:latest
     container_name: kkori-minio
