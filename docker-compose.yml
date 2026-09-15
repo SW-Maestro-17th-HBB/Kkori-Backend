@@ -30,8 +30,26 @@ services:
       timeout: 3s
       retries: 10
 
+  # Redis 서버 메트릭을 Prometheus 형식으로 노출 (HBB1-341). 평소에는 안 뜨고 --profile monitoring 때만 기동.
+  # 스크레이프 주소: compose 안에서는 redis-exporter:9121, 호스트에서는 localhost:9121
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.91.1
+    container_name: kkori-redis-exporter
+    profiles: [monitoring]
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      # 스트림 길이·컨슈머 그룹 pending/lag은 여기 적은 키만 수집 — Spring이 발행하는 3종(*RequestedMessage.STREAM_KEY)
+      REDIS_EXPORTER_CHECK_STREAMS: resume.parse.requested,report.generation.requested,report.audio.analysis.requested
+    ports:
+      - "9121:9121"
+
+  # Docker Hub의 minio/* 저장소가 2026-09에 삭제돼(커뮤니티 에디션 종료) MinIO 자체 레지스트리 quay.io를 쓴다.
+  # 새 이미지는 더 안 올라오므로 마지막 정식 릴리스로 고정 — TestcontainersConfiguration과 동일 태그
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: kkori-minio
     ports:
       - "9000:9000"   # S3 API
@@ -50,7 +68,7 @@ services:
 
   # 최초 기동 시 기본 버킷 생성 후 종료
   minio-init:
-    image: minio/mc
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
     container_name: kkori-minio-init
     depends_on:
       minio:
