@@ -1,0 +1,2 @@
+# 테스트 전용 — 배치 스케줄러 빈 비활성화 (BatchDisablingEnvironmentPostProcessor 참조)
+org.springframework.boot.env.EnvironmentPostProcessor=com.aisw.kkori.BatchDisablingEnvironmentPostProcessor

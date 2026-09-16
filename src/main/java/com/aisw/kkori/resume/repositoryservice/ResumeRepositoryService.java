@@ -32,6 +32,48 @@ public class ResumeRepositoryService {
 
     private final ResumeRepository resumeRepository;
     private final ResumeAnalysisStatusRepository statusRepository;
+    private final JdbcResumePurger resumePurger;
+
+    // ── 파기 (PRD deletion.md 기능 3·5 — 호출자의 user 잠금 트랜잭션 안에서) ──
+
+    /** 유저의 모든 이력서(soft delete 포함)의 S3 원본 참조 — 파기 배치가 포인터 삭제 전에 객체를 지우는 재료. */
+    public List<JdbcResumePurger.ObjectRef> findPurgeTargetsByUserId(long userId) {
+        return resumePurger.findObjectRefsByUserId(userId);
+    }
+
+    /** 청크(Worker 소유) → 분석 상태 → 이력서 행 물리 삭제. 멱등. */
+    public JdbcResumePurger.PurgeCounts purgeByIds(List<Long> resumeIds) {
+        return resumePurger.deleteByResumeIds(resumeIds);
+    }
+
+    /** 개별 삭제 이력서의 물리 삭제 후보 — 지연 경과 + (분석 terminal 또는 보류 상한 경과). */
+    public List<JdbcResumePurger.Candidate> findPhysicalDeleteCandidates(Instant delayCutoff, Instant ceilingCutoff) {
+        return resumePurger.findPhysicalDeleteCandidates(delayCutoff, ceilingCutoff);
+    }
+
+    /** 같은 사용자·같은 파일 해시의 활성 이력서 존재 여부 — 해시 기반 S3 키를 공유하므로 물리 삭제 전 참조 확인. */
+    public boolean existsActiveDuplicate(Long userId, String fileHash) {
+        return resumeRepository.findFirstByUserIdAndFileHash(userId, fileHash).isPresent();
+    }
+
+    /**
+     * 업로드와 물리 삭제 배치의 직렬화 지점 — 같은 사용자·같은 해시의 soft delete 행을 잠근다(없으면 즉시 반환).
+     * 배치가 그 행을 잠근 채 S3 객체를 지우는 동안 업로드가 "객체 있음"으로 판단하는 것을 막는다.
+     * 호출자의 트랜잭션 안에서만 호출한다.
+     */
+    public void lockSoftDeletedDuplicates(Long userId, String fileHash) {
+        resumePurger.lockSoftDeletedByUserIdAndFileHash(userId, fileHash);
+    }
+
+    /** 물리 삭제 후보 행 잠금 — 그 사이 사라졌으면 false. 호출자의 트랜잭션 안에서만 호출한다. */
+    public boolean lockPhysicalDeleteCandidate(Long resumeId) {
+        return resumePurger.lockSoftDeletedById(resumeId);
+    }
+
+    /** 고아 청크 정리 — 이력서 행이 없고 생성 후 기준 시각을 지난 청크 삭제, 삭제 건수 반환(PRD deletion.md 기능 5). */
+    public int purgeOrphanChunksCreatedBefore(Instant createdBefore) {
+        return resumePurger.deleteOrphanChunksCreatedBefore(createdBefore);
+    }
 
     /**
      * 존재(404) → 소유(403). 타인 이력서에 404가 아닌 403을 주는 것은 resume PRD §4의 계약이다.

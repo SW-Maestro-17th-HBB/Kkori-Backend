@@ -30,6 +30,29 @@ public class SessionRepositoryService {
     private final InterviewSessionRepository sessionRepository;
     private final InterviewTranscriptReader transcriptReader;
     private final TerminationMarkerReader markerReader;
+    private final JdbcTranscriptPurger transcriptPurger;
+
+    // ── 파기 (PRD deletion.md 기능 3 — 호출자의 user 잠금 트랜잭션 안에서) ──
+
+    /** 유저의 모든 세션(상태·soft delete 무관) — 파기 대상 열거용. */
+    public List<InterviewSession> findAllByUserId(Long userId) {
+        return sessionRepository.findByUserId(userId);
+    }
+
+    /** 녹음 S3 객체 삭제 후 포인터 제거 — 제거 여부 반환(이미 없으면 false). */
+    public boolean clearRecording(Long id, Instant now) {
+        return sessionRepository.clearRecording(id, now) == 1;
+    }
+
+    /** 세션들의 대본 마스킹(에이전트 소유 테이블, 행 유지) — 실제 마스킹된 행 수. */
+    public int maskTranscripts(List<Long> sessionIds, Instant now) {
+        return transcriptPurger.maskBySessionIds(sessionIds, now);
+    }
+
+    /** 유저의 세션 soft delete — 이번에 기록된 행 수. 이미 기록된 행은 제외(멱등). */
+    public int softDeleteAllByUserId(Long userId, Instant now) {
+        return sessionRepository.softDeleteAllByUserId(userId, now);
+    }
 
     // ── 조회·저장 ──
 
@@ -90,6 +113,16 @@ public class SessionRepositoryService {
             return false;
         }
         return true;
+    }
+
+    /**
+     * 탈퇴 시 유저의 non-terminal 세션 전부를 ABORTED로 선기록하고 전이 건수를 반환한다
+     * (PRD deletion.md 기능 1). 건수는 로그·파기 기록({@code abortedLeftovers})의 재료다 —
+     * 이미 terminal인 세션은 술어로 제외되어 0건도 정상이다. 호출 트랜잭션은 user 행 잠금으로
+     * 직렬화되어 있어야 하며, {@link #abortPending}과 같이 영속성 컨텍스트를 비운다.
+     */
+    public int abortAllNonTerminalByUserId(Long userId, Instant now) {
+        return sessionRepository.abortAllByUserIdAndStatusIn(userId, SessionStatus.NON_TERMINAL, now);
     }
 
     public boolean activate(Long id, Instant startedAt, Instant now) {

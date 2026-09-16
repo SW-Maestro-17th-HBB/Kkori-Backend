@@ -337,6 +337,6 @@ AI 세션에 확인 요청 2건: (a) **재연결 창 동안 면접 시계가 멈
 
 - AI 측 재연결 대기·복원·Redis 내구 저장 구현 (병행 스토리)
 - 재디스패치 실패의 사용자 통지(오류 안내 채널) — 후속
-- E1(탈퇴) 연계 — 탈퇴 시 세션 즉시 abort·파기
+- E1(탈퇴) 연계 — 탈퇴 시 세션 즉시 abort·파기 → **HBB1-13에서 정의됨** (`docs/requirements/user/deletion.md` 기능 1·3 — `INTERRUPTED`·`AGENT_LOST`도 탈퇴 시 즉시 `ABORTED` 대상)
 - 프론트 재연결 UI·자동 재시도·rejoin 호출 흐름 — 프론트 스토리
 - 리포트 소비·egress 연계

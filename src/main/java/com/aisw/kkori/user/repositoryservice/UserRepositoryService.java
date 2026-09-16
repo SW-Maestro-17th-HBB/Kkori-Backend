@@ -4,6 +4,7 @@ import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
 import com.aisw.kkori.user.domain.DeletionLog;
 import com.aisw.kkori.user.domain.DeletionStatus;
+import com.aisw.kkori.user.domain.PurgeDetail;
 import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.domain.UserConsent;
 import com.aisw.kkori.user.repository.DeletionLogRepository;
@@ -87,6 +88,13 @@ public class UserRepositoryService {
         return userRepository.findByProviderId(providerId);
     }
 
+    /** 같은 카카오 회원번호의 활성 계정 존재 여부 — 파기 배치의 unlink 생략 판정(유예 초과 재가입 보호). */
+    public boolean existsActiveByProviderId(String providerId) {
+        return userRepository.findByProviderId(providerId)
+                .filter(user -> !user.isDeleted())
+                .isPresent();
+    }
+
     public User saveAndFlush(User user) {
         return userRepository.saveAndFlush(user);
     }
@@ -154,5 +162,64 @@ public class UserRepositoryService {
 
     public boolean cancelPendingPurge(Long id, Instant now, Instant graceCutoff) {
         return deletionLogRepository.cancelPendingPurge(id, now, graceCutoff) == 1;
+    }
+
+    // ── 파기 배치 (PRD deletion.md 기능 2) — 선점 이후의 모든 deletion_log 쓰기는 claimedAt 펜싱 ──
+
+    /** 파기 후보 — 유예 경과 PENDING_PURGE · FAILED · stale PURGING. 요청 시각 오름차순. */
+    public List<DeletionLog> findPurgeCandidates(Instant graceCutoff, Instant staleCutoff) {
+        return deletionLogRepository.findPurgeCandidates(graceCutoff, staleCutoff);
+    }
+
+    /** 조건부 선점 — 선점 여부를 반환한다. {@code claimedAt}이 이 건의 펜싱 토큰이 된다. */
+    public boolean claimForPurge(Long id, Instant claimedAt, Instant graceCutoff, Instant staleCutoff) {
+        return deletionLogRepository.claimForPurge(id, claimedAt, graceCutoff, staleCutoff) == 1;
+    }
+
+    /** 현재 파기 기록 — 선점 직후(같은 트랜잭션, 행 잠금 보유)에 읽어 시도 횟수를 잇는다. */
+    public Optional<PurgeDetail> findPurgeDetail(Long id) {
+        return deletionLogRepository.findById(id).map(DeletionLog::getPurgeDetail);
+    }
+
+    /** 중간 기록 — 펜스 불일치(재선점됨)면 false. */
+    public boolean recordPurgeDetail(Long id, Instant claimedAt, PurgeDetail detail) {
+        return deletionLogRepository.recordPurgeDetail(id, claimedAt, detail) == 1;
+    }
+
+    /** unlink 재료인 회원번호 스냅샷 — NULL(완료·복구·미기록)이면 empty. 매 시도마다 새로 읽는다. */
+    public Optional<String> findProviderSnapshot(Long id) {
+        return deletionLogRepository.findById(id).map(DeletionLog::getProviderId);
+    }
+
+    /** unlink 완료·생략 후 스냅샷 제거 — 펜스 불일치면 false. */
+    public boolean clearProviderSnapshot(Long id, Instant claimedAt) {
+        return deletionLogRepository.clearProviderSnapshot(id, claimedAt) == 1;
+    }
+
+    /** PURGING → FAILED — 펜스 불일치면 false. */
+    public boolean failPurge(Long id, Instant claimedAt, Instant now, PurgeDetail detail) {
+        return deletionLogRepository.failPurge(id, claimedAt, now, detail) == 1;
+    }
+
+    /** PURGING → PURGED — 펜스 불일치면 false. */
+    public boolean completePurge(Long id, Instant claimedAt, Instant now, PurgeDetail detail) {
+        return deletionLogRepository.completePurge(id, claimedAt, now, detail) == 1;
+    }
+
+    // ── 보존 만료 정리 (PRD deletion.md 기능 7) — 호출자의 user 잠금 트랜잭션 안에서 ──
+
+    /** 파기 완료 후 보존 기간이 지났고 가명 users 행이 남아 있는 건. */
+    public List<DeletionLog> findRetentionExpiredPurges(Instant retentionCutoff) {
+        return deletionLogRepository.findRetentionExpired(retentionCutoff);
+    }
+
+    /** 유저의 동의 이력 전체 삭제 — 삭제 건수. append-only 계약의 예외(보존 정책 소관). */
+    public int deleteConsentsByUserId(Long userId) {
+        return userConsentRepository.deleteAllByUserId(userId);
+    }
+
+    /** 가명 users 행 삭제 — 삭제 여부. */
+    public boolean deleteUserRow(Long userId) {
+        return userRepository.deleteRowById(userId) == 1;
     }
 }

@@ -34,9 +34,18 @@ jwt:
   access-token-ttl: ${JWT_ACCESS_TTL}
   refresh-token-ttl: ${JWT_REFRESH_TTL}
   signup-token-ttl: ${JWT_SIGNUP_TTL}
+  refresh-token-cleanup-interval: ${RT_CLEANUP_INTERVAL}
+  revoked-refresh-token-retention: ${RT_REVOKED_RETENTION}
 
 account:
   withdrawal-grace-period: ${WITHDRAWAL_GRACE_PERIOD}
+  purge-interval: ${PURGE_INTERVAL}
+  purging-timeout: ${PURGING_TIMEOUT}
+  consent-retention: ${CONSENT_RETENTION}
+
+resume:
+  physical-delete-interval: ${RESUME_PHYSICAL_DELETE_INTERVAL}
+  physical-delete-delay: ${RESUME_PHYSICAL_DELETE_DELAY}
 
 log-masking:
   hmac-key: ${LOG_HMAC_KEY}

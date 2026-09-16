@@ -26,6 +26,36 @@ public class ResumeSeeder {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    /**
+     * Worker 소유 {@code resume_chunks} 테이블 보장 — JPA 엔티티가 없어 ddl-auto가 만들지 않는다. 파기 검증은
+     * DELETE만 하므로 벡터 차원은 계약값(1024)이 아니어도 무방하다. 스키마 원천: Kkori-AI
+     * worker/src/storage/repository.py ensure_schema (변경 시 여기도 동기화).
+     */
+    public void ensureChunkTable() {
+        jdbcTemplate.execute("CREATE EXTENSION IF NOT EXISTS vector");
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS resume_chunks (
+                    id BIGSERIAL PRIMARY KEY,
+                    resume_id BIGINT NOT NULL,
+                    content TEXT NOT NULL,
+                    metadata JSONB NOT NULL,
+                    embedding vector(3) NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )""");
+    }
+
+    /** 청크 행 — Worker가 임베딩 후 저장하는 행을 재현한다(내용은 이력서 본문이라 개인정보). */
+    public void chunk(long resumeId) {
+        jdbcTemplate.update("INSERT INTO resume_chunks (resume_id, content, metadata, embedding) "
+                + "VALUES (?, 'chunk', '{}'::jsonb, '[1,2,3]'::vector)", resumeId);
+    }
+
+    public int chunkCount(long resumeId) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM resume_chunks WHERE resume_id = ?", Integer.class, resumeId);
+        return count == null ? 0 : count;
+    }
+
     /** 업로드 직후(UPLOADED) 이력서 — (user_id, file_hash) 활성 유니크 제약과 충돌하지 않게 매번 다른 해시. */
     public long newResume(long userId) {
         Resume resume = resumeRepository.save(Resume.builder()

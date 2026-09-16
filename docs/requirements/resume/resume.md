@@ -44,6 +44,7 @@ RAG 검색과 질문 생성은 임베딩 모델을 보유한 Python AI Worker가
   - **스토리지 층** — 파일 바이너리의 SHA-256을 `file_hash`로 저장하고, S3 objectKey를 사용자별 해시 기반(`resumes/{userId}/{fileHash}.pdf`)으로 생성한다. 같은 사용자의 같은 바이너리는 S3에 1부만 존재하며(소유권 경계가 키에 드러나 삭제 시 참조 확인도 사용자 내로 한정), "S3 저장 후 DB 저장 전 서버 사망"으로 남은 고아 객체도 재업로드 시 자연스럽게 재사용된다.
   - **사용자 흐름 층** — 같은 `file_hash`의 활성 이력서가 이미 있으면 **새로 만들지 않고, 아무 상태도 바꾸지 않고**, 기존 이력서 정보에 `duplicated: true`를 붙여 200으로 반환한다(분석 상태 무관 동일 규칙 — 업로드 API는 중복 시 부수효과가 없다). 프론트는 상태에 따라 안내한다: 진행 중이면 SSE 재연결, EMBEDDED면 기존 이력서로 이동, FAILED면 재분석 버튼(§4) 제공.
   - 중복 판단 범위는 **(userId + file_hash)** — 타 사용자의 같은 파일은 중복 판정 대상이 아니며(해시만으로 조회하면 타인의 resumeId가 노출되는 정보 누출), 동시 업로드 레이스는 부분 유니크 인덱스 `(user_id, file_hash) WHERE deleted_at IS NULL`이 방어한다.
+  - **물리 삭제 배치와의 직렬화 (2026-09-11 HBB1-13)** — soft delete된 옛 이력서의 물리 삭제 배치(deletion.md 기능 5)가 같은 키의 객체를 지우는 것과 재업로드가 겹칠 수 있으므로, DB 저장 트랜잭션은 **같은 사용자·같은 해시의 soft delete 행을 잠근 뒤**(없으면 잠글 것이 없다) **객체 존재를 재확인해 없으면 다시 저장**하고 행을 만든다. 배치는 그 행을 잠근 채 활성 참조를 확인하고 객체를 지우므로, 어느 순서든 활성 이력서의 객체는 남는다. users 행 잠금을 쓰지 않는 이유는 S3 왕복 동안 계정 경로(탈퇴 웹훅 2초 트랜잭션)를 막지 않기 위해서다.
 - **FAILED 복구는 §4 재분석 API로만** 한다 — 같은 파일을 재업로드해도 위 규칙대로 `duplicated` 정보만 반환되며, 분석 재시작은 사용자의 명시적 재분석 요청으로만 일어난다.
 - Worker 파이프라인: S3에서 PDF 다운로드 → PyMuPDF 텍스트 추출 → LLM으로 구조화(`structuredData`: profile/skills/projects/experiences) → 의미 단위 청킹 + 청크별 metadata 생성 → 임베딩 생성 → `resume_chunks` 저장(content, metadata, embedding) → 상태 EMBEDDED. 각 단계 진입 시 상태를 갱신하고 상태 이벤트를 발행한다.
 - 추출 원문(raw text)은 **저장하지 않는다**. 재분석 등으로 원문이 필요하면 S3 원본에서 다시 파싱한다.
@@ -273,7 +274,7 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 
 ### 설명
 
-사용자가 이력서를 삭제하면(`DELETE /api/v1/resumes/{resumeId}`) 이력서 원본 파일(S3), 구조화 데이터, 청크, 임베딩이 삭제 대상으로 표시된다. MVP에서는 soft delete 후 배치로 물리 삭제한다.
+사용자가 이력서를 삭제하면(`DELETE /api/v1/resumes/{resumeId}`) 이력서 원본 파일(S3), 구조화 데이터, 청크, 임베딩이 삭제 대상으로 표시된다. MVP에서는 soft delete 후 배치로 물리 삭제한다 — 물리 삭제 배치의 조건·절차·S3 공유 키 참조 확인은 `docs/requirements/user/deletion.md` 기능 5가 정의한다(HBB1-13).
 
 ### 실행 조건
 
@@ -298,8 +299,8 @@ SSE 이벤트는 3종이며, data 스키마는 단일 형식으로 통일한다:
 
 ### 제약사항
 
-- soft delete 후 물리 삭제 배치의 주기: **미정**
+- soft delete 후 물리 삭제 배치의 주기·지연·조건은 deletion.md 기능 5가 정의한다(2026-09-11 HBB1-13 확정 — 주기 10분·soft delete 후 10분 지연·분석 terminal 또는 상한 경과, 전부 설정값)
 
 ### 기타 요구사항
 
-- **개인정보 파기**: 회원 탈퇴 후 3일이 경과하면 해당 회원의 모든 이력서 데이터(S3 원본, 이력서·분석 상태 레코드, structuredData, 청크·임베딩)를 완전 삭제한다.
+- **개인정보 파기**: 회원 탈퇴 후 3일이 경과하면 해당 회원의 모든 이력서 데이터(S3 원본, 이력서·분석 상태 레코드, structuredData, 청크·임베딩)를 완전 삭제한다 — 절차는 deletion.md 기능 3(S3 prefix `resumes/{userId}/` 전체 삭제 후 `resume_chunks`·`resume_analysis_status`·`resumes` 물리 삭제, soft delete된 이력서 포함).
