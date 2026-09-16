@@ -63,9 +63,16 @@ erDiagram
   USERS ||--o{ INTERVIEW_SESSION : owns
   RESUMES ||--o{ INTERVIEW_SESSION : based_on
   INTERVIEW_SESSION ||--o| INTERVIEW_TRANSCRIPT : flushed_as
+  INTERVIEW_SESSION ||--o| REPORTS : evaluated_as
+  USERS ||--o{ REPORTS : owns
+  RESUMES ||--o{ REPORTS : based_on
+  REPORTS ||--o| REPORT_SCORES : scored_as
+  REPORTS ||--o{ REPORT_FEEDBACKS : feedback_per_answer
+  REPORTS ||--o| REPORT_GENERATION_JOBS : tracked_by
+  INTERVIEW_SESSION ||--o{ INTERVIEW_METRICS : measured_as
 ```
 
-이 저장소의 ERD 문서에 정리된 테이블 관계입니다. 도메인 간 참조는 FK 제약 없이 id만 보관하고 애플리케이션이 무결성을 관리합니다. users, resumes, interview_session은 soft delete를 쓰고, 시각은 전부 UTC timestamptz입니다. 테이블마다 소유자가 정해져 있어 resume_chunks는 Python 워커가, interview_transcript는 면접관 에이전트가 만들고 씁니다. 리포트 테이블은 생성 수명주기 전체를 워커가 맡아 Kkori-AI 쪽에서 관리합니다. 컬럼 상세는 [docs/erd.md](docs/erd.md)에 있습니다.
+테이블 14개를 사용자, 이력서, 면접 세션, 리포트 네 묶음으로 나눴습니다. 이력서는 업로드 원본(resumes), 분석 진행 상태(resume_analysis_status), 질문 생성에 쓰는 검색용 청크(resume_chunks, pgvector)로 나눠 저장합니다. 면접 세션은 종료 후 대본(interview_transcript)과 리포트로 이어지고, 리포트는 세션당 하나로 영역 점수(report_scores)와 답변별 피드백(report_feedbacks)을 따로 둡니다. Spring, Python 워커, 면접관 에이전트가 PostgreSQL 하나를 같이 쓰므로 테이블마다 소유 주체를 정해 두었고, 도메인 간 참조는 FK 제약 없이 id만 보관합니다. 컬럼 상세는 [docs/erd.md](docs/erd.md)에 있습니다.
 
 ### 2-5. 비동기 파이프라인
 
