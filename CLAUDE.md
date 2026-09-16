@@ -8,6 +8,7 @@ Kkori — AI 면접 준비 서비스의 백엔드 (SW마에스트로 팀 HBB). S
 
 ```bash
 docker compose up -d         # 로컬 PostgreSQL(5432) + Redis(6379) + MinIO(9000, 콘솔 9001) 기동 (개발 전 1회)
+docker compose --profile monitoring up -d   # 위 + redis_exporter(9121) — Redis 메트릭을 Prometheus 형식으로 노출 (모니터링 작업 때만)
 ./gradlew bootRun            # 앱 실행 (8080)
 ./gradlew build              # 컴파일 + 전체 테스트 + 패키징 (CI와 동일 명령)
 ./gradlew test --tests "com.aisw.kkori.SomeTests"           # 테스트 클래스 단위 실행
