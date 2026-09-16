@@ -52,25 +52,7 @@ AWS 배치도입니다. 컴퓨팅은 ECS on EC2로, 역할별로 EC2 인스턴�
 
 ### 2-4. DB 스키마
 
-```mermaid
-erDiagram
-  USERS ||--o{ REFRESH_TOKEN : owns
-  USERS ||--o{ USER_CONSENT : records
-  USERS ||--o{ DELETION_LOG : requests
-  USERS ||--o{ RESUMES : owns
-  RESUMES ||--|| RESUME_ANALYSIS_STATUS : tracks
-  RESUMES ||--o{ RESUME_CHUNKS : indexed_as
-  USERS ||--o{ INTERVIEW_SESSION : owns
-  RESUMES ||--o{ INTERVIEW_SESSION : based_on
-  INTERVIEW_SESSION ||--o| INTERVIEW_TRANSCRIPT : flushed_as
-  INTERVIEW_SESSION ||--o| REPORTS : evaluated_as
-  USERS ||--o{ REPORTS : owns
-  RESUMES ||--o{ REPORTS : based_on
-  REPORTS ||--o| REPORT_SCORES : scored_as
-  REPORTS ||--o{ REPORT_FEEDBACKS : feedback_per_answer
-  REPORTS ||--o| REPORT_GENERATION_JOBS : tracked_by
-  INTERVIEW_SESSION ||--o{ INTERVIEW_METRICS : measured_as
-```
+![ERD. 사용자, 이력서, 면접 세션, 리포트 네 묶음으로 나눈 테이블 14개와 관계. 테이블 헤더 색은 소유 주체(Spring, Python 워커, 면접관 에이전트)](docs/assets/readme/erd.png)
 
 테이블 14개를 사용자, 이력서, 면접 세션, 리포트 네 묶음으로 나눴습니다. 이력서는 업로드 원본(resumes), 분석 진행 상태(resume_analysis_status), 질문 생성에 쓰는 검색용 청크(resume_chunks, pgvector)로 나눠 저장합니다. 면접 세션은 종료 후 대본(interview_transcript)과 리포트로 이어지고, 리포트는 세션당 하나로 영역 점수(report_scores)와 답변별 피드백(report_feedbacks)을 따로 둡니다. Spring, Python 워커, 면접관 에이전트가 PostgreSQL 하나를 같이 쓰므로 테이블마다 소유 주체를 정해 두었고, 도메인 간 참조는 FK 제약 없이 id만 보관합니다. 컬럼 상세는 [docs/erd.md](docs/erd.md)에 있습니다.
 
@@ -78,7 +60,7 @@ erDiagram
 
 ![이력서 분석 흐름. PDF 업로드, Redis Streams 전달, 워커 분석, pgvector 색인 4단계](docs/assets/readme/resume-analysis-flow.png)
 
-![리포트 생성 흐름. 면접 종료, 대본 저장, 리포트 워커 평가, 리포트 저장, 사용자 조회. 워커 안에서 답변별 판정은 LLM이, 점수 집계는 코드가 맡는다](docs/assets/readme/report-generation-flow.png)
+![리포트 생성 흐름. 면접이 끝나면 에이전트가 대본을 저장하고 Redis Streams로 리포트 생성을 요청하며, 워커가 텍스트 평가와 음성 평가를 거쳐 리포트를 저장한다](docs/assets/readme/report-generation-flow.png)
 
 이력서 분석과 리포트 생성은 비동기로 처리합니다. Spring은 Redis Streams에 요청을 발행하고 바로 응답하며, Python 워커가 Consumer Group으로 요청을 읽어 처리합니다. 요청 메시지에는 식별자만 담고 워커가 DB에서 직접 입력을 읽습니다. 리포트 평가는 답변별 판정을 LLM이 맡고, 영역 점수와 총점 집계는 코드가 결정적으로 계산하도록 나눴습니다.
 
@@ -89,6 +71,8 @@ erDiagram
 | `report.audio.analysis.requested` | Spring → 워커 (Streams) | 녹음 파일 준비 |
 | `resume.parse.status.changed` | 워커 → Spring (Pub/Sub) | 분석 단계 전이 |
 | `report.status.changed` | 워커 → Spring (Pub/Sub) | 리포트 상태 전이 |
+
+![공통 진행 상태 전달 흐름. 워커가 Redis Pub/Sub에 진행 상태를 발행하면 Spring이 받아 SSE로 사용자에게 전달한다](docs/assets/readme/sse-status-flow.png)
 
 요청은 워커 한 대만 처리해야 하므로 Streams Consumer Group으로 나눠 읽고, 상태 알림은 SSE 연결이 어느 Spring 인스턴스에 붙어 있든 도착해야 하므로 Pub/Sub으로 모든 인스턴스에 방송합니다.
 
