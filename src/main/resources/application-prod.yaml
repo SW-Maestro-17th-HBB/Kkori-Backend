@@ -43,10 +43,6 @@ account:
   purging-timeout: ${PURGING_TIMEOUT}
   consent-retention: ${CONSENT_RETENTION}
 
-resume:
-  physical-delete-interval: ${RESUME_PHYSICAL_DELETE_INTERVAL}
-  physical-delete-delay: ${RESUME_PHYSICAL_DELETE_DELAY}
-
 log-masking:
   hmac-key: ${LOG_HMAC_KEY}
 

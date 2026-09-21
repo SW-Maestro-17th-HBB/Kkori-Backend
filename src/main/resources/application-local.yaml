@@ -53,11 +53,6 @@ account:
   purging-timeout: ${PURGING_TIMEOUT:30m}
   consent-retention: ${CONSENT_RETENTION:365d}
 
-# 이력서 물리 삭제 배치 (deletion.md 기능 5)
-resume:
-  physical-delete-interval: ${RESUME_PHYSICAL_DELETE_INTERVAL:10m}
-  physical-delete-delay: ${RESUME_PHYSICAL_DELETE_DELAY:10m}
-
 log-masking:
   hmac-key: ${LOG_HMAC_KEY:kkori-local-dev-log-hmac-key-32bytes!}
 

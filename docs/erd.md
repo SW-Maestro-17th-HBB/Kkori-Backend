@@ -75,7 +75,7 @@ erDiagram
     jsonb structured_data "nullable, StructuredData 계약"
     timestamptz created_at
     timestamptz updated_at
-    timestamptz deleted_at "nullable, 물리 삭제 배치 대상 표식 — 탈퇴 파기·개별 삭제 모두 행 DELETE(deletion.md 기능 3·5)"
+    timestamptz deleted_at "nullable, 물리 삭제 배치 대상 표식 — 탈퇴 파기 시 행 DELETE(deletion.md 기능 3), 개별 삭제 배치는 후속 스토리"
   }
 
   RESUME_ANALYSIS_STATUS {
@@ -90,7 +90,7 @@ erDiagram
     timestamptz failed_at "nullable"
     timestamptz created_at
     timestamptz updated_at
-    timestamptz deleted_at "nullable, 이력서와 함께 행 DELETE(deletion.md 기능 3·5)"
+    timestamptz deleted_at "nullable, 이력서와 함께 행 DELETE(deletion.md 기능 3)"
   }
 
   RESUME_CHUNKS {
@@ -136,7 +136,7 @@ erDiagram
 | 테이블 | 소유 | 비고 |
 | --- | --- | --- |
 | `users` · `refresh_token` · `user_consent` · `deletion_log` | Spring (E1) | `user_consent`는 append-only 이력. `deletion_log`는 auditing 미적용(명시 시각 관리) |
-| `resumes` · `resume_analysis_status` | Spring (이력서) | 분석 상태는 Python Worker가 전이 기록(UPLOADED 이후). 탈퇴 파기·개별 삭제 시 물리 삭제(deletion.md 기능 3·5) |
+| `resumes` · `resume_analysis_status` | Spring (이력서) | 분석 상태는 Python Worker가 전이 기록(UPLOADED 이후). 탈퇴 파기 시 물리 삭제(deletion.md 기능 3) |
 | `resume_chunks` | Python Worker | 테이블 생성·쓰기 모두 Worker 소관. pgvector 확장은 백엔드 리포(로컬 이미지·Testcontainers)가 제공. **예외**: 탈퇴 파기·개별 삭제 시 Spring이 `resume_id` 기준 DELETE(deletion.md 크로스 레포 계약) |
 | `interview_session` | Spring (세션) | HBB1-18 신설, HBB1-294가 종료 전이(webhook·/end·스위퍼)와 `end_requested_at`·`agent_lost_at` 추가, HBB1-308이 재연결(`disconnected_at` 사용 개시)·재디스패치(`redispatched_at`) 추가. 인덱스 `(user_id, status)` |
 | `interview_transcript` | Kkori-AI (에이전트) | 테이블 DDL·마이그레이션·쓰기 모두 에이전트 소관(Kkori-AI interview-end.md §4). Spring은 판별용 EXISTS 읽기만(HBB1-294 — interview-session-completion.md). dev/prod는 에이전트 배포가 테이블 존재의 선행 조건. **예외**: 탈퇴 파기 시 Spring이 `content = []`·`deleted_at` 마스킹 UPDATE(deletion.md 크로스 레포 계약) |
