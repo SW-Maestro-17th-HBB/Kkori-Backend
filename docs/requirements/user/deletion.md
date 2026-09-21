@@ -525,7 +525,7 @@ Spring 배치가 Worker·에이전트 소유 테이블에 쓰는 유일한 경�
 
 - `account.md`: Overview·기능 3·4·5의 "영구 삭제 스토리 범위/위임" 문구에 본 문서 참조 추가. 상태 전이의 `PURGING → PURGED/FAILED`·stale 회수 정의 위치 명시.
 - `consent.md`: 기능 1 "보존 정책(미확정)"을 본 문서 기능 7 참조로 개정.
-- `resume.md` §5: 기타 요구사항의 "개인정보 파기"에 기능 3 참조(물리 삭제 배치의 주기 "미정"은 유지 — 후속 스토리).
+- `resume.md` §5: 설명·검증 기준을 soft delete 전용으로 정정(물리 삭제 배치는 후속 스토리 — 주기 "미정" 유지), 기타 요구사항의 "개인정보 파기"에 기능 3 참조.
 - `report.md` §1 기타 요구사항 "회원 탈퇴 파기"·§4 기타 요구사항 "면접 도메인 삭제 정책 확정 시 정합 재확인"을 본 문서 참조로 개정.
 - 세션 PRD 3종의 "범위 제외 — E1 연계"를 본 문서 기능 1·3 참조로 개정.
 - `docs/erd.md`: `interview_session.deleted_at`·`interview_transcript.deleted_at` 비고를 "파기 배치 기록"으로 확정, `resumes`·`reports` 계열의 "탈퇴 파기 시 물리 삭제" 비고 추가, `deletion_log.purge_detail` 계약 언급.
