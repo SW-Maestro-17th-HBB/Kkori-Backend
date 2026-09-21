@@ -25,31 +25,24 @@ public class JdbcResumePurger {
     private final JdbcTemplate jdbcTemplate;
     private final NamedParameterJdbcTemplate namedJdbcTemplate;
 
-    /** S3 원본 참조 — 파기 배치가 DB 포인터 삭제 전에 객체를 지우는 재료. */
-    public record ObjectRef(long resumeId, String bucket, String key) {
-    }
-
     /** 유저의 모든 이력서(soft delete 포함)의 S3 참조. */
-    public List<ObjectRef> findObjectRefsByUserId(long userId) {
+    public List<ResumeRepositoryService.ObjectRef> findObjectRefsByUserId(long userId) {
         return jdbcTemplate.query(
                 "SELECT id, original_file_bucket, original_file_key FROM resumes WHERE user_id = ? ORDER BY id",
-                (rs, rowNum) -> new ObjectRef(rs.getLong("id"), rs.getString("original_file_bucket"),
+                (rs, rowNum) -> new ResumeRepositoryService.ObjectRef(rs.getLong("id"), rs.getString("original_file_bucket"),
                         rs.getString("original_file_key")),
                 userId);
     }
 
     /** 청크(Worker 소유) → 분석 상태 → 이력서 행 순 물리 삭제. 이미 지워진 id는 0행으로 멱등. */
-    public PurgeCounts deleteByResumeIds(List<Long> resumeIds) {
+    public ResumeRepositoryService.PurgeCounts deleteByResumeIds(List<Long> resumeIds) {
         if (resumeIds.isEmpty()) {
-            return new PurgeCounts(0, 0);
+            return new ResumeRepositoryService.PurgeCounts(0, 0);
         }
         MapSqlParameterSource params = new MapSqlParameterSource("ids", resumeIds);
         int chunks = namedJdbcTemplate.update("DELETE FROM resume_chunks WHERE resume_id IN (:ids)", params);
         namedJdbcTemplate.update("DELETE FROM resume_analysis_status WHERE resume_id IN (:ids)", params);
         int rows = namedJdbcTemplate.update("DELETE FROM resumes WHERE id IN (:ids)", params);
-        return new PurgeCounts(rows, chunks);
-    }
-
-    public record PurgeCounts(int rows, int chunks) {
+        return new ResumeRepositoryService.PurgeCounts(rows, chunks);
     }
 }

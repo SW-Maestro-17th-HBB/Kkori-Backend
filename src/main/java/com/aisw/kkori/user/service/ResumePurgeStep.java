@@ -1,7 +1,6 @@
 package com.aisw.kkori.user.service;
 
 import com.aisw.kkori.global.config.S3Properties;
-import com.aisw.kkori.resume.repositoryservice.JdbcResumePurger;
 import com.aisw.kkori.resume.repositoryservice.ResumeRepositoryService;
 import com.aisw.kkori.user.domain.PurgeDetail;
 import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
@@ -17,6 +16,7 @@ import software.amazon.awssdk.services.s3.model.S3Object;
 
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -54,11 +54,11 @@ public class ResumePurgeStep implements PurgeStep {
 
     @Override
     public PurgeDetail.StepResult execute(PurgeTarget target) {
-        List<JdbcResumePurger.ObjectRef> refs = resumeRepositoryService.findPurgeTargetsByUserId(target.userId());
+        List<ResumeRepositoryService.ObjectRef> refs = resumeRepositoryService.findPurgeTargetsByUserId(target.userId());
 
         // 1) S3 — 행 참조 객체 + prefix 잔여 객체 (잠금·트랜잭션 밖, 없는 키 삭제는 성공으로 응답)
         Set<String> deleted = new LinkedHashSet<>();
-        for (JdbcResumePurger.ObjectRef ref : refs) {
+        for (ResumeRepositoryService.ObjectRef ref : refs) {
             s3Template.deleteObject(ref.bucket(), ref.key());
             deleted.add(ref.bucket() + "/" + ref.key());
         }
@@ -83,11 +83,11 @@ public class ResumePurgeStep implements PurgeStep {
         } while (continuationToken != null);
 
         // 2) DB — 청크(Worker 소유) → 분석 상태 → 이력서 행, user 잠금 하 한 트랜잭션
-        List<Long> ids = refs.stream().map(JdbcResumePurger.ObjectRef::resumeId).toList();
-        JdbcResumePurger.PurgeCounts counts = transactionTemplate.execute(status -> {
+        List<Long> ids = refs.stream().map(ResumeRepositoryService.ObjectRef::resumeId).toList();
+        ResumeRepositoryService.PurgeCounts counts = Objects.requireNonNull(transactionTemplate.execute(status -> {
             userRepositoryService.lockUser(target.userId());
             return resumeRepositoryService.purgeByIds(ids);
-        });
+        }));
         log.info("이력서 파기 (userId={}, rows={}, chunks={}, s3Objects={})",
                 target.userId(), counts.rows(), counts.chunks(), deleted.size());
         return new PurgeDetail.StepResult(PurgeDetail.StepResult.DONE, counts.rows(), counts.chunks(),

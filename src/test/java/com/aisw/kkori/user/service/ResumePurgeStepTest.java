@@ -1,7 +1,6 @@
 package com.aisw.kkori.user.service;
 
 import com.aisw.kkori.global.config.S3Properties;
-import com.aisw.kkori.resume.repositoryservice.JdbcResumePurger;
 import com.aisw.kkori.resume.repositoryservice.ResumeRepositoryService;
 import com.aisw.kkori.user.domain.PurgeDetail;
 import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
@@ -40,7 +39,7 @@ class ResumePurgeStepTest {
     void deletesOrphansAcrossAllPages() {
         ResumeRepositoryService resumeRepositoryService = mock(ResumeRepositoryService.class);
         when(resumeRepositoryService.findPurgeTargetsByUserId(7L)).thenReturn(List.of());
-        when(resumeRepositoryService.purgeByIds(anyList())).thenReturn(new JdbcResumePurger.PurgeCounts(0, 0));
+        when(resumeRepositoryService.purgeByIds(anyList())).thenReturn(new ResumeRepositoryService.PurgeCounts(0, 0));
         UserRepositoryService userRepositoryService = mock(UserRepositoryService.class);
         S3Template s3Template = mock(S3Template.class);
         S3Client s3Client = mock(S3Client.class);

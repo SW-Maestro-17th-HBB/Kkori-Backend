@@ -9,8 +9,10 @@ import org.springframework.core.env.MapPropertySource;
 import java.util.Map;
 
 /**
- * 테스트 컨텍스트의 배치 빈(파기·이력서 물리 삭제·RT 청소) 비활성화 — {@code app.batch.enabled=false}를
- * <b>빈 조건 평가 전에</b> Environment에 넣는다. 통합 테스트는 유예 초과 시나리오를 위해 과거 시각의 탈퇴 건을
+ * 테스트 컨텍스트의 스케줄러 빈(파기·RT 청소·세션 스위퍼 트리거) 비활성화 — {@code app.batch.enabled=false}를
+ * <b>빈 조건 평가 전에</b> Environment에 넣는다. 테스트가 {@code @SpringBootTest(properties = …)} 등으로 값을 이미
+ * 명시했으면 그 값을 존중한다(스케줄러 빈을 실제로 띄우는 테스트가 가능하도록 — 인라인 테스트 프로퍼티는
+ * EnvironmentPostProcessor보다 먼저 Environment에 들어간다). 통합 테스트는 유예 초과 시나리오를 위해 과거 시각의 탈퇴 건을
  * 시딩하는데, 백그라운드 회차가 그 건을 실제로 파기하면 검증이 깨진다. 배치 로직은 각 테스트가 스케줄 메서드를
  * 직접 호출해 검증한다(스위퍼 테스트 관례).
  *
@@ -24,7 +26,10 @@ public class BatchDisablingEnvironmentPostProcessor implements EnvironmentPostPr
 
     @Override
     public void postProcessEnvironment(ConfigurableEnvironment environment, SpringApplication application) {
-        environment.getPropertySources().addFirst(
+        if (environment.containsProperty("app.batch.enabled")) {
+            return; // 테스트가 명시한 값 우선
+        }
+        environment.getPropertySources().addLast(
                 new MapPropertySource(PROPERTY_SOURCE_NAME, Map.of("app.batch.enabled", "false")));
     }
 

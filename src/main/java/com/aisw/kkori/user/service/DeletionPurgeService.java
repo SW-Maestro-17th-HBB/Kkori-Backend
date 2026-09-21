@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -130,6 +131,8 @@ public class DeletionPurgeService {
         }
         try {
             complete(target, detail);
+        } catch (OwnershipLostException e) {
+            log.warn("파기 소유권 상실 — 재선점된 건, 종결 폐기 (deletionLogId={})", target.deletionLogId());
         } catch (RuntimeException e) {
             fail(target, detail.withError(summarize(e)));
         }
@@ -137,7 +140,7 @@ public class DeletionPurgeService {
 
     /** 선점 트랜잭션 — 조건부 UPDATE로 소유권을 얻고, 같은 트랜잭션에서 시도 횟수·시각을 기록한다. */
     private Optional<Claim> claim(long deletionLogId, Instant graceCutoff, Instant staleCutoff) {
-        return transactionTemplate.execute(status -> {
+        return Objects.requireNonNull(transactionTemplate.execute(status -> {
             Instant claimedAt = clock.instant().truncatedTo(ChronoUnit.MICROS);
             if (!deletionLogRepositoryService.claimForPurge(deletionLogId, claimedAt, graceCutoff, staleCutoff)) {
                 return Optional.empty();
@@ -147,7 +150,7 @@ public class DeletionPurgeService {
                     .attempt(claimedAt);
             deletionLogRepositoryService.recordPurgeDetail(deletionLogId, claimedAt, detail);
             return Optional.of(new Claim(claimedAt, detail));
-        });
+        }));
     }
 
     private void record(PurgeTarget target, PurgeDetail detail) {
@@ -178,8 +181,7 @@ public class DeletionPurgeService {
                         PurgeDetail.StepResult.of(PurgeDetail.StepResult.SKIPPED));
             }
             if (!deletionLogRepositoryService.completePurge(target.deletionLogId(), target.claimedAt(), now, finalDetail)) {
-                status.setRollbackOnly();
-                throw new OwnershipLostException();
+                throw new OwnershipLostException(); // 예외로 롤백 — 식별정보 마스킹도 되돌린다
             }
             log.info("파기 완료 (deletionLogId={}, userId={}, attempts={})",
                     target.deletionLogId(), target.userId(), finalDetail.attempts());

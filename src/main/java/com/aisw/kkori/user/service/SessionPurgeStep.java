@@ -16,6 +16,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 세션 파기 단계 (PRD deletion.md 기능 3 — 2. 세션).
@@ -57,10 +58,10 @@ public class SessionPurgeStep implements PurgeStep {
         }
 
         // 1) 잔존 non-terminal 세션 — ABORTED 선기록 후 룸 삭제(배치 스레드라 동기 삭제)
-        List<String> leftoverRooms = transactionTemplate.execute(status -> {
+        List<String> leftoverRooms = Objects.requireNonNull(transactionTemplate.execute(status -> {
             userRepositoryService.lockUser(userId);
             return sessionTerminator.abortAllForWithdrawal(userId, now());
-        });
+        }));
         if (!leftoverRooms.isEmpty()) {
             log.warn("파기 시점에 non-terminal 세션 잔존 — ABORTED 선기록 후 룸 삭제 (userId={}, count={})",
                     userId, leftoverRooms.size());
@@ -83,13 +84,13 @@ public class SessionPurgeStep implements PurgeStep {
 
         // 3) 대본 마스킹 + 세션 soft delete — 한 트랜잭션
         List<Long> ids = sessions.stream().map(InterviewSession::getId).toList();
-        int masked = transactionTemplate.execute(status -> {
+        int masked = Objects.requireNonNull(transactionTemplate.execute(status -> {
             userRepositoryService.lockUser(userId);
             Instant now = now();
             int count = sessionRepositoryService.maskTranscripts(ids, now);
             sessionRepositoryService.softDeleteAllByUserId(userId, now);
             return count;
-        });
+        }));
         log.info("세션 파기 (userId={}, rows={}, transcripts={}, recordings={}, abortedLeftovers={})",
                 userId, sessions.size(), masked, recordings, leftoverRooms.size());
         return new PurgeDetail.StepResult(PurgeDetail.StepResult.DONE, sessions.size(), null, null,

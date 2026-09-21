@@ -1,7 +1,6 @@
 package com.aisw.kkori.global.oauth;
 
 import com.aisw.kkori.global.oauth.dto.KakaoErrorResponse;
-import com.aisw.kkori.global.oauth.dto.KakaoUnlinkResponse;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -45,7 +44,7 @@ public class KakaoAdminUnlinkClient implements KakaoUnlinkClient {
                     .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                     .body(form)
                     .retrieve()
-                    .body(KakaoUnlinkResponse.class);
+                    .toBodilessEntity();
             return Outcome.UNLINKED;
         } catch (RestClientResponseException e) {
             if (e.getStatusCode().value() == 400 && errorCodeOf(e) == NOT_LINKED_USER) {

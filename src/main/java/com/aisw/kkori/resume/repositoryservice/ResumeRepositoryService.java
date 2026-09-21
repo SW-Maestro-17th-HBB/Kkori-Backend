@@ -36,13 +36,21 @@ public class ResumeRepositoryService {
 
     // ── 탈퇴 파기 (PRD deletion.md 기능 3 — 호출자의 user 잠금 트랜잭션 안에서) ──
 
+    /** S3 원본 참조 — 파기 배치가 DB 포인터 삭제 전에 객체를 지우는 재료. */
+    public record ObjectRef(long resumeId, String bucket, String key) {
+    }
+
+    /** 물리 삭제 건수 — 이력서 행·청크(Worker 소유). */
+    public record PurgeCounts(int rows, int chunks) {
+    }
+
     /** 유저의 모든 이력서(soft delete 포함)의 S3 원본 참조 — 파기 배치가 포인터 삭제 전에 객체를 지우는 재료. */
-    public List<JdbcResumePurger.ObjectRef> findPurgeTargetsByUserId(long userId) {
+    public List<ObjectRef> findPurgeTargetsByUserId(long userId) {
         return resumePurger.findObjectRefsByUserId(userId);
     }
 
     /** 청크(Worker 소유) → 분석 상태 → 이력서 행 물리 삭제. 멱등. */
-    public JdbcResumePurger.PurgeCounts purgeByIds(List<Long> resumeIds) {
+    public PurgeCounts purgeByIds(List<Long> resumeIds) {
         return resumePurger.deleteByResumeIds(resumeIds);
     }
 
