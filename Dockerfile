@@ -21,5 +21,6 @@ ENV JAVA_TOOL_OPTIONS="-Xmx768m"
 RUN useradd --create-home --uid 10001 appuser
 USER appuser
 
-EXPOSE 8080
+# 8080 = API(ALB), 8081 = actuator(헬스체크·Prometheus, application.yaml의 management.server.port)
+EXPOSE 8080 8081
 ENTRYPOINT ["java", "-jar", "app.jar"]

@@ -30,7 +30,10 @@ public class TestcontainersConfiguration {
 
     @Bean
     MinIOContainer minioContainer() {
-        return new MinIOContainer("minio/minio:latest");
+        // Docker Hub의 minio/* 저장소가 2026-09에 삭제돼(커뮤니티 에디션 종료) MinIO 자체 레지스트리 quay.io를 쓴다.
+        // 새 이미지는 더 안 올라오므로 마지막 정식 릴리스로 고정 — docker-compose.yml과 동일 태그
+        return new MinIOContainer(DockerImageName.parse("quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z")
+                .asCompatibleSubstituteFor("minio/minio"));
     }
 
     /** MinIO는 @ServiceConnection 미지원이라 Spring Cloud AWS 프로퍼티를 직접 주입한다. */
