@@ -1,10 +1,12 @@
-package com.aisw.kkori.user.service;
+package com.aisw.kkori.session.purge;
 
 import com.aisw.kkori.session.domain.InterviewSession;
 import com.aisw.kkori.session.repositoryservice.SessionRepositoryService;
 import com.aisw.kkori.session.service.SessionRoomManager;
 import com.aisw.kkori.session.service.UserSessionTerminator;
 import com.aisw.kkori.user.domain.PurgeDetail;
+import com.aisw.kkori.user.purge.PurgeStep;
+import com.aisw.kkori.user.purge.PurgeTarget;
 import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import io.awspring.cloud.s3.S3Template;
 import lombok.RequiredArgsConstructor;

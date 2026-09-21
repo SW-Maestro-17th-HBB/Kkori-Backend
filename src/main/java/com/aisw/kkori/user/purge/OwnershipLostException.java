@@ -1,4 +1,4 @@
-package com.aisw.kkori.user.service;
+package com.aisw.kkori.user.purge;
 
 /**
  * 파기 선점 소유권 상실 — 다른 인스턴스가 stale 회수로 이 건을 재선점했다(PRD deletion.md 기능 2 펜싱).

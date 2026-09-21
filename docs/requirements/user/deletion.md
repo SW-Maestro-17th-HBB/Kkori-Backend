@@ -269,7 +269,7 @@
 ### 인터페이스 요구사항
 
 - 각 도메인의 파기 접근은 해당 도메인의 repositoryService가 제공한다(예: `ResumeRepositoryService.purgeByUserId`, `SessionRepositoryService.purge…`, `ReportRepositoryService.purgeByUserId`, `AuthRepositoryService.deleteAllByUserId`). Worker·에이전트 소유 테이블의 JDBC 접근 클래스는 그 데이터를 소비하는 도메인의 `repositoryservice` 패키지에 둔다(`JdbcReportJobWriter` 선례 — 예: `resume/repositoryservice/JdbcResumeChunkPurger`, `session/repositoryservice/JdbcTranscriptPurger`).
-- 파기 배치의 조립(선점·단계 순서·종결)은 계정 도메인(`user`)이 소유한다 — 의존 방향 `user.service → 타 도메인 repositoryService`(CLAUDE.md 규칙 준수, repositoryService 간 의존 없음).
+- 파기 배치의 조립(선점·단계 순서·종결)과 단계 계약(`PurgeStep`)은 계정 도메인의 `user.purge`가 소유하고, 각 도메인은 자기 데이터의 파기 단계 구현체를 `<도메인>.purge`에 둔다(이력서·세션·리포트·RT — 카카오 unlink 단계는 `deletion_log` 스냅샷을 다루므로 `user.purge`). 의존 방향은 `<도메인>.purge → user.purge`(계약)·`→ 자기 도메인 repositoryService`이고, user는 타 도메인을 컴파일 시점에 의존하지 않는다(CLAUDE.md 규칙 준수, repositoryService 간 의존 없음).
 - 이력서·리포트의 soft delete 우회 조회는 `@SQLRestriction`이 적용되지 않는 네이티브 쿼리로 한다.
 
 ### 제약사항

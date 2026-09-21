@@ -1,8 +1,10 @@
-package com.aisw.kkori.user.service;
+package com.aisw.kkori.resume.purge;
 
 import com.aisw.kkori.global.config.S3Properties;
 import com.aisw.kkori.resume.repositoryservice.ResumeRepositoryService;
 import com.aisw.kkori.user.domain.PurgeDetail;
+import com.aisw.kkori.user.purge.PurgeStep;
+import com.aisw.kkori.user.purge.PurgeTarget;
 import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import io.awspring.cloud.s3.S3Template;
 import lombok.RequiredArgsConstructor;

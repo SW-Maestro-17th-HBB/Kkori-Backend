@@ -1,4 +1,4 @@
-package com.aisw.kkori.user.service;
+package com.aisw.kkori.user.purge;
 
 import com.aisw.kkori.global.oauth.KakaoUnlinkException;
 import com.aisw.kkori.user.config.AccountPolicyProperties;

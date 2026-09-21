@@ -1,7 +1,9 @@
-package com.aisw.kkori.user.service;
+package com.aisw.kkori.report.purge;
 
-import com.aisw.kkori.auth.repositoryservice.AuthRepositoryService;
+import com.aisw.kkori.report.repositoryservice.ReportRepositoryService;
 import com.aisw.kkori.user.domain.PurgeDetail;
+import com.aisw.kkori.user.purge.PurgeStep;
+import com.aisw.kkori.user.purge.PurgeTarget;
 import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -11,35 +13,35 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.util.Objects;
 
 /**
- * Refresh Token 파기 단계 (PRD deletion.md 기능 3 — 4. RT): 유저의 RT 행 전부 삭제. 탈퇴 시 전량 폐기된 뒤라
- * 재사용 감지 재료 가치가 없고, {@code user_id}로 연결되는 잔여 행을 남기지 않는다. 잠금 순서 user → RT.
+ * 리포트 파기 단계 (PRD deletion.md 기능 3 — 3. 리포트): 유저의 모든 리포트(soft delete 포함)를
+ * 피드백 → 점수 → Job(Worker 소유) → 리포트 순으로 물리 삭제한다. user 잠금 트랜잭션 하나.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class RefreshTokenPurgeStep implements PurgeStep {
+public class ReportPurgeStep implements PurgeStep {
 
-    private final AuthRepositoryService authRepositoryService;
+    private final ReportRepositoryService reportRepositoryService;
     private final UserRepositoryService userRepositoryService;
     private final TransactionTemplate transactionTemplate;
 
     @Override
     public String key() {
-        return PurgeDetail.STEP_REFRESH_TOKENS;
+        return PurgeDetail.STEP_REPORTS;
     }
 
     @Override
     public int order() {
-        return ORDER_REFRESH_TOKENS;
+        return ORDER_REPORTS;
     }
 
     @Override
     public PurgeDetail.StepResult execute(PurgeTarget target) {
         int rows = Objects.requireNonNull(transactionTemplate.execute(status -> {
             userRepositoryService.lockUser(target.userId());
-            return authRepositoryService.deleteAllByUserId(target.userId());
+            return reportRepositoryService.purgeByUserId(target.userId());
         }));
-        log.info("RT 파기 (userId={}, rows={})", target.userId(), rows);
+        log.info("리포트 파기 (userId={}, rows={})", target.userId(), rows);
         return new PurgeDetail.StepResult(PurgeDetail.StepResult.DONE, rows, null, null, null, null, null);
     }
 }
