@@ -85,9 +85,7 @@ public class UserRepositoryService {
 
     /** 같은 카카오 회원번호의 활성 계정 존재 여부 — 파기 배치의 unlink 생략 판정(유예 초과 재가입 보호). */
     public boolean existsActiveByProviderId(String providerId) {
-        return userRepository.findByProviderId(providerId)
-                .filter(user -> !user.isDeleted())
-                .isPresent();
+        return userRepository.existsByProviderIdAndDeletedAtIsNull(providerId);
     }
 
     public User saveAndFlush(User user) {

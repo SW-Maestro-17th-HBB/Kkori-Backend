@@ -19,6 +19,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
      */
     Optional<User> findByProviderId(String providerId);
 
+    boolean existsByProviderIdAndDeletedAtIsNull(String providerId);
+
     /**
      * 카카오 회원번호로 id만 스칼라 조회한다 — 로그인이 user 행 잠금 전에 대상을 알아내는 용도.
      * 엔티티 조회를 쓰면 이후 잠금 조회가 낡은 관리 인스턴스를 반환할 수 있다.

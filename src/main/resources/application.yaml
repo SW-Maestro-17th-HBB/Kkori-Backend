@@ -21,6 +21,10 @@ spring:
       # (docs/requirements/user/deletion.md 공통: 배치 실행·설정)
       pool:
         size: 5
+      # 종료(배포) 시 진행 중 회차를 기다린다 — 중간에 끊기면 선점한 건이 PURGING으로 남아 purging-timeout까지 회수되지 않는다
+      shutdown:
+        await-termination: true
+        await-termination-period: 30s
 
 server:
   tomcat:

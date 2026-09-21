@@ -10,6 +10,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Objects;
 
 /**
  * Refresh Token 청소 배치 (PRD deletion.md 기능 6 — 설계 초안 ADR-013의 이행).
@@ -34,12 +35,13 @@ public class RefreshTokenCleanupService {
     public void runCycle() {
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
         Instant revokedCutoff = now.minus(jwtProperties.revokedRefreshTokenRetention());
-        int[] deleted = transactionTemplate.execute(status -> new int[] {
-                authRepositoryService.deleteExpiredTokens(now),
-                authRepositoryService.deleteRevokedTokensBefore(revokedCutoff)
-        });
-        if (deleted != null && (deleted[0] > 0 || deleted[1] > 0)) {
-            log.info("RT 청소 (expired={}, revokedBeforeRetention={})", deleted[0], deleted[1]);
+        // 문장당 트랜잭션 하나 — 탈퇴의 RT 일괄 폐기(UPDATE)와 잠금 순서가 엇갈려 교착할 가능성을 문장 단위로 좁힌다
+        int expired = Objects.requireNonNull(transactionTemplate.execute(status ->
+                authRepositoryService.deleteExpiredTokens(now)));
+        int revoked = Objects.requireNonNull(transactionTemplate.execute(status ->
+                authRepositoryService.deleteRevokedTokensBefore(revokedCutoff)));
+        if (expired > 0 || revoked > 0) {
+            log.info("RT 청소 (expired={}, revokedBeforeRetention={})", expired, revoked);
         }
     }
 }

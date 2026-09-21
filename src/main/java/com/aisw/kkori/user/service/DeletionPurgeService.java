@@ -88,7 +88,10 @@ public class DeletionPurgeService {
                         return; // 스캔~잠금 사이에 다른 인스턴스가 정리했다
                     }
                     int consents = userRepositoryService.deleteConsentsByUserId(expired.getUserId());
-                    userRepositoryService.deleteUserRow(expired.getUserId());
+                    if (!userRepositoryService.deleteUserRow(expired.getUserId())) {
+                        log.warn("보존 만료 정리 — users 행이 이미 없음 (deletionLogId={}, userId={})",
+                                expired.getId(), expired.getUserId());
+                    }
                     log.info("보존 만료 정리 — 동의 이력·가명 users 행 삭제 (deletionLogId={}, userId={}, consents={})",
                             expired.getId(), expired.getUserId(), consents);
                 });

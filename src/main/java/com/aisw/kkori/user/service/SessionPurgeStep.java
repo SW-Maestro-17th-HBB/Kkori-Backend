@@ -75,11 +75,13 @@ public class SessionPurgeStep implements PurgeStep {
                 continue;
             }
             s3Template.deleteObject(session.getRecordingBucket(), session.getRecordingObjectKey());
-            transactionTemplate.executeWithoutResult(status -> {
+            boolean cleared = Objects.requireNonNull(transactionTemplate.execute(status -> {
                 userRepositoryService.lockUser(userId);
-                sessionRepositoryService.clearRecording(session.getId(), now());
-            });
-            recordings++;
+                return sessionRepositoryService.clearRecording(session.getId(), now());
+            }));
+            if (cleared) {
+                recordings++;
+            }
         }
 
         // 3) 대본 마스킹 + 세션 soft delete — 한 트랜잭션
