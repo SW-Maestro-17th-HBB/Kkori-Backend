@@ -10,7 +10,7 @@ import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.domain.UserConsent;
 import com.aisw.kkori.user.repositoryservice.DeletionLogRepositoryService;
 import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
-import com.aisw.kkori.user.service.DeletionPurgeScheduler;
+import com.aisw.kkori.user.scheduler.DeletionPurgeScheduler;
 import com.aisw.kkori.user.service.DeletionPurgeService;
 import com.aisw.kkori.user.service.PurgeStep;
 import com.aisw.kkori.user.service.PurgeTarget;

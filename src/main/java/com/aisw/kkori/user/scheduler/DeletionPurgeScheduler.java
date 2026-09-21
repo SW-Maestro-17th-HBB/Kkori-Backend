@@ -1,5 +1,6 @@
-package com.aisw.kkori.user.service;
+package com.aisw.kkori.user.scheduler;
 
+import com.aisw.kkori.user.service.DeletionPurgeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;

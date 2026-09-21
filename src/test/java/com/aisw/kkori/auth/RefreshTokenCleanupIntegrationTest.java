@@ -3,7 +3,7 @@ package com.aisw.kkori.auth;
 import com.aisw.kkori.auth.domain.RefreshToken;
 import com.aisw.kkori.auth.dto.TokenResponse;
 import com.aisw.kkori.auth.repositoryservice.AuthRepositoryService;
-import com.aisw.kkori.auth.service.RefreshTokenCleanupScheduler;
+import com.aisw.kkori.auth.scheduler.RefreshTokenCleanupScheduler;
 import com.aisw.kkori.auth.service.RefreshTokenCleanupService;
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;

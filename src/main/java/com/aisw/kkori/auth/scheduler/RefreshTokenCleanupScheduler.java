@@ -1,5 +1,6 @@
-package com.aisw.kkori.auth.service;
+package com.aisw.kkori.auth.scheduler;
 
+import com.aisw.kkori.auth.service.RefreshTokenCleanupService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;

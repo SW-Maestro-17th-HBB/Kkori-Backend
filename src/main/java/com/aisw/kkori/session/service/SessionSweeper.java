@@ -8,7 +8,6 @@ import com.aisw.kkori.session.dto.RoomPresence;
 import com.aisw.kkori.session.repositoryservice.SessionRepositoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -42,6 +41,8 @@ import java.util.function.Consumer;
  * <p>세션별 처리는 독립 트랜잭션(user 잠금 + 조건부 UPDATE)으로 격리한다 — 한 세션의 실패가
  * 다른 세션 처리를 막지 않고, 다중 인스턴스 동시 실행도 조건부 UPDATE가 무해화한다. LiveKit
  * 왕복(룸 삭제·참가자 조회)은 트랜잭션·잠금 밖에서 한다.
+ *
+ * <p>스케줄 트리거는 {@code com.aisw.kkori.session.scheduler.SessionSweepScheduler}가 담당하고, 이 클래스는 로직만 갖는다.
  */
 @Slf4j
 @Component
@@ -71,7 +72,7 @@ public class SessionSweeper {
     private final SessionProperties properties;
     private final Clock clock;
 
-    @Scheduled(fixedDelayString = "${session.sweep-interval}")
+    /** 한 주기 — 트리거({@code SessionSweepScheduler})와 테스트가 호출한다. */
     public void sweep() {
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
         sweepEndFallback(now);

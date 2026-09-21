@@ -1,5 +1,6 @@
-package com.aisw.kkori.resume.service;
+package com.aisw.kkori.resume.scheduler;
 
+import com.aisw.kkori.resume.service.ResumePhysicalDeleteService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;

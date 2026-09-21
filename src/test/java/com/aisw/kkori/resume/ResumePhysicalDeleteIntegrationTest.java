@@ -9,7 +9,7 @@ import com.aisw.kkori.resume.domain.ResumeAnalysisStatus;
 import com.aisw.kkori.resume.repository.ResumeAnalysisStatusRepository;
 import com.aisw.kkori.resume.repository.ResumeRepository;
 import com.aisw.kkori.resume.repositoryservice.ResumeRepositoryService;
-import com.aisw.kkori.resume.service.ResumePhysicalDeleteScheduler;
+import com.aisw.kkori.resume.scheduler.ResumePhysicalDeleteScheduler;
 import com.aisw.kkori.resume.service.ResumePhysicalDeleteService;
 import com.aisw.kkori.resume.service.ResumeUploadService;
 import com.aisw.kkori.user.domain.User;

@@ -26,7 +26,7 @@ import java.util.Optional;
  * 선점·각 단계·종결·실패 전환은 각각 짧은 트랜잭션이며 S3·카카오 왕복은 잠금 밖에서 일어난다.
  * 건별 처리는 격리한다 — 한 유저의 실패가 같은 회차의 다른 유저를 막지 않는다.
  *
- * <p>스케줄 트리거는 {@link DeletionPurgeScheduler}가 담당하고, 테스트는 {@link #runCycle()}을
+ * <p>스케줄 트리거는 {@link com.aisw.kkori.user.scheduler.DeletionPurgeScheduler}가 담당하고, 테스트는 {@link #runCycle()}을
  * 직접 호출한다(스위퍼 관례).
  */
 @Slf4j
