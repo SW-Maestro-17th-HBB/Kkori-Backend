@@ -13,6 +13,7 @@ import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.domain.UserConsent;
 import com.aisw.kkori.user.dto.UserInfoResponse;
 import com.aisw.kkori.user.dto.WithdrawResponse;
+import com.aisw.kkori.user.repositoryservice.DeletionLogRepositoryService;
 import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -39,6 +40,7 @@ public class UserService {
     private static final int MAX_NAME_CODE_POINTS = 100;
 
     private final UserRepositoryService userRepositoryService;
+    private final DeletionLogRepositoryService deletionLogRepositoryService;
     private final AuthRepositoryService authRepositoryService;
     private final UserSessionTerminator userSessionTerminator;
     private final AccountPolicyProperties accountPolicyProperties;
@@ -99,7 +101,7 @@ public class UserService {
         // 진행 중 세션 선기록(ABORTED) — 벌크 UPDATE라 영속성 컨텍스트를 비운다(이후 엔티티 변이 금지)
         List<String> abortedRooms = userSessionTerminator.abortAllForWithdrawal(userId, now);
         withdrawAgreedConsents(userId, now);
-        userRepositoryService.saveDeletionLog(DeletionLog.pending(userId, providerId, now));
+        deletionLogRepositoryService.save(DeletionLog.pending(userId, providerId, now));
         userSessionTerminator.deleteRoomsAfterCommit(abortedRooms);
         return new WithdrawResponse(purgeScheduledAt(now));
     }
@@ -114,14 +116,14 @@ public class UserService {
     public RestoreResult restore(String tokenProviderId, Long deletionLogId,
                                  Map<ConsentType, ConsentDecision> consents) {
         // 1차 신원 검증 — 선조회 이후의 상태 전이는 아래 잠금 후 재확인이 검출한다.
-        DeletionLog deletionLog = userRepositoryService.getDeletionLogMatching(deletionLogId, tokenProviderId);
+        DeletionLog deletionLog = deletionLogRepositoryService.getMatching(deletionLogId, tokenProviderId);
 
         // 잠금 순서 user → deletion_log → RT (기능 2 직렬화 계약). 로그 행 잠금이
         // 판정과 후속 상태 변경(마스킹·CANCELLED 전환) 사이의 배치 PURGING 선점을 차단한다.
         User user = userRepositoryService.tryLockUser(deletionLog.getUserId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
         // 잠금 획득 후 재확인 — 토큰 발급 후 10분 사이 배치가 선점했을 수 있다
-        DeletionStatus current = userRepositoryService.lockAndReadDeletionStatus(deletionLogId)
+        DeletionStatus current = deletionLogRepositoryService.lockAndReadStatus(deletionLogId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
 
         // 트랜잭션 시각 — 잠금 획득 "후" 취득한다(account.md 기능 4-3). 잠금 전에 취득하면 잠금 대기 중
@@ -140,7 +142,7 @@ public class UserService {
             return RestoreResult.Expired.INSTANCE;
         }
 
-        if (!userRepositoryService.cancelPendingPurge(deletionLogId, now, now.minus(grace))) {
+        if (!deletionLogRepositoryService.cancelPendingPurge(deletionLogId, now, now.minus(grace))) {
             // 모든 복구 제출이 user 잠금을 먼저 잡으므로 여기 도달은 예외적 — 방어적 최후 방어선
             throw new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN);
         }

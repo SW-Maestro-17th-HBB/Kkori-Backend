@@ -8,6 +8,7 @@ import com.aisw.kkori.user.domain.ConsentType;
 import com.aisw.kkori.user.domain.PurgeDetail;
 import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.domain.UserConsent;
+import com.aisw.kkori.user.repositoryservice.DeletionLogRepositoryService;
 import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import com.aisw.kkori.user.service.DeletionPurgeScheduler;
 import com.aisw.kkori.user.service.DeletionPurgeService;
@@ -63,6 +64,9 @@ class DeletionPurgeIntegrationTest extends AuthIntegrationTestSupport {
     private UserRepositoryService userRepositoryService;
 
     @Autowired
+    private DeletionLogRepositoryService deletionLogRepositoryService;
+
+    @Autowired
     private AccountPolicyProperties accountPolicyProperties;
 
     @Autowired
@@ -112,7 +116,8 @@ class DeletionPurgeIntegrationTest extends AuthIntegrationTestSupport {
     private DeletionPurgeService serviceAt(Instant now, Duration retention, PurgeStep... steps) {
         AccountPolicyProperties props = new AccountPolicyProperties(
                 GRACE, accountPolicyProperties.purgeInterval(), PURGING_TIMEOUT, retention);
-        return new DeletionPurgeService(userRepositoryService, List.of(steps), props, transactionTemplate,
+        return new DeletionPurgeService(userRepositoryService, deletionLogRepositoryService, List.of(steps), props,
+                transactionTemplate,
                 Clock.fixed(now, ZoneOffset.UTC));
     }
 
@@ -282,12 +287,12 @@ class DeletionPurgeIntegrationTest extends AuthIntegrationTestSupport {
             // 유예 판정은 시계 차이로 복구 측이 아직 유예 내라고 보는 상황을 흉내 낸다(선점과 겹치는 유일한 창).
             Runnable restore = () -> transactionTemplate.executeWithoutResult(status -> {
                 userRepositoryService.tryLockUser(userId);
-                DeletionStatus current = userRepositoryService.lockAndReadDeletionStatus(logId).orElseThrow();
+                DeletionStatus current = deletionLogRepositoryService.lockAndReadStatus(logId).orElseThrow();
                 if (current == DeletionStatus.PURGING || current == DeletionStatus.PURGED) {
                     sawPurging.set(true);
                     return;
                 }
-                restored.set(userRepositoryService.cancelPendingPurge(
+                restored.set(deletionLogRepositoryService.cancelPendingPurge(
                         logId, NOW, NOW.minus(GRACE).minus(Duration.ofDays(1))));
             });
 
@@ -402,10 +407,10 @@ class DeletionPurgeIntegrationTest extends AuthIntegrationTestSupport {
         PurgeDetail stale = PurgeDetail.empty().attempt(staleClaim).withError("stale");
 
         // repositoryService는 트랜잭션을 소유하지 않는다 — 배치 실무와 같이 호출자 트랜잭션 안에서 실행
-        assertThat(inTx(() -> userRepositoryService.recordPurgeDetail(logId, staleClaim, stale))).isFalse();
-        assertThat(inTx(() -> userRepositoryService.clearProviderSnapshot(logId, staleClaim))).isFalse();
-        assertThat(inTx(() -> userRepositoryService.failPurge(logId, staleClaim, NOW, stale))).isFalse();
-        assertThat(inTx(() -> userRepositoryService.completePurge(logId, staleClaim, NOW, stale))).isFalse();
+        assertThat(inTx(() -> deletionLogRepositoryService.recordPurgeDetail(logId, staleClaim, stale))).isFalse();
+        assertThat(inTx(() -> deletionLogRepositoryService.clearProviderSnapshot(logId, staleClaim))).isFalse();
+        assertThat(inTx(() -> deletionLogRepositoryService.failPurge(logId, staleClaim, NOW, stale))).isFalse();
+        assertThat(inTx(() -> deletionLogRepositoryService.completePurge(logId, staleClaim, NOW, stale))).isFalse();
 
         DeletionLog log = logOf(userId);
         assertThat(log.getStatus()).isEqualTo(DeletionStatus.PURGING);
@@ -414,7 +419,7 @@ class DeletionPurgeIntegrationTest extends AuthIntegrationTestSupport {
         assertThat(log.getPurgeDetail()).isNull();
 
         // 현재 소유자의 쓰기는 통과한다
-        assertThat(inTx(() -> userRepositoryService.completePurge(logId, freshClaim, NOW, PurgeDetail.empty()))).isTrue();
+        assertThat(inTx(() -> deletionLogRepositoryService.completePurge(logId, freshClaim, NOW, PurgeDetail.empty()))).isTrue();
         assertThat(logOf(userId).getStatus()).isEqualTo(DeletionStatus.PURGED);
     }
 

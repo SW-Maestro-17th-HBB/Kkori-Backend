@@ -3,6 +3,7 @@ package com.aisw.kkori.user.service;
 import com.aisw.kkori.global.logging.LogMasker;
 import com.aisw.kkori.global.oauth.KakaoUnlinkClient;
 import com.aisw.kkori.user.domain.PurgeDetail;
+import com.aisw.kkori.user.repositoryservice.DeletionLogRepositoryService;
 import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +28,7 @@ import java.util.Optional;
 public class KakaoUnlinkPurgeStep implements PurgeStep {
 
     private final UserRepositoryService userRepositoryService;
+    private final DeletionLogRepositoryService deletionLogRepositoryService;
     private final KakaoUnlinkClient unlinkClient;
     private final LogMasker logMasker;
     private final TransactionTemplate transactionTemplate;
@@ -43,7 +45,7 @@ public class KakaoUnlinkPurgeStep implements PurgeStep {
 
     @Override
     public PurgeDetail.StepResult execute(PurgeTarget target) {
-        Optional<String> snapshot = userRepositoryService.findProviderSnapshot(target.deletionLogId());
+        Optional<String> snapshot = deletionLogRepositoryService.findProviderSnapshot(target.deletionLogId());
         if (snapshot.isEmpty()) {
             log.info("unlink 생략 — 스냅샷 없음(이미 완료) (deletionLogId={})", target.deletionLogId());
             return PurgeDetail.StepResult.of(PurgeDetail.StepResult.SKIPPED_ALREADY_UNLINKED);
@@ -65,7 +67,7 @@ public class KakaoUnlinkPurgeStep implements PurgeStep {
     /** 스냅샷 NULL 처리 — 펜싱 불일치(재선점)는 여기서 실패시키지 않는다(오케스트레이터의 다음 기록이 검출). */
     private void clearSnapshot(PurgeTarget target) {
         Boolean cleared = transactionTemplate.execute(status ->
-                userRepositoryService.clearProviderSnapshot(target.deletionLogId(), target.claimedAt()));
+                deletionLogRepositoryService.clearProviderSnapshot(target.deletionLogId(), target.claimedAt()));
         if (!Boolean.TRUE.equals(cleared)) {
             log.warn("스냅샷 NULL 처리 펜싱 불일치 — 재선점된 건 (deletionLogId={})", target.deletionLogId());
         }

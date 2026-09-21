@@ -14,6 +14,7 @@ import com.aisw.kkori.user.config.AccountPolicyProperties;
 import com.aisw.kkori.user.domain.DeletionLog;
 import com.aisw.kkori.user.domain.DeletionStatus;
 import com.aisw.kkori.user.domain.User;
+import com.aisw.kkori.user.repositoryservice.DeletionLogRepositoryService;
 import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -40,6 +41,7 @@ public class TokenService {
     private static final Duration GRACE_PERIOD = Duration.ofSeconds(60);
 
     private final UserRepositoryService userRepositoryService;
+    private final DeletionLogRepositoryService deletionLogRepositoryService;
     private final AuthRepositoryService authRepositoryService;
     private final JwtTokenProvider jwtTokenProvider;
     private final JwtProperties jwtProperties;
@@ -88,8 +90,8 @@ public class TokenService {
     }
 
     private Long latestDeletionLogId(User user) {
-        return userRepositoryService
-                .findLatestDeletionLog(user.getId())
+        return deletionLogRepositoryService
+                .findLatestByUserId(user.getId())
                 .map(DeletionLog::getId)
                 .orElse(null);
     }
@@ -99,7 +101,7 @@ public class TokenService {
         if (deletionLogId == null) {
             return null;
         }
-        return userRepositoryService.lockAndReadDeletionStatus(deletionLogId).orElse(null);
+        return deletionLogRepositoryService.lockAndReadStatus(deletionLogId).orElse(null);
     }
 
     /**

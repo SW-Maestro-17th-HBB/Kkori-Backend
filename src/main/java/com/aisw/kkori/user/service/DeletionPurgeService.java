@@ -5,6 +5,7 @@ import com.aisw.kkori.user.config.AccountPolicyProperties;
 import com.aisw.kkori.user.domain.DeletionLog;
 import com.aisw.kkori.user.domain.PurgeDetail;
 import com.aisw.kkori.user.domain.User;
+import com.aisw.kkori.user.repositoryservice.DeletionLogRepositoryService;
 import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -37,15 +38,18 @@ public class DeletionPurgeService {
     private static final int MAX_ERROR_SUMMARY_LENGTH = 200;
 
     private final UserRepositoryService userRepositoryService;
+    private final DeletionLogRepositoryService deletionLogRepositoryService;
     private final List<PurgeStep> steps;
     private final AccountPolicyProperties properties;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
 
-    public DeletionPurgeService(UserRepositoryService userRepositoryService, List<PurgeStep> steps,
+    public DeletionPurgeService(UserRepositoryService userRepositoryService,
+                                DeletionLogRepositoryService deletionLogRepositoryService, List<PurgeStep> steps,
                                 AccountPolicyProperties properties, TransactionTemplate transactionTemplate,
                                 Clock clock) {
         this.userRepositoryService = userRepositoryService;
+        this.deletionLogRepositoryService = deletionLogRepositoryService;
         this.steps = steps.stream().sorted(Comparator.comparingInt(PurgeStep::order)).toList();
         this.properties = properties;
         this.transactionTemplate = transactionTemplate;
@@ -57,7 +61,7 @@ public class DeletionPurgeService {
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
         Instant graceCutoff = now.minus(properties.withdrawalGracePeriod());
         Instant staleCutoff = now.minus(properties.purgingTimeout());
-        List<DeletionLog> candidates = userRepositoryService.findPurgeCandidates(graceCutoff, staleCutoff);
+        List<DeletionLog> candidates = deletionLogRepositoryService.findPurgeCandidates(graceCutoff, staleCutoff);
         for (DeletionLog candidate : candidates) {
             try {
                 purge(candidate, graceCutoff, staleCutoff);
@@ -76,7 +80,7 @@ public class DeletionPurgeService {
      * users 행 부재가 정리 완료의 표식이라 재실행은 대상 없음으로 멱등이다.
      */
     private void cleanupExpiredRetention(Instant retentionCutoff) {
-        for (DeletionLog expired : userRepositoryService.findRetentionExpiredPurges(retentionCutoff)) {
+        for (DeletionLog expired : deletionLogRepositoryService.findRetentionExpiredPurges(retentionCutoff)) {
             try {
                 transactionTemplate.executeWithoutResult(status -> {
                     if (userRepositoryService.tryLockUser(expired.getUserId()).isEmpty()) {
@@ -135,20 +139,20 @@ public class DeletionPurgeService {
     private Optional<Claim> claim(long deletionLogId, Instant graceCutoff, Instant staleCutoff) {
         return transactionTemplate.execute(status -> {
             Instant claimedAt = clock.instant().truncatedTo(ChronoUnit.MICROS);
-            if (!userRepositoryService.claimForPurge(deletionLogId, claimedAt, graceCutoff, staleCutoff)) {
+            if (!deletionLogRepositoryService.claimForPurge(deletionLogId, claimedAt, graceCutoff, staleCutoff)) {
                 return Optional.empty();
             }
-            PurgeDetail detail = userRepositoryService.findPurgeDetail(deletionLogId)
+            PurgeDetail detail = deletionLogRepositoryService.findPurgeDetail(deletionLogId)
                     .orElse(PurgeDetail.empty())
                     .attempt(claimedAt);
-            userRepositoryService.recordPurgeDetail(deletionLogId, claimedAt, detail);
+            deletionLogRepositoryService.recordPurgeDetail(deletionLogId, claimedAt, detail);
             return Optional.of(new Claim(claimedAt, detail));
         });
     }
 
     private void record(PurgeTarget target, PurgeDetail detail) {
         Boolean recorded = transactionTemplate.execute(status ->
-                userRepositoryService.recordPurgeDetail(target.deletionLogId(), target.claimedAt(), detail));
+                deletionLogRepositoryService.recordPurgeDetail(target.deletionLogId(), target.claimedAt(), detail));
         if (!Boolean.TRUE.equals(recorded)) {
             throw new OwnershipLostException();
         }
@@ -173,7 +177,7 @@ public class DeletionPurgeService {
                 finalDetail = detail.withStep(PurgeDetail.STEP_IDENTIFIERS,
                         PurgeDetail.StepResult.of(PurgeDetail.StepResult.SKIPPED));
             }
-            if (!userRepositoryService.completePurge(target.deletionLogId(), target.claimedAt(), now, finalDetail)) {
+            if (!deletionLogRepositoryService.completePurge(target.deletionLogId(), target.claimedAt(), now, finalDetail)) {
                 status.setRollbackOnly();
                 throw new OwnershipLostException();
             }
@@ -187,7 +191,7 @@ public class DeletionPurgeService {
      * DB 제약 위반 메시지에는 컬럼 값이 실릴 수 있다(공통: 로그·개인정보). 진단 재료는 {@link #summarize}의 요약뿐이다.
      */
     private void fail(PurgeTarget target, PurgeDetail detail) {
-        Boolean marked = transactionTemplate.execute(status -> userRepositoryService.failPurge(
+        Boolean marked = transactionTemplate.execute(status -> deletionLogRepositoryService.failPurge(
                 target.deletionLogId(), target.claimedAt(), clock.instant().truncatedTo(ChronoUnit.MICROS), detail));
         if (!Boolean.TRUE.equals(marked)) {
             log.warn("파기 실패 전환 펜싱 불일치 — 재선점된 건, 결과 폐기 (deletionLogId={})", target.deletionLogId());
