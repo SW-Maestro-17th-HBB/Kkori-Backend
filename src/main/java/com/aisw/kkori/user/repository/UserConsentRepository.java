@@ -2,12 +2,16 @@ package com.aisw.kkori.user.repository;
 
 import com.aisw.kkori.user.domain.UserConsent;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 
-/** 동의 이력 저장소. append-only라 저장 외 조작이 없다. */
+/**
+ * 동의 이력 저장소. 서비스 경로는 append-only라 저장 외 조작이 없다 — 유일한 예외는 보존 기간 만료 삭제
+ * ({@link #deleteAllByUserId}, PRD deletion.md 기능 7)로, append-only 계약이 별개 축으로 둔 보존 정책의 소관이다.
+ */
 public interface UserConsentRepository extends JpaRepository<UserConsent, Long> {
 
     /** 유저의 동의 이력 전체. 이력 감사·테스트 검증용 — 최신 상태 판정은 {@link #findLatestByUserId} 사용. */
@@ -27,4 +31,9 @@ public interface UserConsentRepository extends JpaRepository<UserConsent, Long> 
                 select max(uc2.id) from UserConsent uc2
                 where uc2.userId = :userId group by uc2.consentType)""")
     List<UserConsent> findLatestByUserId(@Param("userId") Long userId);
+
+    /** 보존 기간 만료 삭제 — 파기 완료 후 보존 기간이 지난 유저의 이력 전체(PRD deletion.md 기능 7). */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("delete from UserConsent uc where uc.userId = :userId")
+    int deleteAllByUserId(@Param("userId") Long userId);
 }

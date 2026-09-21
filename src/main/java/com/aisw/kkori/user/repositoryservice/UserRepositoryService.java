@@ -2,11 +2,8 @@ package com.aisw.kkori.user.repositoryservice;
 
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
-import com.aisw.kkori.user.domain.DeletionLog;
-import com.aisw.kkori.user.domain.DeletionStatus;
 import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.domain.UserConsent;
-import com.aisw.kkori.user.repository.DeletionLogRepository;
 import com.aisw.kkori.user.repository.UserConsentRepository;
 import com.aisw.kkori.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -14,13 +11,13 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 
 /**
  * user 도메인 영속성 접근 계층. service·타 도메인은 raw repository 대신 이 계층을 거친다
  * (CLAUDE.md 패키지 구조 규칙). 트랜잭션은 소유하지 않는다 — 잠금 메서드는 반드시
  * 호출자의 트랜잭션 안에서 호출해야 잠금이 트랜잭션 끝까지 유지된다.
+ * {@code deletion_log} 접근은 {@link DeletionLogRepositoryService}가 담당한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -28,7 +25,6 @@ public class UserRepositoryService {
 
     private final UserRepository userRepository;
     private final UserConsentRepository userConsentRepository;
-    private final DeletionLogRepository deletionLogRepository;
 
     // ── User ──
 
@@ -87,6 +83,11 @@ public class UserRepositoryService {
         return userRepository.findByProviderId(providerId);
     }
 
+    /** 같은 카카오 회원번호의 활성 계정 존재 여부 — 파기 배치의 unlink 생략 판정(유예 초과 재가입 보호). */
+    public boolean existsActiveByProviderId(String providerId) {
+        return userRepository.existsByProviderIdAndDeletedAtIsNull(providerId);
+    }
+
     public User saveAndFlush(User user) {
         return userRepository.saveAndFlush(user);
     }
@@ -121,38 +122,15 @@ public class UserRepositoryService {
         return userConsentRepository.findLatestByUserId(userId);
     }
 
-    // ── DeletionLog ──
+    // ── 보존 만료 정리 (PRD deletion.md 기능 7) — 호출자의 user 잠금 트랜잭션 안에서 ──
 
-    public DeletionLog saveDeletionLog(DeletionLog deletionLog) {
-        return deletionLogRepository.save(deletionLog);
+    /** 유저의 동의 이력 전체 삭제 — 삭제 건수. append-only 계약의 예외(보존 정책 소관). */
+    public int deleteConsentsByUserId(Long userId) {
+        return userConsentRepository.deleteAllByUserId(userId);
     }
 
-    /**
-     * 탈퇴 로그 조회 + provider_id 스냅샷 대조(1차 신원 검증) — 부재·불일치는
-     * {@code INVALID_SIGNUP_TOKEN}. 스냅샷은 CANCELLED/PURGED 전환 시 NULL로 바뀌는
-     * 가변 값이라, 선조회 이후의 상태 전이는 {@link #lockAndReadDeletionStatus} 재확인이 검출한다.
-     */
-    public DeletionLog getDeletionLogMatching(Long id, String providerId) {
-        return deletionLogRepository.findById(id)
-                .filter(log -> Objects.equals(log.getProviderId(), providerId))
-                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
-    }
-
-    public Optional<DeletionLog> findLatestDeletionLog(Long userId) {
-        return deletionLogRepository.findFirstByUserIdOrderByRequestedAtDescIdDesc(userId);
-    }
-
-    /**
-     * deletion_log 행을 잠근 뒤 현재 status를 스칼라로 재조회한다. 잠금은 배치의 미커밋
-     * {@code PURGING} 선점이 커밋될 때까지 블로킹해 재조회를 안전하게 만들고, 스칼라 재조회는
-     * 1차 캐시의 낡은 엔티티를 우회한다. 레코드 소실은 empty.
-     */
-    public Optional<DeletionStatus> lockAndReadDeletionStatus(Long id) {
-        deletionLogRepository.findWithLockById(id);
-        return deletionLogRepository.findStatusById(id);
-    }
-
-    public boolean cancelPendingPurge(Long id, Instant now, Instant graceCutoff) {
-        return deletionLogRepository.cancelPendingPurge(id, now, graceCutoff) == 1;
+    /** 가명 users 행 삭제 — 삭제 여부. */
+    public boolean deleteUserRow(Long userId) {
+        return userRepository.deleteRowById(userId) == 1;
     }
 }

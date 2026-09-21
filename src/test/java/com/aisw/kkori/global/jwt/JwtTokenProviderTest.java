@@ -31,8 +31,12 @@ class JwtTokenProviderTest {
      */
     private static final Instant FIXED_NOW = Instant.now().truncatedTo(ChronoUnit.SECONDS);
 
+    private static final Duration CLEANUP_INTERVAL = Duration.ofHours(1);
+    private static final Duration REVOKED_RETENTION = Duration.ofDays(2);
+
     private final JwtProperties properties = new JwtProperties(
-            SECRET, SIGNUP_SECRET, Duration.ofMinutes(30), Duration.ofDays(14), Duration.ofMinutes(10));
+            SECRET, SIGNUP_SECRET, Duration.ofMinutes(30), Duration.ofDays(14), Duration.ofMinutes(10),
+            CLEANUP_INTERVAL, REVOKED_RETENTION);
     private final JwtTokenProvider provider =
             new JwtTokenProvider(properties, Clock.fixed(FIXED_NOW, ZoneOffset.UTC));
 
@@ -149,7 +153,8 @@ class JwtTokenProviderTest {
     @DisplayName("32바이트 미만 서명 키는 부팅 시점(설정 바인딩)에 거부된다")
     void shortSecretIsRejectedAtStartup() {
         assertThatThrownBy(() -> new JwtProperties(
-                "too-short", SIGNUP_SECRET, Duration.ofMinutes(30), Duration.ofDays(14), Duration.ofMinutes(10)))
+                "too-short", SIGNUP_SECRET, Duration.ofMinutes(30), Duration.ofDays(14), Duration.ofMinutes(10),
+                CLEANUP_INTERVAL, REVOKED_RETENTION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("jwt.secret");
     }
@@ -158,19 +163,38 @@ class JwtTokenProviderTest {
     @DisplayName("0 이하의 TTL은 부팅 시점(설정 바인딩)에 거부된다")
     void nonPositiveTtlIsRejectedAtStartup() {
         assertThatThrownBy(() -> new JwtProperties(
-                SECRET, SIGNUP_SECRET, Duration.ZERO, Duration.ofDays(14), Duration.ofMinutes(10)))
+                SECRET, SIGNUP_SECRET, Duration.ZERO, Duration.ofDays(14), Duration.ofMinutes(10),
+                CLEANUP_INTERVAL, REVOKED_RETENTION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("jwt.access-token-ttl");
 
         assertThatThrownBy(() -> new JwtProperties(
-                SECRET, SIGNUP_SECRET, Duration.ofMinutes(30), Duration.ofSeconds(-1), Duration.ofMinutes(10)))
+                SECRET, SIGNUP_SECRET, Duration.ofMinutes(30), Duration.ofSeconds(-1), Duration.ofMinutes(10),
+                CLEANUP_INTERVAL, REVOKED_RETENTION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("jwt.refresh-token-ttl");
 
         assertThatThrownBy(() -> new JwtProperties(
-                SECRET, SIGNUP_SECRET, Duration.ofMinutes(30), Duration.ofDays(14), null))
+                SECRET, SIGNUP_SECRET, Duration.ofMinutes(30), Duration.ofDays(14), null,
+                CLEANUP_INTERVAL, REVOKED_RETENTION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("jwt.signup-token-ttl");
+    }
+
+    @Test
+    @DisplayName("RT 청소 배치 설정(주기·폐기 보존 기간)도 0 이하면 부팅 시점에 거부된다")
+    void nonPositiveCleanupSettingsAreRejectedAtStartup() {
+        assertThatThrownBy(() -> new JwtProperties(
+                SECRET, SIGNUP_SECRET, Duration.ofMinutes(30), Duration.ofDays(14), Duration.ofMinutes(10),
+                Duration.ZERO, REVOKED_RETENTION))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("jwt.refresh-token-cleanup-interval");
+
+        assertThatThrownBy(() -> new JwtProperties(
+                SECRET, SIGNUP_SECRET, Duration.ofMinutes(30), Duration.ofDays(14), Duration.ofMinutes(10),
+                CLEANUP_INTERVAL, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("jwt.revoked-refresh-token-retention");
     }
 
     @Test

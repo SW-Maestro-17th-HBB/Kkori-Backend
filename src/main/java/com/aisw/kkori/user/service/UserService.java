@@ -3,6 +3,7 @@ package com.aisw.kkori.user.service;
 import com.aisw.kkori.auth.repositoryservice.AuthRepositoryService;
 import com.aisw.kkori.global.exception.BusinessException;
 import com.aisw.kkori.global.exception.ErrorCode;
+import com.aisw.kkori.session.service.UserSessionTerminator;
 import com.aisw.kkori.user.config.AccountPolicyProperties;
 import com.aisw.kkori.user.domain.ConsentAction;
 import com.aisw.kkori.user.domain.ConsentType;
@@ -12,6 +13,7 @@ import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.domain.UserConsent;
 import com.aisw.kkori.user.dto.UserInfoResponse;
 import com.aisw.kkori.user.dto.WithdrawResponse;
+import com.aisw.kkori.user.repositoryservice.DeletionLogRepositoryService;
 import com.aisw.kkori.user.repositoryservice.UserRepositoryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -21,6 +23,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -37,7 +40,9 @@ public class UserService {
     private static final int MAX_NAME_CODE_POINTS = 100;
 
     private final UserRepositoryService userRepositoryService;
+    private final DeletionLogRepositoryService deletionLogRepositoryService;
     private final AuthRepositoryService authRepositoryService;
+    private final UserSessionTerminator userSessionTerminator;
     private final AccountPolicyProperties accountPolicyProperties;
     private final Clock clock;
 
@@ -63,12 +68,14 @@ public class UserService {
     }
 
     /**
-     * 회원 탈퇴 — soft delete + RT 전체 폐기 + 동의 철회 append + 파기 대기 등록을
-     * 한 트랜잭션으로 수행한다. 네 기록 모두 같은 트랜잭션 시각을 공유한다(복구 판정·audit 정합).
+     * 회원 탈퇴 — soft delete + RT 전체 폐기 + 진행 중 세션 ABORTED 선기록 + 동의 철회 append
+     * + 파기 대기 등록을 한 트랜잭션으로 수행한다. 모든 기록이 같은 트랜잭션 시각을 공유한다
+     * (복구 판정·audit 정합). 종료된 세션의 LiveKit 룸 삭제는 커밋 후 응답 스레드 밖에서
+     * best-effort로 수행한다(PRD deletion.md 기능 1 — 선기록 후 삭제, 웹훅 3초 응답 보호).
      *
      * <p>동일 유저의 탈퇴 처리는 조건부 UPDATE의 영향 행 수로 직렬화한다: 상태 전이를
      * 실제로 수행한(1행) 트랜잭션만 후속 작업을 진행하고, 밀린(0행) 요청은 기존
-     * {@code deleted_at} 기준의 파기 예정 시각을 반환한다(멱등).
+     * {@code deleted_at} 기준의 파기 예정 시각을 반환한다(멱등 — 세션도 건드리지 않는다).
      */
     @Transactional
     public WithdrawResponse withdraw(Long userId) {
@@ -91,8 +98,11 @@ public class UserService {
         }
 
         authRepositoryService.revokeAllByUserId(userId, now);
+        // 진행 중 세션 선기록(ABORTED) — 벌크 UPDATE라 영속성 컨텍스트를 비운다(이후 엔티티 변이 금지)
+        List<String> abortedRooms = userSessionTerminator.abortAllForWithdrawal(userId, now);
         withdrawAgreedConsents(userId, now);
-        userRepositoryService.saveDeletionLog(DeletionLog.pending(userId, providerId, now));
+        deletionLogRepositoryService.save(DeletionLog.pending(userId, providerId, now));
+        userSessionTerminator.deleteRoomsAfterCommit(abortedRooms);
         return new WithdrawResponse(purgeScheduledAt(now));
     }
 
@@ -106,14 +116,14 @@ public class UserService {
     public RestoreResult restore(String tokenProviderId, Long deletionLogId,
                                  Map<ConsentType, ConsentDecision> consents) {
         // 1차 신원 검증 — 선조회 이후의 상태 전이는 아래 잠금 후 재확인이 검출한다.
-        DeletionLog deletionLog = userRepositoryService.getDeletionLogMatching(deletionLogId, tokenProviderId);
+        DeletionLog deletionLog = deletionLogRepositoryService.getMatching(deletionLogId, tokenProviderId);
 
         // 잠금 순서 user → deletion_log → RT (기능 2 직렬화 계약). 로그 행 잠금이
         // 판정과 후속 상태 변경(마스킹·CANCELLED 전환) 사이의 배치 PURGING 선점을 차단한다.
         User user = userRepositoryService.tryLockUser(deletionLog.getUserId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
         // 잠금 획득 후 재확인 — 토큰 발급 후 10분 사이 배치가 선점했을 수 있다
-        DeletionStatus current = userRepositoryService.lockAndReadDeletionStatus(deletionLogId)
+        DeletionStatus current = deletionLogRepositoryService.lockAndReadStatus(deletionLogId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN));
 
         // 트랜잭션 시각 — 잠금 획득 "후" 취득한다(account.md 기능 4-3). 잠금 전에 취득하면 잠금 대기 중
@@ -132,7 +142,7 @@ public class UserService {
             return RestoreResult.Expired.INSTANCE;
         }
 
-        if (!userRepositoryService.cancelPendingPurge(deletionLogId, now, now.minus(grace))) {
+        if (!deletionLogRepositoryService.cancelPendingPurge(deletionLogId, now, now.minus(grace))) {
             // 모든 복구 제출이 user 잠금을 먼저 잡으므로 여기 도달은 예외적 — 방어적 최후 방어선
             throw new BusinessException(ErrorCode.INVALID_SIGNUP_TOKEN);
         }

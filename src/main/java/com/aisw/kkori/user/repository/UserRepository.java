@@ -19,6 +19,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
      */
     Optional<User> findByProviderId(String providerId);
 
+    boolean existsByProviderIdAndDeletedAtIsNull(String providerId);
+
     /**
      * 카카오 회원번호로 id만 스칼라 조회한다 — 로그인이 user 행 잠금 전에 대상을 알아내는 용도.
      * 엔티티 조회를 쓰면 이후 잠금 조회가 낡은 관리 인스턴스를 반환할 수 있다.
@@ -44,4 +46,12 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("update User u set u.deletedAt = :now where u.id = :userId and u.deletedAt is null")
     int softDeleteById(@Param("userId") Long userId, @Param("now") Instant now);
+
+    /**
+     * 가명 users 행 삭제 — 동의 이력 보존 만료 정리(PRD deletion.md 기능 7). 파기로 식별정보가 이미 제거된
+     * 행이라 남길 이유가 없다. 호출 트랜잭션은 user 행 잠금을 보유해야 한다.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("delete from User u where u.id = :userId")
+    int deleteRowById(@Param("userId") Long userId);
 }

@@ -8,8 +8,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * {@code redirectUri}는 프론트가 인가 코드를 받은 콜백 URI로, 카카오가 토큰 교환 시
  * code 발급에 쓰인 URI와 일치하는지 검증하는 데 사용된다.
  *
- * <p>{@code adminKey}·{@code appId}는 연결 해제 웹훅 검증용이다. {@code appId}(숫자 앱 ID)는
- * {@code clientId}(REST API 키)와 서로 다른 값이므로 상호 대용 금지.
+ * <p>{@code adminKey}·{@code appId}는 연결 해제 웹훅 검증과 파기 배치의 unlink 호출에 쓰인다.
+ * {@code appId}(숫자 앱 ID)는 {@code clientId}(REST API 키)와 서로 다른 값이므로 상호 대용 금지.
+ * {@code unlinkUri}는 어드민 키 방식 연결 끊기 엔드포인트(PRD deletion.md 기능 4)로,
+ * {@code tokenUri}·{@code userInfoUri}와 같이 외부 고정 엔드포인트라 공통 설정에 둔다.
  */
 @ConfigurationProperties(prefix = "kakao")
 public record KakaoOAuthProperties(
@@ -18,6 +20,7 @@ public record KakaoOAuthProperties(
         String redirectUri,
         String tokenUri,
         String userInfoUri,
+        String unlinkUri,
         String adminKey,
         String appId
 ) {
@@ -29,6 +32,7 @@ public record KakaoOAuthProperties(
         requireText(redirectUri, "kakao.redirect-uri");
         requireText(tokenUri, "kakao.token-uri");
         requireText(userInfoUri, "kakao.user-info-uri");
+        requireText(unlinkUri, "kakao.unlink-uri");
         requireText(adminKey, "kakao.admin-key");
         requireText(appId, "kakao.app-id");
     }

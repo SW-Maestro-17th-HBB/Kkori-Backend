@@ -8,7 +8,7 @@
 
 본 기능은 로그인한 사용자가 자신의 계정 정보를 조회·수정하고 탈퇴하는 흐름, 그리고 탈퇴 계정의 복구를 정의한다. 모든 처리는 Spring API Server가 담당하며, 데이터는 PostgreSQL에 저장된다. 탈퇴는 **즉시 접근 차단(soft delete) + 유예 후 배치 파기**의 2단 구조로, 본 문서는 1단계(탈퇴 요청·파기 대기 등록)와 유예 기간 내 복구, 유예 초과 계정의 처리까지를 다룬다. 추가로 사용자가 카카오계정 관리 페이지에서 직접 연결을 끊는 경우를 동기화하는 **카카오 연결 해제 웹훅** 수신을 포함한다.
 
-경계: 로그인 판정·토큰 계약은 소셜 로그인 스토리(HBB1-11)의 PRD를 따르고, 동의 항목 정의·동의 상태 조회는 수집 동의 스토리(HBB1-12), 유예 경과 후 실데이터 파기·카카오 연결 해제(unlink) 실행·`deletion_log` 상태 전환(`PURGED`/`FAILED`)은 영구 삭제 스토리의 PRD에서 다룬다. 단 파기 배치가 의존하는 `deletion_log` 테이블(스키마 포함)은 본 스토리에서 생성한다.
+경계: 로그인 판정·토큰 계약은 소셜 로그인 스토리(HBB1-11)의 PRD를 따르고, 동의 항목 정의·동의 상태 조회는 수집 동의 스토리(HBB1-12), 유예 경과 후 실데이터 파기·카카오 연결 해제(unlink) 실행·`deletion_log` 상태 전환(`PURGED`/`FAILED`)은 영구 삭제 스토리(HBB1-13, `deletion.md`)의 PRD에서 다룬다. 단 파기 배치가 의존하는 `deletion_log` 테이블(스키마 포함)은 본 스토리에서 생성한다.
 
 ### 기능 요구사항
 
@@ -146,17 +146,17 @@
 - **동일 유저의 탈퇴 처리는 직렬화해야 한다**: soft delete를 `deleted_at IS NULL` 조건부 UPDATE로 수행하고, **영향 행 수가 1인(상태 전이를 실제로 수행한) 트랜잭션만** 후속 작업(RT 폐기·`WITHDRAWN` append·`deletion_log` INSERT)을 진행한다. 영향 행 수가 0이면 이미 탈퇴된 것으로 보고 상태를 변경하지 않는다 — API 요청과 웹훅(기능 5)이 같은 유저에 동시 도착해도 `WITHDRAWN`·`deletion_log`가 중복 생성되지 않게 하기 위함이다. 조건부 UPDATE에서 밀린 API 요청은 기존 `deleted_at` 기준의 `purgeScheduledAt`을 반환한다(멱등).
 - 탈퇴 트랜잭션은 조건부 UPDATE에 앞서 **user 행 잠금을 먼저 획득하고, 그 후에 시각을 취득**한다(공통: 시각 처리). 잠금은 시각 순서 보장용이며 **상태 전이의 권위는 여전히 조건부 UPDATE의 영향 행 수다** — 잠금 획득이 곧 탈퇴 진행을 뜻하지 않고, 0행이면 위 멱등 경로로 빠진다. 이 잠금이 없으면 user 잠금 하에 동의를 기록하는 선택 동의 변경(HBB1-12)과의 경합에서, 탈퇴가 잠금 전에 취득한 이른 시각으로 더 큰 id의 `WITHDRAWN`을 기록하는 시각 역행이 생긴다.
 - 응답의 `purgeScheduledAt`은 `deleted_at + 유예 기간`으로 계산한다. 유예 기간은 **3일**이며 설정값(`@ConfigurationProperties` record + compact constructor fail-fast — JwtProperties 패턴)으로 관리한다.
-- `provider_id` 스냅샷은 파기 배치의 카카오 연결 해제(unlink, 어드민 키 방식) 호출에 필요하다. `users.provider_id`가 유예 만료 처리(기능 4)로 먼저 마스킹될 수 있으므로 탈퇴 시점에 확보해 둔다. 스냅샷도 개인 식별정보이므로 복구 시(CANCELLED 전환)와 파기 완료 시(unlink 후) NULL 처리한다 — 파기 시점 처리는 영구 삭제 스토리 범위.
+- `provider_id` 스냅샷은 파기 배치의 카카오 연결 해제(unlink, 어드민 키 방식) 호출에 필요하다. `users.provider_id`가 유예 만료 처리(기능 4)로 먼저 마스킹될 수 있으므로 탈퇴 시점에 확보해 둔다. 스냅샷도 개인 식별정보이므로 복구 시(CANCELLED 전환)와 파기 완료 시(unlink 후) NULL 처리한다 — 파기 시점 처리는 deletion.md 기능 4(unlink 완료·생략 후 NULL).
 - 탈퇴 직후부터 JWT 필터의 `deleted_at` 검증이 잔여 AT를 차단하므로(이미 구현됨) AT 블랙리스트는 불필요하다.
-- 실데이터(이력서·세션 로그·리포트 등) 파기와 카카오 unlink 호출은 유예 경과 후 파기 배치가 수행한다(영구 삭제 스토리 범위). 본 API는 파기 대기 등록까지만 책임진다.
+- 실데이터(이력서·세션 로그·리포트 등) 파기와 카카오 unlink 호출은 유예 경과 후 파기 배치가 수행한다(deletion.md 기능 2~4). 본 API는 파기 대기 등록까지만 책임진다.
 
 ### 실행 조건
 
 - 유효한 Access Token으로 인증된 상태여야 한다.
 - `deletion_log` 테이블이 존재해야 한다. 본 스토리에서 생성하며 스키마는 draft ERD에 `provider_id` 컬럼을 추가한 형태다.
-  - **컬럼**: `id`(PK) · `user_id`(NOT NULL — FK 없이 애플리케이션이 무결성 관리, `refresh_token`과 동일 방침) · `provider_id`(nullable — 탈퇴 시 스냅샷, 복구·파기 완료 시 NULL) · `requested_at`(NOT NULL) · `purged_at`(nullable — 파기 완료 시각) · `status`(NOT NULL — PENDING_PURGE/PURGING/PURGED/FAILED/CANCELLED) · `purge_detail`(jsonb, nullable) · `updated_at`(NOT NULL — 마지막 상태 전이 시각. INSERT 시 `requested_at`과 동일 값으로 시작하고 상태 전이 시 갱신한다. 상태 전이는 조건부 UPDATE(벌크 쿼리)로 수행되어 auditing이 적용되지 않으므로 쿼리에서 명시적으로 갱신해야 한다. 용도: stale `PURGING` 회수·`FAILED` 재시도 판정 — 영구 삭제 스토리)
-  - **인덱스**: 부분 UNIQUE 인덱스 `ux_deletion_log_active_user` — `(user_id) WHERE status IN ('PENDING_PURGE', 'PURGING', 'FAILED')` — 는 **영구 삭제 스토리에서 마이그레이션 도구와 함께 후속 도입**한다. JPA 애너테이션으로 표현할 수 없어 본 스토리에서는 생성하지 않으며, 그때까지 유저당 활성 삭제 요청 1건의 보장은 애플리케이션 직렬화 계약(조건부 UPDATE)이 단독으로 담당한다. `(status, requested_at)` 인덱스도 활성 레코드가 항상 소량이라 동일하게 측정 후 검토한다.
-  - **상태 전이**: `PENDING_PURGE → CANCELLED`(복구 — 본 스토리, 조건부 전환) · `PENDING_PURGE·FAILED → PURGING`(파기 선점 — 영구 삭제 스토리, 조건부 전환. 복구와의 상호 배타는 기능 4 참조) · `PURGING → PURGED`(파기 성공) · `PURGING → FAILED`(파기 실패, 재시도 대상). `PURGED`·`CANCELLED`는 종결 상태로 재전이가 없다. `FAILED → CANCELLED` 전이는 존재하지 않는다 — FAILED는 유예 경과 후 파기 시도에서만 발생하고, 유예 초과 계정은 복구가 불가하기 때문(기능 4). 중단으로 방치된 `PURGING`의 회수(stale 판정·재시도)는 영구 삭제 스토리에서 정의한다.
+  - **컬럼**: `id`(PK) · `user_id`(NOT NULL — FK 없이 애플리케이션이 무결성 관리, `refresh_token`과 동일 방침) · `provider_id`(nullable — 탈퇴 시 스냅샷, 복구·파기 완료 시 NULL) · `requested_at`(NOT NULL) · `purged_at`(nullable — 파기 완료 시각) · `status`(NOT NULL — PENDING_PURGE/PURGING/PURGED/FAILED/CANCELLED) · `purge_detail`(jsonb, nullable) · `updated_at`(NOT NULL — 마지막 상태 전이 시각. INSERT 시 `requested_at`과 동일 값으로 시작하고 상태 전이 시 갱신한다. 상태 전이는 조건부 UPDATE(벌크 쿼리)로 수행되어 auditing이 적용되지 않으므로 쿼리에서 명시적으로 갱신해야 한다. 용도: stale `PURGING` 회수·`FAILED` 재시도 판정, 선점 시각은 후속 쓰기의 펜싱 토큰 — deletion.md 기능 2)
+  - **인덱스**: 부분 UNIQUE 인덱스 `ux_deletion_log_active_user` — `(user_id) WHERE status IN ('PENDING_PURGE', 'PURGING', 'FAILED')` — 는 **마이그레이션 도구(Flyway) 도입 시 후속 도입**한다. JPA 애너테이션으로 표현할 수 없어 본 스토리에서는 생성하지 않으며, 그때까지 유저당 활성 삭제 요청 1건의 보장은 애플리케이션 직렬화 계약(조건부 UPDATE)이 단독으로 담당한다. `(status, requested_at)` 인덱스도 활성 레코드가 항상 소량이라 동일하게 측정 후 검토한다.
+  - **상태 전이**: `PENDING_PURGE → CANCELLED`(복구 — 본 스토리, 조건부 전환) · `PENDING_PURGE·FAILED → PURGING`(파기 선점 — deletion.md 기능 2, 조건부 전환. 복구와의 상호 배타는 기능 4 참조) · `PURGING → PURGED`(파기 성공) · `PURGING → FAILED`(파기 실패, 재시도 대상). `PURGED`·`CANCELLED`는 종결 상태로 재전이가 없다. `FAILED → CANCELLED` 전이는 존재하지 않는다 — FAILED는 유예 경과 후 파기 시도에서만 발생하고, 유예 초과 계정은 복구가 불가하기 때문(기능 4). 중단으로 방치된 `PURGING`의 회수(stale 판정·재시도)는 deletion.md 기능 2가 정의한다(`updated_at` 임계 경과 시 재선점, 선점 시각 펜싱).
 
 ### 검증 기준
 
@@ -245,10 +245,10 @@
 2. `/auth/signup` 제출 시(복구 절차의 유예 초과 분기 — user·로그 행 잠금 하에 재판정 후): `users`의 식별정보를 파기하고(`email`·`name` NULL, `provider_id`는 **`PURGED_{users.id}` 형식으로 마스킹**) **같은 트랜잭션에서** 제출된 동의로 신규 계정을 생성한다. 마스킹 값은 실제 카카오 회원번호(숫자)와 형식상 겹치지 않으므로 UNIQUE 충돌이 발생하지 않는다
 3. `deletion_log`는 `PENDING_PURGE` 그대로 둔다 — 잔여 실데이터 파기와 unlink는 배치가 스냅샷 기반으로 계속 책임진다
 
-- `provider_id`를 NULL이 아닌 마스킹으로 파기하는 이유: 컬럼의 NOT NULL 제약과 "모든 유저는 provider_id를 가진다"는 도메인 불변식을 유지해 엔티티 변경·마이그레이션 없이 처리하기 위함이다. 마스킹 형식은 (1) 원본 복원이 불가능하고(해시 금지 — 카카오 회원번호는 숫자라 전수 대입으로 역산 가능), (2) `users.id` 기반이라 UNIQUE 제약 하에서 유일하며, (3) 재실행해도 같은 값이라 멱등하다. 파기 배치의 식별정보 파기도 동일 규칙을 따라야 한다(영구 삭제 스토리에 위임하는 요구사항).
+- `provider_id`를 NULL이 아닌 마스킹으로 파기하는 이유: 컬럼의 NOT NULL 제약과 "모든 유저는 provider_id를 가진다"는 도메인 불변식을 유지해 엔티티 변경·마이그레이션 없이 처리하기 위함이다. 마스킹 형식은 (1) 원본 복원이 불가능하고(해시 금지 — 카카오 회원번호는 숫자라 전수 대입으로 역산 가능), (2) `users.id` 기반이라 UNIQUE 제약 하에서 유일하며, (3) 재실행해도 같은 값이라 멱등하다. 파기 배치의 식별정보 파기도 동일 규칙을 따라야 한다(deletion.md 기능 3 종결 단계가 이행).
 
 - 유예 초과 경로에 별도 에러 코드는 두지 않는다. 사용자 관점에서는 파기 완료된 계정과 동일하게 신규 가입으로 흘러가며, 고지한 유예 정책("3일 내 재로그인 시 복구")과 동작이 일치한다.
-- **복구와 파기 배치의 상호 배타**: 파기 배치는 파기 작업을 시작하기 전에 대상 레코드를 `PENDING_PURGE·FAILED → PURGING` **조건부 전이로 선점**해야 한다(영구 삭제 스토리에 위임하는 요구사항). 복구의 조건부 `CANCELLED` 전환과 배치의 선점이 같은 `status`를 놓고 경쟁하므로 정확히 하나만 성립한다 — 선점된(`PURGING`) 레코드의 복구 제출은 조건부 전환 실패로 401이 되고, 먼저 `CANCELLED`된 레코드는 배치가 선점하지 못한다. 식별정보 파기(마스킹·NULL) 자체는 멱등이므로 유예 초과 로그인 처리와 배치가 중복 수행해도 무해하다.
+- **복구와 파기 배치의 상호 배타**: 파기 배치는 파기 작업을 시작하기 전에 대상 레코드를 `PENDING_PURGE·FAILED → PURGING` **조건부 전이로 선점**해야 한다(deletion.md 기능 2가 이행). 복구의 조건부 `CANCELLED` 전환과 배치의 선점이 같은 `status`를 놓고 경쟁하므로 정확히 하나만 성립한다 — 선점된(`PURGING`) 레코드의 복구 제출은 조건부 전환 실패로 401이 되고, 먼저 `CANCELLED`된 레코드는 배치가 선점하지 못한다. 식별정보 파기(마스킹·NULL) 자체는 멱등이므로 유예 초과 로그인 처리와 배치가 중복 수행해도 무해하다.
 
 ### 실행 조건
 
@@ -299,7 +299,7 @@
 
 ### 기타 요구사항
 
-- 유예 초과로 재가입한 유저의 옛 `deletion_log`를 배치가 나중에 unlink 처리하면 동일 카카오 계정의 새 연결이 끊길 수 있다. 이 경우 재로그인 시 카카오 동의 화면이 다시 뜰 뿐 데이터 유실은 없으나, 파기 배치는 **unlink 전 동일 `provider_id`의 활성 계정 존재 시 unlink를 생략**해야 한다(영구 삭제 스토리에 위임하는 요구사항).
+- 유예 초과로 재가입한 유저의 옛 `deletion_log`를 배치가 나중에 unlink 처리하면 동일 카카오 계정의 새 연결이 끊길 수 있다. 이 경우 재로그인 시 카카오 동의 화면이 다시 뜰 뿐 데이터 유실은 없으나, 파기 배치는 **unlink 전 동일 `provider_id`의 활성 계정 존재 시 unlink를 생략**해야 한다(deletion.md 기능 4가 이행).
 
 ---
 
@@ -360,7 +360,7 @@
 
 ### 기타 요구사항
 
-- 어드민 키는 unlink 호출(영구 삭제 스토리)에도 사용되므로 환경 변수 도입은 본 스토리에서 수행한다.
+- 어드민 키는 unlink 호출(deletion.md 기능 4)에도 사용되므로 환경 변수 도입은 본 스토리에서 수행한다.
 - 운영 절차: 웹훅 처리 실패 ERROR 로그가 확인되면 백엔드 담당자가 해당 유저를 수동으로 탈퇴 처리한다(기능 3과 동일한 상태 변경 — soft delete·RT 폐기·WITHDRAWN append·deletion_log 기록 — 을 운영 작업으로 수행). 로그의 `user_id` 가명값은 동일 키로 `users.provider_id`를 HMAC 대조해 원문을 특정한다 — 예: pgcrypto 확장 후 `encode(hmac(provider_id, :LOG_HMAC_KEY, 'sha256'), 'hex')`의 접두 일치 조회.
 
 ---

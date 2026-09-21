@@ -64,7 +64,7 @@ erDiagram
     timestamptz requested_at "NOT NULL"
     timestamptz purged_at "nullable"
     string status "NOT NULL, PENDING_PURGE|PURGING|PURGED|FAILED|CANCELLED"
-    jsonb purge_detail "nullable"
+    jsonb purge_detail "nullable, 파기 단계별 건수·상태 기록 — PurgeDetail 계약(deletion.md 기능 3), 개인정보 미포함"
     timestamptz updated_at "NOT NULL, 벌크 전이 시 명시 갱신"
   }
 
@@ -82,7 +82,7 @@ erDiagram
     jsonb structured_data "nullable, StructuredData 계약"
     timestamptz created_at
     timestamptz updated_at
-    timestamptz deleted_at "nullable"
+    timestamptz deleted_at "nullable, 물리 삭제 배치 대상 표식 — 탈퇴 파기 시 행 DELETE(deletion.md 기능 3), 개별 삭제 배치는 후속 스토리"
   }
 
   RESUME_ANALYSIS_STATUS {
@@ -97,7 +97,7 @@ erDiagram
     timestamptz failed_at "nullable"
     timestamptz created_at
     timestamptz updated_at
-    timestamptz deleted_at "nullable"
+    timestamptz deleted_at "nullable, 이력서와 함께 행 DELETE(deletion.md 기능 3)"
   }
 
   RESUME_CHUNKS {
@@ -127,14 +127,14 @@ erDiagram
     string recording_object_key "nullable, 업로드 완료된 객체 키(non-null = 기록·발행 완료 멱등 가드)"
     timestamptz created_at
     timestamptz updated_at
-    timestamptz deleted_at "nullable, E1 파기 연계(후속 스토리)"
+    timestamptz deleted_at "nullable, 탈퇴 파기 배치가 기록 — 행 유지, 녹음 컬럼은 S3 삭제 후 NULL(deletion.md 기능 3)"
   }
 
   INTERVIEW_TRANSCRIPT {
     bigint id PK
     bigint session_id UK "NOT NULL, FK 없음(무FK 방침)"
-    jsonb content "발화 객체 배열"
-    timestamptz deleted_at "nullable"
+    jsonb content "발화 객체 배열, 탈퇴 파기 시 빈 배열로 마스킹"
+    timestamptz deleted_at "nullable, 탈퇴 파기 배치가 마스킹과 함께 기록 — 행 유지(deletion.md 기능 3)"
   }
 
   REPORTS {
@@ -210,12 +210,12 @@ erDiagram
 | 테이블 | 소유 | 비고 |
 | --- | --- | --- |
 | `users` · `refresh_token` · `user_consent` · `deletion_log` | Spring (E1) | `user_consent`는 append-only 이력. `deletion_log`는 auditing 미적용(명시 시각 관리) |
-| `resumes` · `resume_analysis_status` | Spring (이력서) | 분석 상태는 Python Worker가 전이 기록(UPLOADED 이후) |
-| `resume_chunks` | Python Worker | 테이블 생성·쓰기 모두 Worker 소관. pgvector 확장은 백엔드 리포(로컬 이미지·Testcontainers)가 제공 |
+| `resumes` · `resume_analysis_status` | Spring (이력서) | 분석 상태는 Python Worker가 전이 기록(UPLOADED 이후). 탈퇴 파기 시 물리 삭제(deletion.md 기능 3) |
+| `resume_chunks` | Python Worker | 테이블 생성·쓰기 모두 Worker 소관. pgvector 확장은 백엔드 리포(로컬 이미지·Testcontainers)가 제공. **예외**: 탈퇴 파기·개별 삭제 시 Spring이 `resume_id` 기준 DELETE(deletion.md 크로스 레포 계약) |
 | `interview_session` | Spring (세션) | HBB1-18 신설, HBB1-294가 종료 전이(webhook·/end·스위퍼)와 `end_requested_at`·`agent_lost_at` 추가, HBB1-308이 재연결(`disconnected_at` 사용 개시)·재디스패치(`redispatched_at`) 추가. 인덱스 `(user_id, status)` |
-| `interview_transcript` | Kkori-AI (에이전트) | 테이블 DDL·마이그레이션·쓰기 모두 에이전트 소관(Kkori-AI interview-end.md §4). Spring은 판별용 EXISTS 읽기만(HBB1-294 — interview-session-completion.md). dev/prod는 에이전트 배포가 테이블 존재의 선행 조건 |
-| `reports`, `report_scores`, `report_feedbacks` | 정의 Spring (리포트 엔티티), 행은 Python Worker | Worker가 INSERT, UPDATE로 생성 수명주기 전체를 맡고 Spring은 조회만 한다(save, delete 없음). DDL은 로컬 ddl-auto update로 생성, dev/prod는 validate |
-| `report_generation_jobs` | Python Worker | 테이블 생성, 쓰기 모두 Worker 소관(worker/src/report/repository.py). 리포트당 1행, 재시도 횟수와 오류 기록. Spring 미접근 |
+| `interview_transcript` | Kkori-AI (에이전트) | 테이블 DDL·마이그레이션·쓰기 모두 에이전트 소관(Kkori-AI interview-end.md §4). Spring은 판별용 EXISTS 읽기만(HBB1-294 — interview-session-completion.md). dev/prod는 에이전트 배포가 테이블 존재의 선행 조건. **예외**: 탈퇴 파기 시 Spring이 `content = []`·`deleted_at` 마스킹 UPDATE(deletion.md 크로스 레포 계약) |
+| `reports`, `report_scores`, `report_feedbacks` | 정의 Spring (리포트 엔티티), 행은 Python Worker | Worker가 INSERT, UPDATE로 생성 수명주기 전체를 맡고 Spring은 조회만 한다(save, delete 없음). DDL은 로컬 ddl-auto update로 생성, dev/prod는 validate. **예외**: 탈퇴 파기 시 Spring이 JDBC로 물리 삭제(deletion.md 기능 3) |
+| `report_generation_jobs` | Python Worker | 테이블 생성, 쓰기 모두 Worker 소관(worker/src/report/repository.py). 리포트당 1행, 재시도 횟수와 오류 기록. Spring 미접근. **예외**: 탈퇴 파기 시 Spring이 JDBC로 DELETE(deletion.md 기능 3) |
 | `interview_metrics` | Kkori-AI (에이전트) | agent/migrations/002. STT, LLM, TTS 등 파이프라인 메트릭을 이벤트당 1행 jsonb로 적재. Spring 미접근 |
 
 ## 마이그레이션 도구 도입 시 반영할 항목 (Flyway — 배포 스토리)

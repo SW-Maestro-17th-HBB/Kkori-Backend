@@ -5,11 +5,14 @@ import com.aisw.kkori.session.domain.SessionStatus;
 import com.aisw.kkori.session.dto.AgentPresence;
 import com.aisw.kkori.session.dto.RoomPresence;
 import com.aisw.kkori.session.repositoryservice.SessionRepositoryService;
+import com.aisw.kkori.session.scheduler.SessionSweepScheduler;
 import com.aisw.kkori.session.service.SessionSweeper;
 import com.aisw.kkori.session.service.SessionTransitionExecutor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
+import org.springframework.scheduling.annotation.Scheduled;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -41,6 +44,9 @@ class SessionSweeperTest extends SessionCompletionTestSupport {
 
     @Autowired
     private SessionTransitionExecutor transitionExecutor;
+
+    @Autowired
+    private ApplicationContext applicationContext;
 
     /** 모든 앵커(지금 기록)가 임계를 지난 것으로 보이는 미래 시점의 스위퍼. */
     private SessionSweeper sweeperAt(Instant now) {
@@ -458,5 +464,15 @@ class SessionSweeperTest extends SessionCompletionTestSupport {
         sweeperAt(Instant.now().plus(Duration.ofHours(4))).sweep();
         assertThat(statusOfSession(sessionId)).isEqualTo("ABORTED");
         verify(roomManager, times(1)).probeRoomPresence("room-sw-29", candidateOf(sessionId));
+    }
+
+    @Test
+    @DisplayName("스케줄러는 session.sweep-interval을 fixedDelay로 쓴다 — 테스트 컨텍스트에는 스케줄러 빈이 등록되지 않는다")
+    void schedulerIsWiredToConfiguredInterval() throws Exception {
+        assertThat(applicationContext.getBeanNamesForType(SessionSweepScheduler.class)).isEmpty();
+        Scheduled scheduled = SessionSweepScheduler.class.getMethod("run").getAnnotation(Scheduled.class);
+
+        assertThat(scheduled).isNotNull();
+        assertThat(scheduled.fixedDelayString()).isEqualTo("${session.sweep-interval}");
     }
 }
