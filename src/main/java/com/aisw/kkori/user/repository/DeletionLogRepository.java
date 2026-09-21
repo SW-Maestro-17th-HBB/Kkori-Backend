@@ -143,6 +143,9 @@ public interface DeletionLogRepository extends JpaRepository<DeletionLog, Long> 
             """)
     int clearProviderSnapshot(@Param("id") Long id, @Param("claimedAt") Instant claimedAt);
 
+    /** 선점 소유권 판정 재료 — {@code status}·{@code updatedAt}(선점 시각) 일치 여부. */
+    boolean existsByIdAndStatusAndUpdatedAt(Long id, DeletionStatus status, Instant updatedAt);
+
     /** PURGING → FAILED (재시도 대상). */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""

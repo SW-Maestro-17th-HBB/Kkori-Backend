@@ -85,6 +85,14 @@ public class DeletionLogRepositoryService {
         return deletionLogRepository.recordPurgeDetail(id, claimedAt, detail) == 1;
     }
 
+    /**
+     * 이 실행자의 선점이 아직 유효한지 — 되돌릴 수 없는 외부 호출(unlink) 직전의 소유권 재확인용 읽기.
+     * 재선점(stale 회수)되었으면 false. 쓰기 펜싱과 달리 호출 시점의 스냅샷일 뿐이라 창을 좁힐 뿐 없애지는 못한다.
+     */
+    public boolean isClaimedBy(Long id, Instant claimedAt) {
+        return deletionLogRepository.existsByIdAndStatusAndUpdatedAt(id, DeletionStatus.PURGING, claimedAt);
+    }
+
     /** unlink 재료인 회원번호 스냅샷 — NULL(완료·복구·미기록)이면 empty. 매 시도마다 새로 읽는다. */
     public Optional<String> findProviderSnapshot(Long id) {
         return deletionLogRepository.findById(id).map(DeletionLog::getProviderId);

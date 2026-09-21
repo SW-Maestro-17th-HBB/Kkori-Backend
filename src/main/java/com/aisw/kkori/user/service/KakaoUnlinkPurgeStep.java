@@ -57,6 +57,10 @@ public class KakaoUnlinkPurgeStep implements PurgeStep {
                     target.deletionLogId(), logMasker.mask(providerId));
             return PurgeDetail.StepResult.of(PurgeDetail.StepResult.SKIPPED_ACTIVE_ACCOUNT);
         }
+        // 되돌릴 수 없는 외부 호출 직전 소유권 재확인 — 재선점된 stale 실행자가 재가입한 새 연결을 끊는 창을 밀리초로 좁힌다
+        if (!deletionLogRepositoryService.isClaimedBy(target.deletionLogId(), target.claimedAt())) {
+            throw new OwnershipLostException();
+        }
         KakaoUnlinkClient.Outcome outcome = unlinkClient.unlink(providerId);
         clearSnapshot(target);
         log.info("카카오 unlink {} (deletionLogId={}, provider_id_hmac={})",

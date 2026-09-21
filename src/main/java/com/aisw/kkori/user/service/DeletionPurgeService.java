@@ -234,11 +234,4 @@ public class DeletionPurgeService {
 
     private record Claim(Instant claimedAt, PurgeDetail detail) {
     }
-
-    /** 펜싱 불일치 — 다른 인스턴스가 stale 회수로 이 건을 재선점했다. 실패 전환도 하지 않는다(그쪽이 소유자). */
-    private static class OwnershipLostException extends RuntimeException {
-        OwnershipLostException() {
-            super("purge ownership lost");
-        }
-    }
 }

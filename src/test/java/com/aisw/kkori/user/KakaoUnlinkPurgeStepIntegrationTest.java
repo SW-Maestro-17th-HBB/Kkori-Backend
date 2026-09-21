@@ -9,6 +9,9 @@ import com.aisw.kkori.user.domain.DeletionStatus;
 import com.aisw.kkori.user.domain.PurgeDetail;
 import com.aisw.kkori.user.domain.User;
 import com.aisw.kkori.user.service.DeletionPurgeService;
+import com.aisw.kkori.user.service.KakaoUnlinkPurgeStep;
+import com.aisw.kkori.user.service.OwnershipLostException;
+import com.aisw.kkori.user.service.PurgeTarget;
 import com.aisw.kkori.user.service.UserService;
 import io.awspring.cloud.s3.S3Template;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,6 +29,7 @@ import java.time.Duration;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -41,6 +45,9 @@ class KakaoUnlinkPurgeStepIntegrationTest extends AuthIntegrationTestSupport {
 
     @Autowired
     private DeletionPurgeService purgeService;
+
+    @Autowired
+    private KakaoUnlinkPurgeStep unlinkStep;
 
     @Autowired
     private UserService userService;
@@ -169,5 +176,20 @@ class KakaoUnlinkPurgeStepIntegrationTest extends AuthIntegrationTestSupport {
         assertThat(purged.getProviderId()).isNull();
         assertThat(purged.getPurgeDetail().attempts()).isEqualTo(2);
         assertThat(userRepository.findById(userId).orElseThrow().getProviderId()).isEqualTo("PURGED_" + userId);
+    }
+
+    @Test
+    @DisplayName("재선점된 건(선점 시각 불일치)은 unlink를 호출하지 않고 소유권 상실로 끝나며 스냅샷이 유지된다")
+    void staleExecutorDoesNotUnlink() {
+        long userId = expiredWithdrawnUser("kakao-uk-6");
+        Instant othersClaim = Instant.now().minus(Duration.ofMinutes(5));
+        jdbcTemplate.update("update deletion_log set status = 'PURGING', updated_at = ? where user_id = ?",
+                Timestamp.from(othersClaim), userId);
+        PurgeTarget stale = new PurgeTarget(logOf(userId).getId(), userId, othersClaim.minus(Duration.ofHours(1)));
+
+        assertThatThrownBy(() -> unlinkStep.execute(stale)).isInstanceOf(OwnershipLostException.class);
+
+        verify(unlinkClient, never()).unlink(anyString());
+        assertThat(logOf(userId).getProviderId()).isEqualTo("kakao-uk-6");
     }
 }
