@@ -20,6 +20,9 @@ repositories {
 
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    // 스키마 마이그레이션(HBB1-330) — 원천은 src/main/resources/db/migration, 엔티티는 ddl-auto validate로 대조. Flyway 10+는 DB별 모듈 필수
+    implementation 'org.flywaydb:flyway-core'
+    runtimeOnly 'org.flywaydb:flyway-database-postgresql'
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-client'

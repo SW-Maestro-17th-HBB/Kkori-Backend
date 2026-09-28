@@ -6,6 +6,12 @@ spring:
     default: local   # 프로파일 미지정 시 local로 실행 (bootRun 바로 동작)
   jpa:
     open-in-view: false
+  flyway:
+    # DB 스키마의 원천은 db/migration의 Flyway 마이그레이션이다(HBB1-330). 엔티티는 각 프로파일의 ddl-auto: validate로 대조만 한다.
+    # baseline-on-migrate: Flyway 도입 전 Hibernate ddl-auto가 만든 DB(prod·기존 로컬 볼륨)는 첫 기동 시 V1을 실행하지 않고
+    # baseline(=1)으로 기록한 뒤 V2부터 적용한다. 빈 DB(테스트·새 로컬 볼륨)는 V1부터 실행한다.
+    baseline-on-migrate: true
+    baseline-version: 1
   servlet:
     multipart:
       max-file-size: 10MB
