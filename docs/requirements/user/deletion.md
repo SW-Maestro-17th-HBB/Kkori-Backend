@@ -143,7 +143,7 @@
 
 ### 실행 조건
 
-- account.md의 `deletion_log` 스키마(`updated_at`·`purge_detail` 포함)가 존재해야 한다 — 스키마 변경 없음. 부분 UNIQUE 인덱스 `ux_deletion_log_active_user`와 `(status, requested_at)` 인덱스는 여전히 HBB1-349(Flyway V2)로 보류한다(활성 레코드가 항상 소량이라 풀스캔 수용 — ERD "후속 마이그레이션 대기 항목" 유지).
+- account.md의 `deletion_log` 스키마(`updated_at`·`purge_detail` 포함)가 존재해야 한다. 부분 UNIQUE 인덱스 `ux_deletion_log_active_user`는 Flyway `V2`(HBB1-349)로 도입됐고, `(status, requested_at)` 인덱스는 여전히 보류한다(활성 레코드가 항상 소량이라 풀스캔 수용).
 - 탈퇴 유예 기간·파기 배치 설정값이 로드되어 있어야 한다.
 
 ### 검증 기준
