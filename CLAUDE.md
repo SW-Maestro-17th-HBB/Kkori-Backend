@@ -7,7 +7,7 @@ Kkori — AI 면접 준비 서비스의 백엔드 (SW마에스트로 팀 HBB). S
 ## 명령어
 
 ```bash
-docker compose up -d         # 로컬 PostgreSQL(5432) + Redis(6379) + MinIO(9000, 콘솔 9001) 기동 (개발 전 1회)
+docker compose up -d         # 로컬 PostgreSQL(5432) + Redis(6379) + RustFS(S3 호환, 9000, 콘솔 9001) 기동 (개발 전 1회)
 docker compose --profile monitoring up -d   # 위 + redis_exporter(9121) — Redis 메트릭을 Prometheus 형식으로 노출 (모니터링 작업 때만)
 ./gradlew bootRun            # 앱 실행 (8080)
 ./gradlew build              # 컴파일 + 전체 테스트 + 패키징 (CI와 동일 명령)
@@ -27,7 +27,7 @@ docker compose --profile monitoring up -d   # 위 + redis_exporter(9121) — Red
 
 - **Spring Boot 3.5.x** (4.x 아님) — 스타터 이름이 3.x 체계 (`spring-boot-starter-web` 등)
 - **환경 설정은 완전 프로파일 분리** — `application.yaml`(공통) + `application-{local,dev,prod}.yaml`. 기본 프로파일은 local(`spring.profiles.default`)이라 `bootRun`이 바로 동작. **공통 파일엔 환경변수를 참조하지 않는 순수 정책·상수만**(동의 버전, 외부 고정 엔드포인트 등) 두고, **`${ENV...}`로 주입받는 값(시크릿·자격증명·연결값·TTL 등 환경별 운영값)은 전부 프로파일 파일에** 둔다 — 각 프로파일 파일이 그 환경에 주입해야 할 환경변수의 완전한 목록(배포 매니페스트) 역할. local 파일은 `${ENV:기본값}` 형태(개발·테스트 바로 부팅 + 환경변수로 덮어쓰기 가능), dev/prod 파일은 기본값 없는 `${JWT_SECRET}` 형태(미주입 시 기동 실패로 즉시 발견). 무해한 기본값이 존재하지 않는 진짜 Secret(예: LiveKit Cloud 자격증명 — 로컬도 실값 필요)은 local 파일에도 기본값 없는 placeholder만 두고 `.env`(Git 비추적, `springboot3-dotenv` developmentOnly)로 채운다. dev/prod 파일도 커밋해 리뷰 대상으로 유지. `spring-boot-docker-compose` 자동 주입은 설정 경로가 갈라지는 문제로 계속 사용하지 않음
-- **S3는 Spring Cloud AWS(starter-s3)** — 로컬은 docker compose의 MinIO(endpoint `localhost:9000`, path-style), dev/prod는 endpoint·credentials를 설정하지 않아 SDK 기본 동작(실제 S3 + IAM Role). 코드 경로는 전 환경 동일
+- **S3는 Spring Cloud AWS(starter-s3)** — 로컬은 docker compose의 RustFS(MinIO 호환 S3 서버 — MinIO 커뮤니티 이미지가 2026-09에 레지스트리에서 삭제돼 교체, endpoint `localhost:9000`, path-style), dev/prod는 endpoint·credentials를 설정하지 않아 SDK 기본 동작(실제 S3 + IAM Role). 코드 경로는 전 환경 동일
 - **SecurityConfig는 개발 초기 임시 permitAll** — 인증 도메인 개발 시 실제 인가 규칙으로 교체 예정. OAuth2 클라이언트가 클래스패스에 있어 Spring Security 기본 유저(generated password)는 생성되지 않음
 - **공통 응답은 고정 엔벨로프** — 모든 API는 `ApiResponse<T>`로 감싼다. 성공 `{ success: true, data: ... }`(무내용이면 `data: null`), 실패 `{ success: false, data: null, error: { code, message, fieldErrors } }`. **HTTP 상태코드는 바디에 넣지 않음**(중복은 안티패턴 — HTTP 상태줄이 유일 원천, 세밀한 구분은 비즈니스 `code`가 담당). 에러는 `ErrorCode` enum(도메인 접두사 + 3자리, 예: 공통 `C001`) + `BusinessException`으로 던지면 `GlobalExceptionHandler`가 변환
 

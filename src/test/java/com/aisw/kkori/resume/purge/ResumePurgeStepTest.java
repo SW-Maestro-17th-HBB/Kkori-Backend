@@ -31,7 +31,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * 이력서 파기 단계의 prefix 목록 페이지네이션 (PRD deletion.md 기능 3 검증 기준 — 1,000개 초과 고아 객체).
- * MinIO에 1,000개 넘게 올리는 대신 S3 클라이언트를 더블로 바꿔 두 페이지 응답을 재현한다.
+ * RustFS에 1,000개 넘게 올리는 대신 S3 클라이언트를 더블로 바꿔 두 페이지 응답을 재현한다.
  */
 class ResumePurgeStepTest {
 

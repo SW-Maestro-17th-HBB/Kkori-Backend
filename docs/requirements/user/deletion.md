@@ -243,7 +243,7 @@
 
 ### 검증 기준
 
-- 활성·soft delete 이력서를 각각 가진 유저 파기 시 S3 원본(MinIO Testcontainers 실물 확인)·`resume_chunks`·`resume_analysis_status`·`resumes`가 전부 제거되는지 확인
+- 활성·soft delete 이력서를 각각 가진 유저 파기 시 S3 원본(S3 호환 저장소 RustFS Testcontainers 실물 확인)·`resume_chunks`·`resume_analysis_status`·`resumes`가 전부 제거되는지 확인
 - 행 없이 S3에만 남은 고아 객체(`resumes/{userId}/` 하위)도 삭제되는지 확인 — 목록이 한 페이지(1,000개)를 넘어도 끝까지 조회해 전부 삭제하는지 확인(페이지네이션)
 - 다른 유저의 이력서·S3 객체·청크는 영향이 없는지 확인
 - 녹음 키가 기록된 세션의 S3 객체가 삭제되고 `recording_bucket`·`recording_object_key`가 NULL이 되는지, 키가 없는 세션은 건너뛰는지 확인

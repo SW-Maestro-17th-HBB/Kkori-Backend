@@ -25,9 +25,9 @@ SW마에스트로 17기에서 진행한 AI 모의 면접 서비스입니다.
 ### 1-3. 기술 스택
 
 - **애플리케이션**: Java 21, Spring Boot 3.5, Spring Data JPA, Spring Security, OAuth2 Client(카카오), JWT(jjwt), springdoc-openapi, Actuator와 Micrometer(Prometheus)
-- **데이터**: PostgreSQL 16(pgvector), Redis 7(Streams, Pub/Sub), S3(Spring Cloud AWS, 로컬은 MinIO)
+- **데이터**: PostgreSQL 16(pgvector), Redis 7(Streams, Pub/Sub), S3(Spring Cloud AWS, 로컬은 RustFS)
 - **실시간과 문서 처리**: LiveKit Server SDK, PDFBox
-- **테스트와 배포**: JUnit 5, Testcontainers(PostgreSQL, Redis, MinIO), GitHub Actions, Docker, AWS ECS와 ECR
+- **테스트와 배포**: JUnit 5, Testcontainers(PostgreSQL, Redis, RustFS), GitHub Actions, Docker, AWS ECS와 ECR
 
 ## 2. 개발 결과물
 
@@ -83,7 +83,7 @@ AWS 배치도입니다. 컴퓨팅은 ECS on EC2로, 역할별로 EC2 인스턴�
 
 모든 작업은 Jira 스토리에서 시작합니다. 스토리를 만들면 Jira Automation이 이 저장소에 이벤트를 보내고, 워크플로가 Jira API로 스토리와 하위 작업을 읽어 GitHub 부모 이슈와 하위 이슈를 자동으로 만듭니다. 브랜치 이름에 Jira 키를 넣어 push하면 티켓이 In Progress로 넘어갑니다.
 
-PR은 draft로 열고 준비되면 ready로 바꿉니다. 이때 CodeRabbit이 도메인 요구사항 문서(docs/requirements)를 기준으로 리뷰하고, CI가 Testcontainers로 PostgreSQL, Redis, MinIO를 띄워 전체 테스트를 돌립니다. 리뷰를 반영해 develop에 머지하고, 배포할 때는 develop에서 main으로 PR을 올려 머지합니다. main push에서는 같은 CI를 다시 거친 뒤 Docker 이미지를 ECR에 올리고 ECS 서비스를 재배포합니다.
+PR은 draft로 열고 준비되면 ready로 바꿉니다. 이때 CodeRabbit이 도메인 요구사항 문서(docs/requirements)를 기준으로 리뷰하고, CI가 Testcontainers로 PostgreSQL, Redis, RustFS를 띄워 전체 테스트를 돌립니다. 리뷰를 반영해 develop에 머지하고, 배포할 때는 develop에서 main으로 PR을 올려 머지합니다. main push에서는 같은 CI를 다시 거친 뒤 Docker 이미지를 ECR에 올리고 ECS 서비스를 재배포합니다.
 
 ---
 
@@ -97,7 +97,7 @@ PR은 draft로 열고 준비되면 ready로 바꿉니다. 이때 CodeRabbit이 �
 로컬 실행은 Docker만 있으면 됩니다.
 
 ```bash
-docker compose up -d   # PostgreSQL, Redis, MinIO
+docker compose up -d   # PostgreSQL, Redis, RustFS
 ./gradlew bootRun      # http://localhost:8080, API 문서는 /swagger-ui.html
 ./gradlew build        # 컴파일 + 전체 테스트 (CI와 같은 명령)
 ```

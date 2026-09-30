@@ -46,39 +46,43 @@ services:
     ports:
       - "9121:9121"
 
-  # Docker Hub의 minio/* 저장소가 2026-09에 삭제돼(커뮤니티 에디션 종료) MinIO 자체 레지스트리 quay.io를 쓴다.
-  # 새 이미지는 더 안 올라오므로 마지막 정식 릴리스로 고정 — TestcontainersConfiguration과 동일 태그
-  minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    container_name: kkori-minio
+  # S3 호환 저장소 — RustFS (MinIO 대체). MinIO 커뮤니티 에디션 종료로 이미지가 Docker Hub(2026-09-11)에 이어
+  # quay.io에서도 사라져 MinIO 호환 S3 서버인 RustFS로 교체했다. TestcontainersConfiguration과 동일 이미지·자격증명.
+  # 콘솔: http://localhost:9001/rustfs/console/ (kkori / kkori1234)
+  rustfs:
+    image: rustfs/rustfs:1.0.0
+    container_name: kkori-rustfs
     ports:
       - "9000:9000"   # S3 API
       - "9001:9001"   # 웹 콘솔
     environment:
-      MINIO_ROOT_USER: kkori
-      MINIO_ROOT_PASSWORD: kkori1234
-    command: server /data --console-address ":9001"
+      RUSTFS_ACCESS_KEY: kkori
+      RUSTFS_SECRET_KEY: kkori1234
     volumes:
-      - kkori-minio-data:/data
+      - kkori-rustfs-data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/health || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
 
-  # 최초 기동 시 기본 버킷 생성 후 종료
-  minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
-    container_name: kkori-minio-init
+  # 최초 기동 시 기본 버킷 생성 후 종료 (이미 있으면 통과)
+  s3-init:
+    image: amazon/aws-cli:2.37.6
+    container_name: kkori-s3-init
     depends_on:
-      minio:
+      rustfs:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 kkori kkori1234 &&
-      mc mb --ignore-existing local/kkori-resumes
-      "
+    environment:
+      AWS_ACCESS_KEY_ID: kkori
+      AWS_SECRET_ACCESS_KEY: kkori1234
+      AWS_DEFAULT_REGION: ap-northeast-2
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        aws --endpoint-url http://rustfs:9000 s3api head-bucket --bucket kkori-resumes 2>/dev/null ||
+        aws --endpoint-url http://rustfs:9000 s3api create-bucket --bucket kkori-resumes
 
 volumes:
   kkori-postgres-data:
-  kkori-minio-data:
+  kkori-rustfs-data:
