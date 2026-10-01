@@ -1,4 +1,4 @@
-# 로컬 개발 환경 — docker compose(PostgreSQL/Redis/MinIO) 기준.
+# 로컬 개발 환경 — docker compose(PostgreSQL/Redis/RustFS) 기준.
 # 아래 값들은 로컬 컨테이너용 더미 자격증명이라 커밋해도 무해함.
 spring:
   datasource:
@@ -15,8 +15,8 @@ spring:
   cloud:
     aws:
       s3:
-        endpoint: http://localhost:9000        # MinIO
-        path-style-access-enabled: true        # MinIO 필수 설정
+        endpoint: http://localhost:9000        # RustFS (S3 호환)
+        path-style-access-enabled: true        # RustFS·MinIO 계열 필수 설정
       credentials:
         access-key: kkori
         secret-key: kkori1234
