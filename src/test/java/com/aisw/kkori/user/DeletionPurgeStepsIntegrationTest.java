@@ -47,7 +47,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * 실데이터 파기 단계 (PRD {@code docs/requirements/user/deletion.md} 기능 3 검증 기준) — 실제 배치 빈과
- * MinIO·PostgreSQL 실물로 검증한다. Worker·에이전트 소유 테이블은 계약 픽스처 DDL로 만든다.
+ * RustFS·PostgreSQL 실물로 검증한다. Worker·에이전트 소유 테이블은 계약 픽스처 DDL로 만든다.
  */
 @Import(ReportFixtures.class)
 class DeletionPurgeStepsIntegrationTest extends AuthIntegrationTestSupport {
