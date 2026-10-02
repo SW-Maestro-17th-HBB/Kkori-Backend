@@ -1,6 +1,10 @@
 # ERD
 
-전체 DB 스키마와 엔티티 관계. 코드(`@Entity`)가 스키마의 원천이며, 이 문서는 그 요약이다 — 컬럼 상세가 어긋나면 엔티티 코드가 우선한다.
+전체 DB 스키마와 엔티티 관계. 스키마의 원천은 Flyway 마이그레이션(`src/main/resources/db/migration` — HBB1-330에서 도입, `V1__baseline.sql`이 도입 시점의 전체 스키마)이며, 엔티티(`@Entity`)는 기동 시 `ddl-auto: validate`로 그 스키마와 대조된다. 이 문서는 그 요약이다 — 컬럼 상세가 어긋나면 마이그레이션이 우선한다.
+
+- 엔티티를 바꾸면 `V{n}__<snake_desc>.sql`을 함께 추가한다. 적용된 파일은 수정하지 않는다(체크섬 검증).
+- `validate`는 테이블·컬럼 존재와 타입만 검사하고 인덱스·유니크·CHECK 제약은 보지 않는다. Hibernate가 `@Enumerated(STRING)` 컬럼마다 `CHECK (col IN (...))`을 만들어 두었으므로 **enum 값 추가는 그 컬럼의 CHECK 제약 교체(DROP + ADD) 마이그레이션을 동반**해야 한다.
+- Flyway 도입 전 Hibernate ddl-auto가 만든 DB(prod·기존 로컬 볼륨)는 `baseline-on-migrate`로 V1을 건너뛰고 V2부터 적용한다. V1은 그 스키마를 제약 이름까지 그대로 옮긴 것이다. baseline 버전은 고정값이 아니라 `FlywayConfig`가 기동 시 `users` 테이블 존재 여부로 정한다(있으면 1, 없으면 0) — 타 레포 소유 테이블만 먼저 생긴 새 DB(배포 순서상 에이전트 마이그레이션이 Spring보다 먼저)도 V1부터 실행된다.
 
 ## 공통 규칙
 
@@ -214,14 +218,13 @@ erDiagram
 | `resume_chunks` | Python Worker | 테이블 생성·쓰기 모두 Worker 소관. pgvector 확장은 백엔드 리포(로컬 이미지·Testcontainers)가 제공. **예외**: 탈퇴 파기·개별 삭제 시 Spring이 `resume_id` 기준 DELETE(deletion.md 크로스 레포 계약) |
 | `interview_session` | Spring (세션) | HBB1-18 신설, HBB1-294가 종료 전이(webhook·/end·스위퍼)와 `end_requested_at`·`agent_lost_at` 추가, HBB1-308이 재연결(`disconnected_at` 사용 개시)·재디스패치(`redispatched_at`) 추가. 인덱스 `(user_id, status)` |
 | `interview_transcript` | Kkori-AI (에이전트) | 테이블 DDL·마이그레이션·쓰기 모두 에이전트 소관(Kkori-AI interview-end.md §4). Spring은 판별용 EXISTS 읽기만(HBB1-294 — interview-session-completion.md). dev/prod는 에이전트 배포가 테이블 존재의 선행 조건. **예외**: 탈퇴 파기 시 Spring이 `content = []`·`deleted_at` 마스킹 UPDATE(deletion.md 크로스 레포 계약) |
-| `reports`, `report_scores`, `report_feedbacks` | 정의 Spring (리포트 엔티티), 행은 Python Worker | Worker가 INSERT, UPDATE로 생성 수명주기 전체를 맡고 Spring은 조회만 한다(save, delete 없음). DDL은 로컬 ddl-auto update로 생성, dev/prod는 validate. **예외**: 탈퇴 파기 시 Spring이 JDBC로 물리 삭제(deletion.md 기능 3) |
+| `reports`, `report_scores`, `report_feedbacks` | 정의 Spring (리포트 엔티티), 행은 Python Worker | Worker가 INSERT, UPDATE로 생성 수명주기 전체를 맡고 Spring은 조회만 한다(save, delete 없음). DDL은 Flyway(V1 baseline)가 생성. **예외**: 탈퇴 파기 시 Spring이 JDBC로 물리 삭제(deletion.md 기능 3) |
 | `report_generation_jobs` | Python Worker | 테이블 생성, 쓰기 모두 Worker 소관(worker/src/report/repository.py). 리포트당 1행, 재시도 횟수와 오류 기록. Spring 미접근. **예외**: 탈퇴 파기 시 Spring이 JDBC로 DELETE(deletion.md 기능 3) |
 | `interview_metrics` | Kkori-AI (에이전트) | agent/migrations/002. STT, LLM, TTS 등 파이프라인 메트릭을 이벤트당 1행 jsonb로 적재. Spring 미접근 |
 
-## 마이그레이션 도구 도입 시 반영할 항목 (Flyway — 배포 스토리)
+## 후속 마이그레이션 대기 항목
 
-JPA 애너테이션으로 표현할 수 없어 보류 중인 DB 불변식·인덱스. baseline DDL 작성 시 포함할 것:
+Flyway는 HBB1-330에서 도입했고 `V1__baseline.sql`은 prod에 이미 있는 것만 담는다(`resumes`의 활성 `(user_id, file_hash)` 부분 유니크 인덱스는 기동 시 JDBC 생성분을 옮긴 것). `V2`(HBB1-349)가 `deletion_log`의 활성 요청 부분 UNIQUE 인덱스 `ux_deletion_log_active_user`를 추가했다. JPA 애너테이션으로 표현할 수 없어 아직 보류 중인 항목:
 
-- `deletion_log`: 부분 UNIQUE 인덱스 `(user_id) WHERE status IN ('PENDING_PURGE','PURGING','FAILED')` — 유저당 활성 삭제 요청 1건 (account.md)
-- `interview_session`: 부분 UNIQUE 인덱스 `(user_id) WHERE status NOT IN ('ENDED','ABORTED')` — 유저당 진행 중 세션 1개 (interview-session-creation.md)
+- `interview_session`: 부분 UNIQUE 인덱스 `(user_id) WHERE status NOT IN ('ENDED','ABORTED')` — 유저당 진행 중 세션 1개 (interview-session-creation.md). **단독으로는 도입하지 않는다** — 이 인덱스는 동일 유저 동시 생성(팬텀)만 막고, 세션 생성 ↔ 이력서 수정·재분석·삭제의 두 테이블 check-then-act는 여전히 공유 잠금이 필요하다. user 행 잠금을 대체하려면 `resume_analysis_status` 행 잠금으로의 이전과 유니크 위반 시 재시도 의미론(last-wins 유지)을 함께 설계해야 하며, 잠금 vs 인덱스 성능 비교(전환 토글)도 그때 다룬다
 - `interview_session`: `resume_id` 조회 인덱스 — `RESUME_IN_USE` 판정(`existsByResumeIdAndStatusIn`)이 현재 `(user_id, status)` 인덱스의 지원을 받지 못함. MVP 규모에서는 수용, DDL 작성 시 `(resume_id, status)` 검토

@@ -3,8 +3,9 @@
 # workflow_run 방식은 기본 브랜치 컨텍스트로 실행돼 OIDC sub가 develop이 되면서
 # main 전용 IAM 신뢰 조건과 충돌했다 — push 트리거 + workflow_call 호출로 sub를 main으로 유지한다.
 # 인증은 GitHub OIDC → kkori-cd 롤 (액세스 키 없음, Kkori-Infra envs/prod/cicd.tf 참조).
-# 주의: DB 스키마 변경(엔티티 컬럼 추가 등)은 이 파이프라인이 처리하지 않는다 —
-#       prod는 ddl-auto validate라 스키마 마이그레이션을 먼저 적용해야 배포가 성공한다.
+# DB 스키마: 앱이 기동 시 Flyway 마이그레이션(src/main/resources/db/migration)을 적용한 뒤 ddl-auto validate로
+#            엔티티와 대조한다(HBB1-330). 마이그레이션 실패 = 새 태스크 기동 실패 = 배포 실패(이전 태스크 유지).
+#            타 레포 소유 테이블(Kkori-AI 에이전트·Worker)은 여전히 각 레포가 배포 전에 선적용한다.
 name: Deploy
 
 on:
