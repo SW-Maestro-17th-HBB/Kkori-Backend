@@ -4,7 +4,7 @@
 
 - 엔티티를 바꾸면 `V{n}__<snake_desc>.sql`을 함께 추가한다. 적용된 파일은 수정하지 않는다(체크섬 검증).
 - `validate`는 테이블·컬럼 존재와 타입만 검사하고 인덱스·유니크·CHECK 제약은 보지 않는다. Hibernate가 `@Enumerated(STRING)` 컬럼마다 `CHECK (col IN (...))`을 만들어 두었으므로 **enum 값 추가는 그 컬럼의 CHECK 제약 교체(DROP + ADD) 마이그레이션을 동반**해야 한다.
-- Flyway 도입 전 Hibernate ddl-auto가 만든 DB(prod·기존 로컬 볼륨)는 `baseline-on-migrate`로 V1을 건너뛰고 V2부터 적용한다. V1은 그 스키마를 제약 이름까지 그대로 옮긴 것이다.
+- Flyway 도입 전 Hibernate ddl-auto가 만든 DB(prod·기존 로컬 볼륨)는 `baseline-on-migrate`로 V1을 건너뛰고 V2부터 적용한다. V1은 그 스키마를 제약 이름까지 그대로 옮긴 것이다. baseline 버전은 고정값이 아니라 `FlywayConfig`가 기동 시 `users` 테이블 존재 여부로 정한다(있으면 1, 없으면 0) — 타 레포 소유 테이블만 먼저 생긴 새 DB(배포 순서상 에이전트 마이그레이션이 Spring보다 먼저)도 V1부터 실행된다.
 
 ## 공통 규칙
 

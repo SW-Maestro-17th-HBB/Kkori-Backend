@@ -34,12 +34,14 @@ class DeletionLogActiveUniqueIndexTest {
 
     @Autowired JdbcTemplate jdbcTemplate;
 
+    /** 같은 컨텍스트(DB)를 공유하는 다른 테스트의 배치 스캔에 잡히지 않게 시드 행을 정리한다. */
     @AfterEach
     void cleanUp() {
         // 같은 컨텍스트(DB)를 공유하는 다른 테스트의 배치 스캔에 잡히지 않게 정리한다
         jdbcTemplate.update("DELETE FROM deletion_log WHERE user_id = ?", USER_ID);
     }
 
+    /** 활성 행이 있는 유저에 활성 상태(PENDING_PURGE·PURGING·FAILED)의 두 번째 행을 넣으면 인덱스가 거부한다. */
     @ParameterizedTest(name = "활성 행이 있는 유저에 {0} 행 추가 → 거부")
     @ValueSource(strings = {"PENDING_PURGE", "PURGING", "FAILED"})
     @DisplayName("유저당 활성(PENDING_PURGE·PURGING·FAILED) 삭제 요청은 1건만 존재할 수 있다")
@@ -51,6 +53,7 @@ class DeletionLogActiveUniqueIndexTest {
                 .hasMessageContaining("ux_deletion_log_active_user");
     }
 
+    /** 부분 인덱스의 술어 검증 — 종결 상태 행은 유일성 계산에서 빠지므로 같은 유저에 여러 건 남을 수 있다. */
     @Test
     @DisplayName("종결(PURGED·CANCELLED) 이력은 같은 유저에 여러 건 남을 수 있고 그 뒤의 새 활성 요청도 허용된다 (부분 인덱스 술어)")
     void terminalRowsDoNotCountAsActive() {
